@@ -1,5 +1,6 @@
 # Binaries
 bin/
+tokenhub
 *.exe
 *.dll
 *.so
