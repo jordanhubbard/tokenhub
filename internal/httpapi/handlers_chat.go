@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/router"
+	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
 )
 
@@ -71,6 +73,20 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					RequestID:  middleware.GetReqID(r.Context()),
 				})
 			}
+			if d.EventBus != nil {
+				d.EventBus.Publish(events.Event{
+					Type:       events.EventRouteError,
+					LatencyMs:  float64(latencyMs),
+					ErrorClass: "routing_failure",
+					ErrorMsg:   err.Error(),
+				})
+			}
+			if d.Stats != nil {
+				d.Stats.Record(stats.Snapshot{
+					LatencyMs: float64(latencyMs),
+					Success:   false,
+				})
+			}
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -91,6 +107,25 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				LatencyMs:        latencyMs,
 				StatusCode:       http.StatusOK,
 				RequestID:        middleware.GetReqID(r.Context()),
+			})
+		}
+		if d.EventBus != nil {
+			d.EventBus.Publish(events.Event{
+				Type:       events.EventRouteSuccess,
+				ModelID:    decision.ModelID,
+				ProviderID: decision.ProviderID,
+				LatencyMs:  float64(latencyMs),
+				CostUSD:    decision.EstimatedCostUSD,
+				Reason:     decision.Reason,
+			})
+		}
+		if d.Stats != nil {
+			d.Stats.Record(stats.Snapshot{
+				ModelID:    decision.ModelID,
+				ProviderID: decision.ProviderID,
+				LatencyMs:  float64(latencyMs),
+				CostUSD:    decision.EstimatedCostUSD,
+				Success:    true,
 			})
 		}
 

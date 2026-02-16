@@ -21,6 +21,14 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 			http.Error(w, "unlock failed", http.StatusUnauthorized)
 			return
 		}
+		// Persist vault salt and encrypted data to the store.
+		if d.Store != nil {
+			salt := d.Vault.Salt()
+			data := d.Vault.Export()
+			if salt != nil {
+				_ = d.Store.SaveVaultBlob(r.Context(), salt, data)
+			}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
 }

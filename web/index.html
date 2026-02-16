@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TokenHub Admin</title>
+  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e0e0e0; }
+    .header { background: #1a1d29; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2a2d3a; }
+    .header h1 { font-size: 18px; color: #fff; }
+    .header .status { font-size: 12px; color: #4caf50; }
+    .header .status.disconnected { color: #f44336; }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 16px; padding: 16px; height: calc(100vh - 52px); }
+    .panel { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 8px; padding: 16px; overflow: hidden; }
+    .panel h2 { font-size: 14px; color: #8a8d9a; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .panel.graph { grid-row: 1 / 3; }
+    #cy { width: 100%; height: calc(100% - 30px); }
+    #cost-chart { width: 100%; height: calc(100% - 30px); }
+    .leaderboard table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .leaderboard th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; }
+    .leaderboard td { padding: 6px 8px; border-bottom: 1px solid #1f2233; }
+    .leaderboard .success { color: #4caf50; }
+    .leaderboard .error { color: #f44336; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .badge.healthy { background: #1b3a1b; color: #4caf50; }
+    .badge.degraded { background: #3a3a1b; color: #ffc107; }
+    .badge.down { background: #3a1b1b; color: #f44336; }
+    .stat-row { display: flex; gap: 16px; margin-bottom: 8px; }
+    .stat-box { flex: 1; background: #12141d; border-radius: 6px; padding: 12px; text-align: center; }
+    .stat-box .value { font-size: 24px; font-weight: 600; color: #fff; }
+    .stat-box .label { font-size: 11px; color: #8a8d9a; margin-top: 4px; }
+    .events-log { max-height: 200px; overflow-y: auto; font-size: 12px; font-family: monospace; }
+    .events-log .event { padding: 3px 0; border-bottom: 1px solid #1f2233; }
+    .events-log .event .time { color: #666; }
+    .events-log .event .model { color: #64b5f6; }
+    .events-log .event .provider { color: #ce93d8; }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>TokenHub</h1>
+    <span id="sse-status" class="status disconnected">Disconnected</span>
+  </div>
+
+  <div class="dashboard">
+    <div class="panel graph">
+      <h2>Request Flow</h2>
+      <div id="cy"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Overview</h2>
+      <div class="stat-row">
+        <div class="stat-box"><div class="value" id="total-requests">0</div><div class="label">Total Requests</div></div>
+        <div class="stat-box"><div class="value" id="total-cost">$0.00</div><div class="label">Total Cost</div></div>
+        <div class="stat-box"><div class="value" id="avg-latency">0ms</div><div class="label">Avg Latency</div></div>
+        <div class="stat-box"><div class="value" id="error-rate">0%</div><div class="label">Error Rate</div></div>
+      </div>
+      <h2 style="margin-top:12px">Cost Over Time</h2>
+      <div id="cost-chart"></div>
+    </div>
+
+    <div class="panel leaderboard">
+      <h2>Model Leaderboard</h2>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Provider</th><th>Requests</th><th>Avg Latency</th><th>Cost</th><th>Status</th></tr>
+        </thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ---- Cytoscape.js graph ----
+    const cy = cytoscape({
+      container: document.getElementById('cy'),
+      style: [
+        { selector: 'node', style: {
+          'label': 'data(label)', 'text-valign': 'center', 'color': '#e0e0e0',
+          'background-color': 'data(color)', 'width': 'data(size)', 'height': 'data(size)',
+          'font-size': '10px', 'text-outline-width': 1, 'text-outline-color': '#0f1117'
+        }},
+        { selector: 'edge', style: {
+          'width': 'data(width)', 'line-color': '#3a5a8a', 'target-arrow-color': '#3a5a8a',
+          'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'opacity': 0.7
+        }},
+        { selector: '.animated', style: { 'line-color': '#64b5f6', 'target-arrow-color': '#64b5f6', 'opacity': 1 }}
+      ],
+      layout: { name: 'cose', animate: false },
+      elements: [
+        { data: { id: 'tokenhub', label: 'TokenHub', color: '#2196f3', size: 50 } }
+      ]
+    });
+
+    // Track known providers and models.
+    const knownProviders = new Set();
+    const knownModels = new Set();
+    const edgeCounts = {};
+
+    function ensureNode(id, label, type) {
+      if ((type === 'provider' && knownProviders.has(id)) || (type === 'model' && knownModels.has(id))) return;
+      const color = type === 'provider' ? '#ce93d8' : '#4caf50';
+      cy.add({ data: { id, label, color, size: 35 } });
+      if (type === 'provider') {
+        cy.add({ data: { source: 'tokenhub', target: id, width: 2 } });
+        knownProviders.add(id);
+      } else {
+        knownModels.add(id);
+      }
+      cy.layout({ name: 'cose', animate: true, animationDuration: 300 }).run();
+    }
+
+    function animateEdge(providerId, modelId) {
+      const edgeId = `${providerId}-${modelId}`;
+      if (!cy.getElementById(edgeId).length) {
+        ensureNode(providerId, providerId, 'provider');
+        ensureNode(modelId, modelId, 'model');
+        cy.add({ data: { id: edgeId, source: providerId, target: modelId, width: 2 } });
+        cy.layout({ name: 'cose', animate: true, animationDuration: 300 }).run();
+      }
+      edgeCounts[edgeId] = (edgeCounts[edgeId] || 0) + 1;
+      const edge = cy.getElementById(edgeId);
+      edge.addClass('animated');
+      edge.data('width', Math.min(2 + edgeCounts[edgeId], 10));
+      setTimeout(() => edge.removeClass('animated'), 500);
+    }
+
+    // ---- D3.js cost chart ----
+    const costData = [];
+    const chartMargin = { top: 10, right: 20, bottom: 20, left: 40 };
+    let chartSvg, xScale, yScale, line;
+
+    function initChart() {
+      const container = document.getElementById('cost-chart');
+      const w = container.clientWidth;
+      const h = container.clientHeight || 150;
+      chartSvg = d3.select('#cost-chart').append('svg').attr('width', w).attr('height', h);
+      const gw = w - chartMargin.left - chartMargin.right;
+      const gh = h - chartMargin.top - chartMargin.bottom;
+      const g = chartSvg.append('g').attr('transform', `translate(${chartMargin.left},${chartMargin.top})`);
+      xScale = d3.scaleTime().range([0, gw]);
+      yScale = d3.scaleLinear().range([gh, 0]);
+      line = d3.line().x(d => xScale(d.time)).y(d => yScale(d.cost)).curve(d3.curveMonotoneX);
+      g.append('path').attr('class', 'cost-line').attr('fill', 'none').attr('stroke', '#4caf50').attr('stroke-width', 2);
+      g.append('g').attr('class', 'x-axis').attr('transform', `translate(0,${gh})`);
+      g.append('g').attr('class', 'y-axis');
+    }
+
+    function updateChart() {
+      if (!chartSvg || costData.length < 2) return;
+      const g = chartSvg.select('g');
+      xScale.domain(d3.extent(costData, d => d.time));
+      yScale.domain([0, d3.max(costData, d => d.cost) * 1.1 || 0.01]);
+      g.select('.cost-line').datum(costData).attr('d', line);
+      g.select('.x-axis').call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat('%H:%M')).tickSize(3));
+      g.select('.y-axis').call(d3.axisLeft(yScale).ticks(4).tickFormat(d => `$${d.toFixed(3)}`).tickSize(3));
+      g.selectAll('.tick text').attr('fill', '#666').attr('font-size', '10px');
+      g.selectAll('.tick line').attr('stroke', '#333');
+      g.selectAll('.domain').attr('stroke', '#333');
+    }
+
+    // ---- SSE connection ----
+    let cumulativeCost = 0;
+    let totalRequests = 0;
+    let totalErrors = 0;
+    let totalLatency = 0;
+
+    function connectSSE() {
+      const status = document.getElementById('sse-status');
+      const es = new EventSource('/admin/v1/events');
+      es.addEventListener('connected', () => {
+        status.textContent = 'Connected';
+        status.className = 'status';
+      });
+      es.addEventListener('route_success', (e) => {
+        const data = JSON.parse(e.data);
+        totalRequests++;
+        totalLatency += data.latency_ms || 0;
+        cumulativeCost += data.cost_usd || 0;
+        costData.push({ time: new Date(data.timestamp), cost: cumulativeCost });
+        if (costData.length > 200) costData.shift();
+        animateEdge(data.provider_id, data.model_id);
+        refreshStats();
+        updateChart();
+        updateLeaderboard();
+      });
+      es.addEventListener('route_error', (e) => {
+        const data = JSON.parse(e.data);
+        totalRequests++;
+        totalErrors++;
+        totalLatency += data.latency_ms || 0;
+        refreshStats();
+      });
+      es.onerror = () => {
+        status.textContent = 'Disconnected';
+        status.className = 'status disconnected';
+      };
+    }
+
+    function refreshStats() {
+      document.getElementById('total-requests').textContent = totalRequests;
+      document.getElementById('total-cost').textContent = `$${cumulativeCost.toFixed(4)}`;
+      document.getElementById('avg-latency').textContent = totalRequests > 0 ? `${Math.round(totalLatency / totalRequests)}ms` : '0ms';
+      document.getElementById('error-rate').textContent = totalRequests > 0 ? `${(totalErrors / totalRequests * 100).toFixed(1)}%` : '0%';
+    }
+
+    // ---- Leaderboard ----
+    const modelStats = {};
+    function updateLeaderboard() {
+      fetch('/admin/v1/stats').then(r => r.json()).then(data => {
+        const tbody = document.getElementById('leaderboard-body');
+        const models = (data.by_model && data.by_model['1m']) || [];
+        tbody.innerHTML = models.map(m => `
+          <tr>
+            <td>${m.model_id}</td>
+            <td>${m.provider_id || '-'}</td>
+            <td>${m.request_count}</td>
+            <td>${Math.round(m.avg_latency_ms)}ms</td>
+            <td>$${(m.total_cost_usd || 0).toFixed(4)}</td>
+            <td><span class="badge ${m.error_rate > 0.5 ? 'down' : m.error_rate > 0.1 ? 'degraded' : 'healthy'}">${(m.error_rate * 100).toFixed(0)}% err</span></td>
+          </tr>
+        `).join('');
+      }).catch(() => {});
+    }
+
+    // ---- Init ----
+    document.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      connectSSE();
+      // Fetch initial stats and health.
+      updateLeaderboard();
+      fetch('/admin/v1/health').then(r => r.json()).then(data => {
+        (data.providers || []).forEach(p => {
+          ensureNode(p.provider_id, p.provider_id, 'provider');
+        });
+      }).catch(() => {});
+    });
+  </script>
+</body>
+</html>

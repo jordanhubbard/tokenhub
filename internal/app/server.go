@@ -11,10 +11,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
+	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
 	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
@@ -72,6 +74,16 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	logger.Info("database initialized", slog.String("dsn", cfg.DBDSN))
 
+	// Restore vault salt from DB (for credential persistence across restarts).
+	if salt, data, err := db.LoadVaultBlob(context.Background()); err == nil && salt != nil {
+		v.SetSalt(salt)
+		logger.Info("restored vault salt from database")
+		if data != nil {
+			_ = v.Import(data)
+			logger.Info("restored vault credentials", slog.Int("keys", len(data)))
+		}
+	}
+
 	// Set up health tracking.
 	ht := health.NewTracker(health.DefaultConfig())
 	eng.SetHealthChecker(ht)
@@ -84,6 +96,8 @@ func NewServer(cfg Config) (*Server, error) {
 	registerDefaultModels(eng)
 
 	m := metrics.New()
+	bus := events.NewBus()
+	sc := stats.NewCollector()
 
 	s := &Server{
 		cfg:    cfg,
@@ -95,11 +109,13 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	httpapi.MountRoutes(r, httpapi.Dependencies{
-		Engine:  eng,
-		Vault:   v,
-		Metrics: m,
-		Store:   db,
-		Health:  ht,
+		Engine:   eng,
+		Vault:    v,
+		Metrics:  m,
+		Store:    db,
+		Health:   ht,
+		EventBus: bus,
+		Stats:    sc,
 	})
 
 	return s, nil

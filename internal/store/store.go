@@ -22,6 +22,10 @@ type Store interface {
 	LogRequest(ctx context.Context, entry RequestLog) error
 	ListRequestLogs(ctx context.Context, limit int, offset int) ([]RequestLog, error)
 
+	// Vault persistence
+	SaveVaultBlob(ctx context.Context, salt []byte, data map[string]string) error
+	LoadVaultBlob(ctx context.Context) (salt []byte, data map[string]string, err error)
+
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
 	Close() error

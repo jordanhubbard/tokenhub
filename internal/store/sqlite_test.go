@@ -214,3 +214,74 @@ func TestRequestLogsDefaultLimit(t *testing.T) {
 		t.Errorf("expected nil logs for empty db, got %d", len(logs))
 	}
 }
+
+func TestVaultBlobPersistence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	salt := []byte("test-salt-16byte")
+	data := map[string]string{
+		"openai_key":    "enc-aes-gcm-openai",
+		"anthropic_key": "enc-aes-gcm-anthropic",
+	}
+
+	if err := s.SaveVaultBlob(ctx, salt, data); err != nil {
+		t.Fatalf("save vault blob failed: %v", err)
+	}
+
+	gotSalt, gotData, err := s.LoadVaultBlob(ctx)
+	if err != nil {
+		t.Fatalf("load vault blob failed: %v", err)
+	}
+	if string(gotSalt) != string(salt) {
+		t.Errorf("expected salt %q, got %q", salt, gotSalt)
+	}
+	if len(gotData) != 2 {
+		t.Errorf("expected 2 keys, got %d", len(gotData))
+	}
+	if gotData["openai_key"] != "enc-aes-gcm-openai" {
+		t.Errorf("unexpected value: %s", gotData["openai_key"])
+	}
+}
+
+func TestVaultBlobUpsert(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Save initial blob.
+	if err := s.SaveVaultBlob(ctx, []byte("salt1"), map[string]string{"k": "v1"}); err != nil {
+		t.Fatalf("save 1 failed: %v", err)
+	}
+
+	// Upsert with new data.
+	if err := s.SaveVaultBlob(ctx, []byte("salt2"), map[string]string{"k": "v2"}); err != nil {
+		t.Fatalf("save 2 failed: %v", err)
+	}
+
+	gotSalt, gotData, err := s.LoadVaultBlob(ctx)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if string(gotSalt) != "salt2" {
+		t.Errorf("expected salt2, got %s", gotSalt)
+	}
+	if gotData["k"] != "v2" {
+		t.Errorf("expected v2, got %s", gotData["k"])
+	}
+}
+
+func TestVaultBlobEmpty(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	salt, data, err := s.LoadVaultBlob(ctx)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if salt != nil {
+		t.Errorf("expected nil salt, got %v", salt)
+	}
+	if data != nil {
+		t.Errorf("expected nil data, got %v", data)
+	}
+}

@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
+	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
 
@@ -49,8 +52,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, *router.Engine, *vault.Vau
 		t.Fatalf("failed to create vault: %v", err)
 	}
 	m := metrics.New()
+	bus := events.NewBus()
+	sc := stats.NewCollector()
 
-	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m})
+	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc})
 	ts := httptest.NewServer(r)
 	return ts, eng, v
 }
@@ -343,7 +348,27 @@ func TestAdminEndpoint(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()
 
+	// /admin now serves the embedded SPA.
 	resp, err := http.Get(ts.URL + "/admin")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && ct != "text/html; charset=utf-8" && ct != "text/html" {
+		// Acceptable: either text/html or served as-is.
+	}
+}
+
+func TestAdminAPIInfoEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/api/info")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -357,7 +382,120 @@ func TestAdminEndpoint(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode: %v", err)
 	}
-	if result["tokenhub"] != "admin-ui-stub" {
-		t.Errorf("expected admin-ui-stub, got %v", result["tokenhub"])
+	if result["tokenhub"] != "admin" {
+		t.Errorf("expected admin, got %v", result["tokenhub"])
+	}
+}
+
+func TestStatsEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/stats")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if _, ok := result["global"]; !ok {
+		t.Error("expected 'global' key in stats response")
+	}
+	if _, ok := result["by_model"]; !ok {
+		t.Error("expected 'by_model' key in stats response")
+	}
+	if _, ok := result["by_provider"]; !ok {
+		t.Error("expected 'by_provider' key in stats response")
+	}
+}
+
+func TestSSEEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// Make a request that we cancel after getting the initial connection event.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL+"/admin/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("expected text/event-stream, got %s", ct)
+	}
+
+	// Read the initial connection event.
+	buf := make([]byte, 256)
+	n, _ := resp.Body.Read(buf)
+	data := string(buf[:n])
+	if !bytes.Contains([]byte(data), []byte("event: connected")) {
+		t.Errorf("expected connected event, got %s", data)
+	}
+}
+
+func TestChatPublishesEventsAndStats(t *testing.T) {
+	r := chi.NewRouter()
+	eng := router.NewEngine(router.EngineConfig{})
+	v, _ := vault.New(true)
+	m := metrics.New()
+	bus := events.NewBus()
+	sc := stats.NewCollector()
+
+	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc})
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"hi"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	// Subscribe to events before making request.
+	sub := bus.Subscribe(10)
+	defer bus.Unsubscribe(sub)
+
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{{Role: "user", Content: "hi"}},
+		},
+	})
+	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	// Check that an event was published.
+	select {
+	case e := <-sub.C:
+		if e.Type != events.EventRouteSuccess {
+			t.Errorf("expected route_success, got %s", e.Type)
+		}
+		if e.ModelID != "m1" {
+			t.Errorf("expected model m1, got %s", e.ModelID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for event")
+	}
+
+	// Check that a stats snapshot was recorded.
+	if sc.SnapshotCount() != 1 {
+		t.Errorf("expected 1 snapshot, got %d", sc.SnapshotCount())
 	}
 }

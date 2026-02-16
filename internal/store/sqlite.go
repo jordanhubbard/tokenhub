@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -60,6 +61,11 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model_id)`,
+		`CREATE TABLE IF NOT EXISTS vault_blob (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			salt BLOB NOT NULL,
+			data TEXT NOT NULL DEFAULT '{}'
+		)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -176,6 +182,37 @@ func (s *SQLiteStore) LogRequest(ctx context.Context, entry RequestLog) error {
 		entry.Timestamp, entry.ModelID, entry.ProviderID, entry.Mode,
 		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID)
 	return err
+}
+
+// Vault persistence
+
+func (s *SQLiteStore) SaveVaultBlob(ctx context.Context, salt []byte, data map[string]string) error {
+	j, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal vault data: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO vault_blob (id, salt, data) VALUES (1, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET salt=excluded.salt, data=excluded.data`,
+		salt, string(j))
+	return err
+}
+
+func (s *SQLiteStore) LoadVaultBlob(ctx context.Context) ([]byte, map[string]string, error) {
+	var salt []byte
+	var dataStr string
+	err := s.db.QueryRowContext(ctx, `SELECT salt, data FROM vault_blob WHERE id = 1`).Scan(&salt, &dataStr)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var data map[string]string
+	if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal vault data: %w", err)
+	}
+	return salt, data, nil
 }
 
 func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int) ([]RequestLog, error) {
