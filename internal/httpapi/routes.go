@@ -82,6 +82,8 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Put("/routing-config", RoutingConfigSetHandler(d))
 		r.Get("/health", HealthStatsHandler(d))
 		r.Get("/stats", StatsHandler(d))
+		r.Get("/logs", RequestLogsHandler(d))
+		r.Get("/engine/models", EngineModelsHandler(d))
 		r.Get("/tsdb/query", TSDBQueryHandler(d.TSDB))
 		r.Get("/tsdb/metrics", TSDBMetricsHandler(d.TSDB))
 		r.Post("/tsdb/prune", TSDBPruneHandler(d.TSDB))

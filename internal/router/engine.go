@@ -133,6 +133,28 @@ func (e *Engine) UpdateDefaults(mode string, maxBudget float64, maxLatencyMs int
 	}
 }
 
+// ListModels returns all registered models.
+func (e *Engine) ListModels() []Model {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	models := make([]Model, 0, len(e.models))
+	for _, m := range e.models {
+		models = append(models, m)
+	}
+	return models
+}
+
+// ListAdapterIDs returns the IDs of all registered adapters.
+func (e *Engine) ListAdapterIDs() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	ids := make([]string, 0, len(e.adapters))
+	for id := range e.adapters {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // estimateTokens estimates the token count for a request (chars/4 heuristic).
 func estimateTokens(req Request) int {
 	if req.EstimatedInputTokens > 0 {

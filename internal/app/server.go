@@ -35,6 +35,8 @@ type Server struct {
 	engine *router.Engine
 	store  store.Store
 	logger *slog.Logger
+
+	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -47,7 +49,7 @@ func NewServer(cfg Config) (*Server, error) {
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
 		AllowCredentials: false,
 		MaxAge:           300,
@@ -109,12 +111,18 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:    cfg,
-		r:      r,
-		vault:  v,
-		engine: eng,
-		store:  db,
-		logger: logger,
+		cfg:       cfg,
+		r:         r,
+		vault:     v,
+		engine:    eng,
+		store:     db,
+		logger:    logger,
+		stopPrune: make(chan struct{}),
+	}
+
+	// Start TSDB auto-prune goroutine.
+	if ts != nil {
+		go s.tsdbPruneLoop(ts)
 	}
 
 	httpapi.MountRoutes(r, httpapi.Dependencies{
@@ -134,10 +142,29 @@ func NewServer(cfg Config) (*Server, error) {
 func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) Close() error {
+	close(s.stopPrune)
 	if s.store != nil {
 		return s.store.Close()
 	}
 	return nil
+}
+
+func (s *Server) tsdbPruneLoop(ts *tsdb.Store) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			deleted, err := ts.Prune(context.Background())
+			if err != nil {
+				s.logger.Warn("TSDB prune failed", slog.String("error", err.Error()))
+			} else if deleted > 0 {
+				s.logger.Info("TSDB pruned", slog.Int64("deleted", deleted))
+			}
+		case <-s.stopPrune:
+			return
+		}
+	}
 }
 
 func registerProviders(eng *router.Engine, timeout time.Duration, logger *slog.Logger) {

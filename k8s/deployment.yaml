@@ -27,14 +27,29 @@ spec:
                 secretKeyRef:
                   name: tokenhub-secrets
                   key: openai_api_key
+                  optional: true
             - name: TOKENHUB_ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: tokenhub-secrets
                   key: anthropic_api_key
+                  optional: true
+            - name: TOKENHUB_VLLM_ENDPOINTS
+              valueFrom:
+                configMapKeyRef:
+                  name: tokenhub-config
+                  key: vllm_endpoints
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           readinessProbe:
             httpGet:
               path: /healthz
@@ -49,4 +64,16 @@ spec:
             periodSeconds: 10
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: tokenhub-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tokenhub-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -46,24 +47,48 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
+// ProviderUpsertRequest extends ProviderRecord with optional credential.
+type ProviderUpsertRequest struct {
+	store.ProviderRecord
+	APIKey string `json:"api_key,omitempty"` // optional; stored in vault if provided
+}
+
 func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var p store.ProviderRecord
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		var req ProviderUpsertRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		if p.ID == "" {
+		if req.ID == "" {
 			http.Error(w, "provider id required", http.StatusBadRequest)
 			return
 		}
+
+		// Store API key in vault if provided.
+		if req.APIKey != "" && d.Vault != nil && !d.Vault.IsLocked() {
+			if err := d.Vault.Set("provider:"+req.ID+":api_key", req.APIKey); err != nil {
+				http.Error(w, "vault error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			req.CredStore = "vault"
+			// Persist vault data.
+			if d.Store != nil {
+				salt := d.Vault.Salt()
+				data := d.Vault.Export()
+				if salt != nil {
+					_ = d.Store.SaveVaultBlob(r.Context(), salt, data)
+				}
+			}
+		}
+
 		if d.Store != nil {
-			if err := d.Store.UpsertProvider(r.Context(), p); err != nil {
+			if err := d.Store.UpsertProvider(r.Context(), req.ProviderRecord); err != nil {
 				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "cred_store": req.CredStore})
 	}
 }
 
@@ -261,6 +286,51 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 		d.Engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudgetUSD, cfg.DefaultMaxLatencyMs)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
+}
+
+// RequestLogsHandler handles GET /admin/v1/logs?limit=N&offset=N
+func RequestLogsHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Store == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"logs": []any{}})
+			return
+		}
+		limit := 100
+		offset := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := parseIntParam(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if v := r.URL.Query().Get("offset"); v != "" {
+			if n, err := parseIntParam(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+		logs, err := d.Store.ListRequestLogs(r.Context(), limit, offset)
+		if err != nil {
+			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"logs": logs})
+	}
+}
+
+// EngineModelsHandler lists models from the runtime engine (not DB).
+func EngineModelsHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		models := d.Engine.ListModels()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models":   models,
+			"adapters": d.Engine.ListAdapterIDs(),
+		})
+	}
+}
+
+func parseIntParam(s string) (int, error) {
+	var n int
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
 }
 
 func HealthStatsHandler(d Dependencies) http.HandlerFunc {

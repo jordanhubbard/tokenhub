@@ -15,6 +15,8 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
+	"github.com/jordanhubbard/tokenhub/internal/store"
+	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
 
@@ -55,9 +57,25 @@ func setupTestServer(t *testing.T) (*httptest.Server, *router.Engine, *vault.Vau
 	bus := events.NewBus()
 	sc := stats.NewCollector()
 
-	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc})
-	ts := httptest.NewServer(r)
-	return ts, eng, v
+	// Set up in-memory SQLite store for tests.
+	db, err := store.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	// Set up TSDB.
+	ts, err := tsdb.New(db.DB())
+	if err != nil {
+		t.Fatalf("failed to create TSDB: %v", err)
+	}
+
+	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc, Store: db, TSDB: ts})
+	srv := httptest.NewServer(r)
+	return srv, eng, v
 }
 
 func TestHealthz(t *testing.T) {
@@ -522,6 +540,149 @@ func TestChatWithDirectives(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&chatResp)
 	if chatResp.NegotiatedModel != "m1" {
 		t.Errorf("expected m1, got %s", chatResp.NegotiatedModel)
+	}
+}
+
+func TestRequestLogsEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/logs?limit=10")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	if _, ok := result["logs"]; !ok {
+		t.Error("expected 'logs' key")
+	}
+}
+
+func TestEngineModelsEndpoint(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	resp, err := http.Get(ts.URL + "/admin/v1/engine/models")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	models, ok := result["models"].([]any)
+	if !ok {
+		t.Fatal("expected models array")
+	}
+	if len(models) < 1 {
+		t.Error("expected at least 1 model")
+	}
+	adapters, ok := result["adapters"].([]any)
+	if !ok {
+		t.Fatal("expected adapters array")
+	}
+	if len(adapters) < 1 {
+		t.Error("expected at least 1 adapter")
+	}
+}
+
+func TestProviderUpsertWithAPIKey(t *testing.T) {
+	ts, _, v := setupTestServer(t)
+	defer ts.Close()
+
+	// Unlock vault first.
+	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
+	resp, _ := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+
+	if v.IsLocked() {
+		t.Fatal("vault should be unlocked")
+	}
+
+	// Upsert provider with API key.
+	provBody, _ := json.Marshal(map[string]any{
+		"id":      "test-openai",
+		"type":    "openai",
+		"enabled": true,
+		"api_key": "sk-test-12345",
+	})
+	resp, err := http.Post(ts.URL+"/admin/v1/providers", "application/json", bytes.NewReader(provBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	if result["cred_store"] != "vault" {
+		t.Errorf("expected cred_store=vault, got %v", result["cred_store"])
+	}
+
+	// Verify key stored in vault.
+	key, err := v.Get("provider:test-openai:api_key")
+	if err != nil {
+		t.Fatalf("failed to get key from vault: %v", err)
+	}
+	if key != "sk-test-12345" {
+		t.Errorf("expected sk-test-12345, got %s", key)
+	}
+}
+
+func TestRoutingConfigEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// GET routing config (should be empty/default).
+	resp, err := http.Get(ts.URL + "/admin/v1/routing-config")
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestTSDBEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// Query with no data.
+	resp, err := http.Get(ts.URL + "/admin/v1/tsdb/query?metric=latency")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// List metrics.
+	resp, err = http.Get(ts.URL + "/admin/v1/tsdb/metrics")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 }
 
