@@ -1,28 +1,28 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod go.sum* ./
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Download dependencies
-RUN go mod download
+# Copy application
+COPY tokenhub/ ./tokenhub/
+COPY setup.py .
 
-# Copy source code
-COPY . .
+# Install the package
+RUN pip install -e .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o tokenhub ./cmd/tokenhub
+# Create data directory
+RUN mkdir -p /data
 
-# Runtime stage - use a distroless image for security and CA certs
-FROM gcr.io/distroless/static:nonroot
-
-# Copy the binary from builder
-COPY --from=builder /app/tokenhub /tokenhub
-
-# Expose the default port
+# Expose port
 EXPOSE 8080
 
+# Set environment variables
+ENV TOKENHUB_DB_PATH=/data/tokenhub.db
+ENV TOKENHUB_HOST=0.0.0.0
+ENV TOKENHUB_PORT=8080
+
 # Run the application
-ENTRYPOINT ["/tokenhub"]
+CMD ["python", "-m", "tokenhub.main"]

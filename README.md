@@ -1,185 +1,188 @@
-# Tokenhub
+# TokenHub
 
-Organize your token providers by cost, complexity, and reliability
-
-## Overview
-
-Tokenhub is an LLM interposer service that intelligently routes requests between multiple LLM providers (OpenAI, Anthropic, local vLLM instances) based on cost, context size, and availability. It provides advanced features like automatic escalation on failures, context overflow handling, and adversarial orchestration mode.
+Organize your token providers by cost, complexity, and reliability. TokenHub is an intelligent AI model router and orchestrator that automatically selects the best model for your requests based on context size, cost, and performance requirements.
 
 ## Features
 
-- **Provider Registry**: Support for OpenAI, Anthropic, and vLLM providers
-- **API Key Management**: Secure storage with AES-256 encryption via encrypted vault or environment variables
-- **Model Registry**: Configure models with weight, cost, and context size metadata
-- **Intelligent Routing**: Automatic model selection based on requirements
-- **Automatic Escalation**: Fallback to alternative providers on failure or context overflow
-- **Adversarial Orchestration**: Model A generates plan, Model B critiques, Model A refines
-- **Containerized**: Docker support for easy deployment
+- **Provider Registry**: Manage multiple AI providers with encrypted API key storage (AES-256)
+- **Model Registry**: Track model metadata including cost, context size, and priority weights
+- **Intelligent Routing**: Automatically select models based on context requirements and cost constraints
+- **Escalation Support**: Automatically escalate to higher-tier models on failure or context overflow
+- **Adversarial Orchestration**: Generate responses with one model, critique with another, optional refinement loop
+- **REST API**: Clean REST endpoints for chat, provider management, and metrics
+- **Secure Vault**: AES-256 encrypted storage for API keys with admin password protection
+- **Prometheus Metrics**: Built-in metrics for monitoring and observability
+- **SQLite Persistence**: Default database for configuration and state
+- **Fully Containerized**: Docker and docker-compose support
+
+## Architecture
+
+TokenHub follows a clean, modular architecture with separation of concerns:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         API Layer                            │
+│              (Flask REST API + Prometheus)                   │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────┴────────────────────────────────────────────┐
+│                  Orchestration Engine                        │
+│         (Simple mode / Adversarial mode)                     │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+┌────────────────┴────────────────────────────────────────────┐
+│                    Routing Engine                            │
+│    (Model selection, escalation, policy enforcement)         │
+└────────┬────────────────────────┬──────────────────────────┘
+         │                        │
+┌────────┴────────┐      ┌────────┴──────────┐
+│ Model Registry  │      │ Provider Registry │
+│ (cost, context, │      │  (API adapters)   │
+│     weight)     │      └────────┬──────────┘
+└─────────────────┘               │
+                         ┌────────┴──────────┐
+                         │   Secure Vault    │
+                         │  (AES-256 keys)   │
+                         └───────────────────┘
+```
 
 ## Quick Start
 
-### Generate Encryption Key
+### Using Docker (Recommended)
 
+1. Clone the repository:
 ```bash
-go run cmd/tokenhub/main.go -generate-key
+git clone https://github.com/jordanhubbard/tokenhub.git
+cd tokenhub
 ```
 
-Set the generated key as an environment variable:
+2. Set your admin password:
 ```bash
-export TOKENHUB_ENCRYPTION_KEY=<generated-key>
+export TOKENHUB_ADMIN_PASSWORD="your-secure-password"
 ```
 
-### Configuration
-
-Copy the example configuration:
+3. Start the service:
 ```bash
-cp config.example.json config.json
+docker-compose up -d
 ```
 
-Edit `config.json` to add your providers and models. API keys can be provided via environment variables (recommended) or directly in the config.
+The service will be available at `http://localhost:8080`
 
-### Running with Docker
+### Manual Installation
 
+1. Install dependencies:
 ```bash
-# Build the image
-docker build -t tokenhub .
-
-# Run with environment variables
-docker run -p 8080:8080 \
-  -e TOKENHUB_ENCRYPTION_KEY=$TOKENHUB_ENCRYPTION_KEY \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  tokenhub
+pip install -r requirements.txt
 ```
 
-Or use docker-compose:
+2. Set environment variables:
 ```bash
-docker-compose up
+export TOKENHUB_ADMIN_PASSWORD="your-secure-password"
 ```
 
-### Running Locally
-
+3. Run the service:
 ```bash
-# Install dependencies
-go mod download
-
-# Run the service
-go run cmd/tokenhub/main.go -config config.json
+python -m tokenhub.main
 ```
 
-## API Endpoints
+## API Usage
 
-### Chat Completions
+### Add a Provider
 
 ```bash
-POST /v1/chat/completions
-Content-Type: application/json
-
-{
-  "messages": [
-    {"role": "user", "content": "Hello!"}
-  ],
-  "max_tokens": 100,
-  "temperature": 0.7
-}
+curl -X POST http://localhost:8080/admin/providers \
+  -H "Authorization: Bearer your-admin-password" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-provider",
+    "provider_type": "mock",
+    "api_key": "your-api-key"
+  }'
 ```
 
-### Completions
+### Chat Completion (Simple Mode)
 
 ```bash
-POST /v1/completions
-Content-Type: application/json
-
-{
-  "prompt": "Once upon a time",
-  "max_tokens": 100,
-  "temperature": 0.7
-}
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "orchestration_mode": "simple"
+  }'
 ```
 
-### Adversarial Orchestration
+### Chat Completion (Adversarial Mode)
 
 ```bash
-POST /v1/adversarial
-Content-Type: application/json
-
-{
-  "prompt": "Design a microservices architecture for an e-commerce platform"
-}
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing"}
+    ],
+    "orchestration_mode": "adversarial",
+    "planner_model": "mock-gpt-4",
+    "critic_model": "mock-gpt-3.5",
+    "enable_refinement": true,
+    "max_refinement_iterations": 1
+  }'
 ```
 
-Response includes:
-- `initial_plan`: Plan generated by Model A
-- `critique`: Critique from Model B
-- `refined_plan`: Refined plan from Model A
-
-### Health Check
+### Prometheus Metrics
 
 ```bash
-GET /health
+curl http://localhost:8080/metrics
 ```
 
 ## Configuration
 
-The configuration file supports:
+Configuration is managed through environment variables:
 
-- **Server**: Host and port settings
-- **Vault**: Encryption key configuration
-- **Providers**: List of LLM providers with API keys
-- **Models**: Model definitions with weights, costs, and context sizes
+- `TOKENHUB_ADMIN_PASSWORD`: Admin password for vault access (required)
+- `TOKENHUB_HOST`: Host to bind to (default: 0.0.0.0)
+- `TOKENHUB_PORT`: Port to bind to (default: 8080)
+- `TOKENHUB_DB_PATH`: SQLite database path (default: tokenhub.db)
+- `TOKENHUB_DEBUG`: Enable debug mode (default: false)
 
-See `config.example.json` for a complete example.
+## Extending with Custom Providers
 
-## Architecture
+To add support for a new AI provider, implement the `ProviderAdapter` interface:
 
+```python
+from tokenhub.providers import ProviderAdapter, ChatRequest, ChatResponse
+
+class MyProviderAdapter(ProviderAdapter):
+    def chat_completion(self, request: ChatRequest) -> ChatResponse:
+        # Implement your provider's API call
+        pass
+    
+    def get_available_models(self) -> List[str]:
+        # Return list of available models
+        pass
+    
+    def validate_api_key(self) -> bool:
+        # Validate the API key
+        pass
+
+# Register the provider
+api.provider_registry.register_provider_class("myprovider", MyProviderAdapter)
 ```
-┌─────────────┐
-│   Client    │
-└──────┬──────┘
-       │
-       v
-┌─────────────────────────────────────┐
-│         HTTP Server                  │
-│  /v1/chat/completions                │
-│  /v1/completions                     │
-│  /v1/adversarial                     │
-└──────┬──────────────────────────────┘
-       │
-       v
-┌─────────────────────────────────────┐
-│         Router                       │
-│  - Model Selection                   │
-│  - Escalation Logic                  │
-│  - Context Overflow Handling         │
-└──────┬──────────────────────────────┘
-       │
-       v
-┌─────────────────────────────────────┐
-│    Provider Registry                 │
-│  - OpenAI                            │
-│  - Anthropic                         │
-│  - vLLM                              │
-└─────────────────────────────────────┘
+
+## Development
+
+Run tests (when available):
+```bash
+pytest
 ```
 
 ## Security
 
-- API keys are stored encrypted using AES-256 with GCM mode
-- Encryption key should be stored securely (e.g., environment variable, secrets manager)
-- Never commit API keys or encryption keys to version control
-
-## Development
-
-```bash
-# Run tests
-go test ./...
-
-# Build
-go build -o tokenhub ./cmd/tokenhub
-
-# Run
-./tokenhub -config config.json
-```
+- API keys are encrypted with AES-256-CBC encryption
+- Admin password required for provider management
+- Key derivation using PBKDF2 with 100,000 iterations
+- Secure random salt generation for each vault instance
 
 ## License
 
