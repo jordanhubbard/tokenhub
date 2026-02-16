@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	tokenhub "github.com/jordanhubbard/tokenhub"
@@ -139,6 +141,22 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Handle("/metrics", d.Metrics.Handler())
+
+	// Serve built documentation from docs/book/ if available.
+	// Build with: make docs (requires mdbook)
+	mountDocs(r)
+}
+
+func mountDocs(r chi.Router) {
+	// Look for docs/book/ relative to the working directory.
+	docRoot := filepath.Join("docs", "book")
+	if info, err := os.Stat(docRoot); err == nil && info.IsDir() {
+		docsFS := http.FileServer(http.Dir(docRoot))
+		r.Handle("/docs/*", http.StripPrefix("/docs/", docsFS))
+		r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+		})
+	}
 }
 
 // readSeeker combines io.ReadSeeker for http.ServeContent.

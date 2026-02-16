@@ -1,0 +1,29 @@
+[book]
+authors = ["Jordan Hubbard"]
+language = "en"
+multilingual = false
+src = "src"
+title = "TokenHub Documentation"
+description = "Comprehensive documentation for the TokenHub LLM routing proxy"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/jordanhubbard/tokenhub"
+edit-url-template = "https://github.com/jordanhubbard/tokenhub/edit/main/docs/{path}"
+site-url = "/docs/"
+no-section-label = false
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-hierarchical-path-names = true
+
+[output.html.fold]
+enable = true
+level = 0

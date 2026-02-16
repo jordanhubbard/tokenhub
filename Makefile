@@ -1,4 +1,4 @@
-.PHONY: build run test test-race vet lint docker clean
+.PHONY: build run test test-race vet lint docker clean docs docs-serve
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -24,5 +24,13 @@ lint:
 docker:
 	docker build -t tokenhub:$(VERSION) .
 
+docs:
+	@command -v mdbook >/dev/null 2>&1 || { echo "mdbook not found. Install: cargo install mdbook (or: brew install mdbook)"; exit 1; }
+	cd docs && mdbook build
+
+docs-serve:
+	@command -v mdbook >/dev/null 2>&1 || { echo "mdbook not found. Install: cargo install mdbook (or: brew install mdbook)"; exit 1; }
+	cd docs && mdbook serve --open
+
 clean:
-	rm -rf bin/
+	rm -rf bin/ docs/book/
