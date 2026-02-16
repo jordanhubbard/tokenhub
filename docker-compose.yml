@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  tokenhub:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - TOKENHUB_ENCRYPTION_KEY=${TOKENHUB_ENCRYPTION_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./config.json:/root/config.json:ro
+    command: ["./tokenhub", "-config", "/root/config.json"]
+    restart: unless-stopped

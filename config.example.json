@@ -1,0 +1,65 @@
+# Example configuration for Tokenhub
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "vault": {
+    "encryption_key_env": "TOKENHUB_ENCRYPTION_KEY"
+  },
+  "providers": [
+    {
+      "name": "openai",
+      "type": "openai",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    {
+      "name": "anthropic",
+      "type": "anthropic",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    {
+      "name": "vllm-local",
+      "type": "vllm",
+      "base_url": "http://localhost:8000"
+    }
+  ],
+  "models": [
+    {
+      "id": "gpt-4",
+      "provider": "openai",
+      "name": "gpt-4",
+      "weight": 90,
+      "cost_per_1k": 0.03,
+      "context_size": 8192,
+      "capabilities": ["chat", "completion"]
+    },
+    {
+      "id": "gpt-3.5-turbo",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo",
+      "weight": 80,
+      "cost_per_1k": 0.002,
+      "context_size": 4096,
+      "capabilities": ["chat", "completion"]
+    },
+    {
+      "id": "claude-2",
+      "provider": "anthropic",
+      "name": "claude-2",
+      "weight": 85,
+      "cost_per_1k": 0.01,
+      "context_size": 100000,
+      "capabilities": ["chat", "completion"]
+    },
+    {
+      "id": "llama-2-70b",
+      "provider": "vllm-local",
+      "name": "meta-llama/Llama-2-70b-chat-hf",
+      "weight": 70,
+      "cost_per_1k": 0.0,
+      "context_size": 4096,
+      "capabilities": ["chat", "completion"]
+    }
+  ]
+}
