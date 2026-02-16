@@ -48,6 +48,30 @@ type HealthChecker interface {
 	RecordError(providerID string, errMsg string)
 }
 
+// StatsProvider optionally extends HealthChecker with scoring data.
+type StatsProvider interface {
+	GetAvgLatencyMs(providerID string) float64
+	GetErrorRate(providerID string) float64
+}
+
+// ModeWeights defines scoring coefficients for a routing mode.
+type ModeWeights struct {
+	Cost    float64
+	Latency float64
+	Failure float64
+	Weight  float64
+}
+
+// modeWeightProfiles maps routing modes to scoring coefficients.
+// Lower score = better model choice.
+var modeWeightProfiles = map[string]ModeWeights{
+	"cheap":           {Cost: 0.7, Latency: 0.1, Failure: 0.1, Weight: 0.1},
+	"normal":          {Cost: 0.25, Latency: 0.25, Failure: 0.25, Weight: 0.25},
+	"high_confidence": {Cost: 0.05, Latency: 0.1, Failure: 0.15, Weight: 0.7},
+	"planning":        {Cost: 0.1, Latency: 0.1, Failure: 0.2, Weight: 0.6},
+	"adversarial":     {Cost: 0.1, Latency: 0.1, Failure: 0.2, Weight: 0.6},
+}
+
 type EngineConfig struct {
 	DefaultMode         string
 	DefaultMaxBudgetUSD float64
@@ -105,7 +129,7 @@ func estimateTokens(req Request) int {
 	return total
 }
 
-// eligibleModels returns models sorted by weight (descending) that meet the given constraints.
+// eligibleModels returns models sorted by multi-objective score that meet the given constraints.
 func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 	var eligible []Model
 	for _, m := range e.models {
@@ -115,7 +139,9 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 		if p.MinWeight > 0 && m.Weight < p.MinWeight {
 			continue
 		}
-		if m.MaxContextTokens > 0 && tokensNeeded > 0 && tokensNeeded > m.MaxContextTokens {
+		// Reserve 15% headroom for context estimation.
+		contextWithHeadroom := int(float64(tokensNeeded) * 1.15)
+		if m.MaxContextTokens > 0 && contextWithHeadroom > 0 && contextWithHeadroom > m.MaxContextTokens {
 			continue
 		}
 		if _, ok := e.adapters[m.ProviderID]; !ok {
@@ -132,10 +158,74 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 		}
 		eligible = append(eligible, m)
 	}
+
+	// Sort by multi-objective score (lower is better).
+	scores := e.scoreModels(eligible, tokensNeeded, p.Mode)
 	sort.Slice(eligible, func(i, j int) bool {
-		return eligible[i].Weight > eligible[j].Weight
+		return scores[eligible[i].ID] < scores[eligible[j].ID]
 	})
 	return eligible
+}
+
+// scoreModels computes a multi-objective score for each eligible model.
+// Lower score = better model for the given routing mode.
+func (e *Engine) scoreModels(models []Model, tokensNeeded int, mode string) map[string]float64 {
+	w := modeWeightProfiles["normal"]
+	if mw, ok := modeWeightProfiles[mode]; ok {
+		w = mw
+	}
+
+	// Compute raw values for normalization.
+	var maxCost, maxWeight float64
+	var maxLatency, maxFailure float64
+
+	// Get stats provider if available.
+	sp, hasStats := e.health.(StatsProvider)
+
+	for _, m := range models {
+		cost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+		if cost > maxCost {
+			maxCost = cost
+		}
+		if float64(m.Weight) > maxWeight {
+			maxWeight = float64(m.Weight)
+		}
+		if hasStats {
+			lat := sp.GetAvgLatencyMs(m.ProviderID)
+			if lat > maxLatency {
+				maxLatency = lat
+			}
+			fail := sp.GetErrorRate(m.ProviderID)
+			if fail > maxFailure {
+				maxFailure = fail
+			}
+		}
+	}
+
+	scores := make(map[string]float64, len(models))
+	for _, m := range models {
+		cost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+		normCost := safeNorm(cost, maxCost)
+		normWeight := safeNorm(float64(m.Weight), maxWeight)
+
+		var normLatency, normFailure float64
+		if hasStats {
+			normLatency = safeNorm(sp.GetAvgLatencyMs(m.ProviderID), maxLatency)
+			normFailure = safeNorm(sp.GetErrorRate(m.ProviderID), maxFailure)
+		}
+
+		// Lower score is better. Weight is subtracted (higher weight = better).
+		score := w.Cost*normCost + w.Latency*normLatency + w.Failure*normFailure - w.Weight*normWeight
+		scores[m.ID] = score
+	}
+	return scores
+}
+
+func safeNorm(v, max float64) float64 {
+	if max <= 0 {
+		return 0
+	}
+	return clamp(v/max, 0, 1)
 }
 
 func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decision, ProviderResponse, error) {
@@ -144,6 +234,16 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	}
 	if p.MaxBudgetUSD == 0 {
 		p.MaxBudgetUSD = e.cfg.DefaultMaxBudgetUSD
+	}
+	if p.MaxLatencyMs == 0 {
+		p.MaxLatencyMs = e.cfg.DefaultMaxLatencyMs
+	}
+
+	// Enforce latency budget with context timeout.
+	if p.MaxLatencyMs > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(p.MaxLatencyMs)*time.Millisecond)
+		defer cancel()
 	}
 
 	e.mu.RLock()

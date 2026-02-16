@@ -143,6 +143,28 @@ func (t *Tracker) AllStats() []Stats {
 	return result
 }
 
+// GetAvgLatencyMs returns the average latency for a provider.
+// Implements router.StatsProvider.
+func (t *Tracker) GetAvgLatencyMs(providerID string) float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if s, ok := t.stats[providerID]; ok {
+		return s.AvgLatencyMs
+	}
+	return 0
+}
+
+// GetErrorRate returns the error rate for a provider.
+// Implements router.StatsProvider.
+func (t *Tracker) GetErrorRate(providerID string) float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if s, ok := t.stats[providerID]; ok && s.TotalRequests > 0 {
+		return float64(s.TotalErrors) / float64(s.TotalRequests)
+	}
+	return 0
+}
+
 func (t *Tracker) getOrCreate(providerID string) *Stats {
 	s, ok := t.stats[providerID]
 	if !ok {

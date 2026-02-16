@@ -423,6 +423,99 @@ func TestModelWithoutAdapterSkipped(t *testing.T) {
 	}
 }
 
+func TestCheapModePrefersCheapModel(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+
+	// Expensive, high-weight model.
+	eng.RegisterModel(Model{
+		ID: "expensive", ProviderID: "p1", Weight: 10,
+		MaxContextTokens: 4096, InputPer1K: 0.01, OutputPer1K: 0.03, Enabled: true,
+	})
+	// Cheap, low-weight model.
+	eng.RegisterModel(Model{
+		ID: "cheapo", ProviderID: "p1", Weight: 3,
+		MaxContextTokens: 4096, InputPer1K: 0.0005, OutputPer1K: 0.0015, Enabled: true,
+	})
+
+	dec, _, err := eng.RouteAndSend(context.Background(), makeRequest("hi"), Policy{Mode: "cheap"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.ModelID != "cheapo" {
+		t.Errorf("cheap mode: expected cheapo model, got %s", dec.ModelID)
+	}
+}
+
+func TestHighConfidenceModePrefersBestModel(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+
+	eng.RegisterModel(Model{
+		ID: "strong", ProviderID: "p1", Weight: 10,
+		MaxContextTokens: 4096, InputPer1K: 0.01, OutputPer1K: 0.03, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "weak", ProviderID: "p1", Weight: 2,
+		MaxContextTokens: 4096, InputPer1K: 0.0005, OutputPer1K: 0.0015, Enabled: true,
+	})
+
+	dec, _, err := eng.RouteAndSend(context.Background(), makeRequest("hi"), Policy{Mode: "high_confidence"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.ModelID != "strong" {
+		t.Errorf("high_confidence mode: expected strong model, got %s", dec.ModelID)
+	}
+}
+
+func TestScoreModels(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	models := []Model{
+		{ID: "expensive", Weight: 10, InputPer1K: 0.1, OutputPer1K: 0.3},
+		{ID: "cheapo", Weight: 3, InputPer1K: 0.001, OutputPer1K: 0.003},
+	}
+
+	scores := eng.scoreModels(models, 100, "cheap")
+	// In cheap mode, cost is heavily weighted. Cheapo should have lower score.
+	if scores["cheapo"] >= scores["expensive"] {
+		t.Errorf("cheap mode: cheapo score (%.4f) should be lower than expensive (%.4f)",
+			scores["cheapo"], scores["expensive"])
+	}
+
+	scores2 := eng.scoreModels(models, 100, "high_confidence")
+	// In high_confidence mode, weight is heavily weighted. Expensive (weight=10) should win.
+	if scores2["expensive"] >= scores2["cheapo"] {
+		t.Errorf("high_confidence mode: expensive score (%.4f) should be lower than cheapo (%.4f)",
+			scores2["expensive"], scores2["cheapo"])
+	}
+}
+
+func TestContextHeadroom(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+
+	// Model with 100 context tokens.
+	eng.RegisterModel(Model{ID: "tight", ProviderID: "p1", Weight: 10, MaxContextTokens: 100, Enabled: true})
+	eng.RegisterModel(Model{ID: "roomy", ProviderID: "p1", Weight: 5, MaxContextTokens: 200000, Enabled: true})
+
+	// Request that's 90 tokens: with 15% headroom (103.5) it exceeds 100 context limit.
+	req := Request{
+		Messages:             []Message{{Role: "user", Content: "hi"}},
+		EstimatedInputTokens: 90,
+	}
+	dec, _, err := eng.RouteAndSend(context.Background(), req, Policy{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.ModelID != "roomy" {
+		t.Errorf("expected roomy model due to headroom, got %s", dec.ModelID)
+	}
+}
+
 func TestDisabledModelSkipped(t *testing.T) {
 	eng := NewEngine(EngineConfig{})
 	mock := newMockSender("p1")
