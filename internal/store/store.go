@@ -55,6 +55,7 @@ type Store interface {
 	// API key management
 	CreateAPIKey(ctx context.Context, key APIKeyRecord) error
 	GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error)
+	GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]APIKeyRecord, error)
 	ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error)
 	UpdateAPIKey(ctx context.Context, key APIKeyRecord) error
 	DeleteAPIKey(ctx context.Context, id string) error

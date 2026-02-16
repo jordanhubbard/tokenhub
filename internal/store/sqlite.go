@@ -115,6 +115,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			rotation_days INTEGER NOT NULL DEFAULT 0,
 			enabled INTEGER NOT NULL DEFAULT 1
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -421,6 +422,40 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 	}
 	k.Enabled = enabledInt != 0
 	return &k, nil
+}
+
+func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]APIKeyRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled
+		 FROM api_keys WHERE key_prefix = ? AND enabled = 1`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []APIKeyRecord
+	for rows.Next() {
+		var k APIKeyRecord
+		var createdAt string
+		var lastUsed, expires sql.NullString
+		var enabledInt int
+		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt); err != nil {
+			return nil, err
+		}
+		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if lastUsed.Valid {
+			t, _ := time.Parse(time.RFC3339, lastUsed.String)
+			k.LastUsedAt = &t
+		}
+		if expires.Valid {
+			t, _ := time.Parse(time.RFC3339, expires.String)
+			k.ExpiresAt = &t
+		}
+		k.Enabled = enabledInt != 0
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
 }
 
 func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {

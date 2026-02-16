@@ -21,6 +21,7 @@ const (
 func ChatWorkflow(ctx workflow.Context, input ChatInput) (ChatOutput, error) {
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: activityTimeout,
+		HeartbeatTimeout:    30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 1, // Activities handle their own retry logic.
 		},
@@ -54,12 +55,7 @@ func ChatWorkflow(ctx workflow.Context, input ChatInput) (ChatOutput, error) {
 		}
 
 		// Step 3: Classify error and escalate.
-		tokens := input.Request.EstimatedInputTokens
-		if tokens == 0 {
-			for _, msg := range input.Request.Messages {
-				tokens += len(msg.Content) / 4
-			}
-		}
+		tokens := EstimateTokens(input.Request)
 
 		var escOutput EscalateOutput
 		escInput := EscalateInput{
@@ -73,9 +69,11 @@ func ChatWorkflow(ctx workflow.Context, input ChatInput) (ChatOutput, error) {
 		}
 
 		currentModelID = escOutput.NextModelID
-		// We need the provider for the new model — use the decision's provider
-		// since we don't have a way to look it up in a workflow without an activity.
-		// The SelectModel already ordered models; just try next.
+		// Resolve the provider for the new model.
+		var newProviderID string
+		if resolveErr := workflow.ExecuteActivity(ctx, (*Activities).ResolveModel, currentModelID).Get(ctx, &newProviderID); resolveErr == nil {
+			currentProviderID = newProviderID
+		}
 	}
 
 	latencyMs := workflow.Now(ctx).Sub(start).Milliseconds()
@@ -177,7 +175,7 @@ func adversarialWorkflow(ctx workflow.Context, input OrchestrationInput, start t
 	totalCost := planOutput.Decision.EstimatedCostUSD
 
 	var critique, refinedPlan string
-	var lastDecision router.Decision
+	lastDecision := planOutput.Decision
 
 	for i := 0; i < iterations; i++ {
 		// Phase 2: Critique.
@@ -270,9 +268,10 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 
 	// Collect results.
 	type voteResult struct {
-		modelID string
-		content string
-		cost    float64
+		modelID    string
+		providerID string
+		content    string
+		cost       float64
 	}
 
 	var results []voteResult
@@ -283,9 +282,10 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 			continue // skip failed voters
 		}
 		results = append(results, voteResult{
-			modelID: out.Decision.ModelID,
-			content: extractContentFromRaw(out.Response),
-			cost:    out.Decision.EstimatedCostUSD,
+			modelID:    out.Decision.ModelID,
+			providerID: out.Decision.ProviderID,
+			content:    extractContentFromRaw(out.Response),
+			cost:       out.Decision.EstimatedCostUSD,
 		})
 		totalCost += out.Decision.EstimatedCostUSD
 	}
@@ -305,6 +305,7 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 		return ChatOutput{
 			Decision: router.Decision{
 				ModelID:          results[0].modelID,
+				ProviderID:       results[0].providerID,
 				EstimatedCostUSD: totalCost,
 				Reason:           "vote-single-response",
 			},
@@ -335,7 +336,24 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 	}
 
 	var judgeOutput ChatOutput
-	_ = workflow.ExecuteChildWorkflow(ctx, ChatWorkflow, judgeInput).Get(ctx, &judgeOutput)
+	if judgeErr := workflow.ExecuteChildWorkflow(ctx, ChatWorkflow, judgeInput).Get(ctx, &judgeOutput); judgeErr != nil {
+		// Judge failed — return first response as fallback.
+		resultJSON, _ := json.Marshal(map[string]any{
+			"responses":   []map[string]any{{"model": results[0].modelID, "content": results[0].content}},
+			"selected":    0,
+			"judge_error": judgeErr.Error(),
+		})
+		return ChatOutput{
+			Decision: router.Decision{
+				ModelID:          results[0].modelID,
+				ProviderID:       results[0].providerID,
+				EstimatedCostUSD: totalCost,
+				Reason:           "vote-judge-failed",
+			},
+			Response:  resultJSON,
+			LatencyMs: workflow.Now(ctx).Sub(start).Milliseconds(),
+		}, nil
+	}
 	totalCost += judgeOutput.Decision.EstimatedCostUSD
 
 	// Parse judge selection.
@@ -365,6 +383,7 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 	return ChatOutput{
 		Decision: router.Decision{
 			ModelID:          results[selectedIdx].modelID,
+			ProviderID:       results[selectedIdx].providerID,
 			EstimatedCostUSD: totalCost,
 			Reason:           "vote-orchestration",
 		},

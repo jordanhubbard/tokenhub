@@ -32,7 +32,13 @@ func WorkflowsListHandler(d Dependencies) http.HandlerFunc {
 		// Build query string for Temporal visibility.
 		query := ""
 		if status := r.URL.Query().Get("status"); status != "" {
-			query = "ExecutionStatus = '" + status + "'"
+			switch status {
+			case "RUNNING", "COMPLETED", "FAILED", "CANCELED", "TERMINATED", "CONTINUED_AS_NEW", "TIMED_OUT":
+				query = "ExecutionStatus = '" + status + "'"
+			default:
+				http.Error(w, "invalid status filter", http.StatusBadRequest)
+				return
+			}
 		}
 
 		resp, err := d.TemporalClient.ListWorkflow(r.Context(), &workflowservice.ListWorkflowExecutionsRequest{
@@ -71,7 +77,7 @@ func WorkflowsListHandler(d Dependencies) http.HandlerFunc {
 func WorkflowDescribeHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.TemporalClient == nil {
-			http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"temporal_enabled": false})
 			return
 		}
 
@@ -108,7 +114,7 @@ func WorkflowDescribeHandler(d Dependencies) http.HandlerFunc {
 func WorkflowHistoryHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.TemporalClient == nil {
-			http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"temporal_enabled": false})
 			return
 		}
 

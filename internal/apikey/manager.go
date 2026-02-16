@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -38,7 +39,7 @@ type Manager struct {
 	store store.Store
 
 	mu    sync.RWMutex
-	cache map[string]cachedKey // keyString -> cached record
+	cache map[string]cachedKey // SHA-256 hash of key -> cached record
 }
 
 // NewManager creates a new API key manager.
@@ -85,18 +86,24 @@ func (m *Manager) Generate(ctx context.Context, name string, scopes string, rota
 // Validate checks a plaintext API key and returns the associated record.
 // Uses a short TTL cache to avoid bcrypt on every request.
 func (m *Manager) Validate(ctx context.Context, keyString string) (*store.APIKeyRecord, error) {
-	// Check cache first.
+	// Check cache first (keyed by SHA-256 hash, not plaintext).
+	cacheKey := string(hashForBcrypt(keyString))
 	m.mu.RLock()
-	if cached, ok := m.cache[keyString]; ok && time.Now().Before(cached.expiresAt) {
+	if cached, ok := m.cache[cacheKey]; ok && time.Now().Before(cached.expiresAt) {
 		m.mu.RUnlock()
 		return cached.record, nil
 	}
 	m.mu.RUnlock()
 
-	// Load all enabled keys and bcrypt-compare.
-	keys, err := m.store.ListAPIKeys(ctx)
+	// Extract prefix for indexed lookup.
+	if len(keyString) < len(keyPrefix)+8 {
+		return nil, errors.New("invalid api key")
+	}
+	prefix := keyString[:len(keyPrefix)+8]
+
+	keys, err := m.store.GetAPIKeysByPrefix(ctx, prefix)
 	if err != nil {
-		return nil, fmt.Errorf("list keys: %w", err)
+		return nil, fmt.Errorf("lookup keys: %w", err)
 	}
 
 	for i := range keys {
@@ -116,15 +123,16 @@ func (m *Manager) Validate(ctx context.Context, keyString string) (*store.APIKey
 		k.LastUsedAt = &now
 		_ = m.store.UpdateAPIKey(ctx, *k)
 
-		// Cache the result.
+		// Cache the result (deep copy to prevent mutation of cached data).
+		cachedRecord := *k
 		m.mu.Lock()
-		m.cache[keyString] = cachedKey{
-			record:    k,
+		m.cache[cacheKey] = cachedKey{
+			record:    &cachedRecord,
 			expiresAt: time.Now().Add(cacheTTL),
 		}
 		m.mu.Unlock()
 
-		return k, nil
+		return &cachedRecord, nil
 	}
 
 	return nil, errors.New("invalid api key")
@@ -173,36 +181,32 @@ func (m *Manager) Rotate(ctx context.Context, id string) (string, error) {
 
 // CheckScope checks if a key's scopes allow access to the given endpoint.
 func CheckScope(record *store.APIKeyRecord, endpoint string) bool {
-	// Simple scope check: scopes is a JSON array like ["chat","plan"].
-	// For /v1/chat -> need "chat", for /v1/plan -> need "plan".
-	scopes := record.Scopes
-	switch endpoint {
-	case "/v1/chat":
-		return contains(scopes, "chat")
-	case "/v1/plan":
-		return contains(scopes, "plan")
-	default:
-		// Allow by default for unknown endpoints (admin routes have separate auth).
-		return true
+	scope := routeToScope(endpoint)
+	if scope == "" {
+		return false // deny unknown endpoints by default
 	}
-}
-
-func contains(scopes, scope string) bool {
-	// Simple string search in the JSON array text.
-	return len(scopes) == 0 || // empty scopes = allow all
-		scopes == "[]" || // explicit empty = allow all
-		stringContains(scopes, `"`+scope+`"`)
-}
-
-func stringContains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
+	if record.Scopes == "" || record.Scopes == "[]" {
+		return true // empty scopes = allow all
+	}
+	var scopes []string
+	if err := json.Unmarshal([]byte(record.Scopes), &scopes); err != nil {
+		return false // malformed JSON = deny
+	}
+	for _, s := range scopes {
+		if s == scope {
 			return true
 		}
 	}
 	return false
+}
+
+func routeToScope(endpoint string) string {
+	switch endpoint {
+	case "/v1/chat":
+		return "chat"
+	case "/v1/plan":
+		return "plan"
+	default:
+		return ""
+	}
 }

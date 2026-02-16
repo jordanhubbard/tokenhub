@@ -42,6 +42,7 @@ func New(cfg Config, acts *Activities) (*Manager, error) {
 	w.RegisterActivity(acts.SendToProvider)
 	w.RegisterActivity(acts.ClassifyAndEscalate)
 	w.RegisterActivity(acts.LogResult)
+	w.RegisterActivity(acts.ResolveModel)
 
 	return &Manager{
 		client: c,

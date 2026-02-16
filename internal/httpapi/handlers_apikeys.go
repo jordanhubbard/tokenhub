@@ -84,6 +84,11 @@ func APIKeysListHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
+		if d.Store == nil {
+			http.Error(w, "store not configured", http.StatusServiceUnavailable)
+			return
+		}
+
 		keys, err := d.Store.ListAPIKeys(r.Context())
 		if err != nil {
 			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
@@ -162,24 +167,41 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if v, ok := patch["name"]; ok {
-			if s, ok := v.(string); ok {
-				rec.Name = s
+			s, ok := v.(string)
+			if !ok || s == "" {
+				http.Error(w, "name must be a non-empty string", http.StatusBadRequest)
+				return
 			}
+			rec.Name = s
 		}
 		if v, ok := patch["scopes"]; ok {
-			if s, ok := v.(string); ok {
-				rec.Scopes = s
+			s, ok := v.(string)
+			if !ok {
+				http.Error(w, "scopes must be a JSON array string", http.StatusBadRequest)
+				return
 			}
+			var arr []string
+			if err := json.Unmarshal([]byte(s), &arr); err != nil {
+				http.Error(w, "scopes must be a valid JSON array", http.StatusBadRequest)
+				return
+			}
+			rec.Scopes = s
 		}
 		if v, ok := patch["enabled"]; ok {
-			if b, ok := v.(bool); ok {
-				rec.Enabled = b
+			b, ok := v.(bool)
+			if !ok {
+				http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+				return
 			}
+			rec.Enabled = b
 		}
 		if v, ok := patch["rotation_days"]; ok {
-			if f, ok := v.(float64); ok {
-				rec.RotationDays = int(f)
+			f, ok := v.(float64)
+			if !ok || f < 0 {
+				http.Error(w, "rotation_days must be a non-negative number", http.StatusBadRequest)
+				return
 			}
+			rec.RotationDays = int(f)
 		}
 
 		if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {

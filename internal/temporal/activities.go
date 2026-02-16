@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"go.temporal.io/sdk/activity"
+
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
@@ -48,6 +50,7 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 	}
 
 	start := time.Now()
+	activity.RecordHeartbeat(ctx, "sending")
 	resp, err := adapter.Send(ctx, input.ModelID, input.Request)
 	latencyMs := time.Since(start).Milliseconds()
 
@@ -70,12 +73,14 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 		a.Health.RecordSuccess(input.ProviderID, float64(latencyMs))
 	}
 
-	tokens := input.Request.EstimatedInputTokens
-	if tokens == 0 {
-		for _, msg := range input.Request.Messages {
-			tokens += len(msg.Content) / 4
-		}
+	if resp == nil {
+		return SendOutput{
+			Response:  json.RawMessage("null"),
+			LatencyMs: latencyMs,
+		}, nil
 	}
+
+	tokens := EstimateTokens(input.Request)
 	estCost := (float64(tokens)/1000.0)*m.InputPer1K + (512.0/1000.0)*m.OutputPer1K
 
 	return SendOutput{
@@ -83,6 +88,15 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 		LatencyMs:     latencyMs,
 		EstimatedCost: estCost,
 	}, nil
+}
+
+// ResolveModel looks up a model's provider ID.
+func (a *Activities) ResolveModel(ctx context.Context, modelID string) (string, error) {
+	m, ok := a.Engine.GetModel(modelID)
+	if !ok {
+		return "", fmt.Errorf("model %q not found", modelID)
+	}
+	return m.ProviderID, nil
 }
 
 // ClassifyAndEscalate classifies an error and finds a fallback model.
