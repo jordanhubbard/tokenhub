@@ -148,14 +148,22 @@ func MountRoutes(r chi.Router, d Dependencies) {
 }
 
 func mountDocs(r chi.Router) {
-	// Look for docs/book/ relative to the working directory.
-	docRoot := filepath.Join("docs", "book")
-	if info, err := os.Stat(docRoot); err == nil && info.IsDir() {
-		docsFS := http.FileServer(http.Dir(docRoot))
-		r.Handle("/docs/*", http.StripPrefix("/docs/", docsFS))
-		r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
-		})
+	// Look for docs/book/ in known locations:
+	// - docs/book/ relative to working directory (development)
+	// - /docs/book/ absolute path (Docker container)
+	candidates := []string{
+		filepath.Join("docs", "book"),
+		"/docs/book",
+	}
+	for _, docRoot := range candidates {
+		if info, err := os.Stat(docRoot); err == nil && info.IsDir() {
+			docsFS := http.FileServer(http.Dir(docRoot))
+			r.Handle("/docs/*", http.StripPrefix("/docs/", docsFS))
+			r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+			})
+			return
+		}
 	}
 }
 

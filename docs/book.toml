@@ -1,7 +1,6 @@
 [book]
 authors = ["Jordan Hubbard"]
 language = "en"
-multilingual = false
 src = "src"
 title = "TokenHub Documentation"
 description = "Comprehensive documentation for the TokenHub LLM routing proxy"
@@ -22,7 +21,7 @@ no-section-label = false
 enable = true
 limit-results = 30
 teaser-word-count = 30
-use-hierarchical-path-names = true
+boost-hierarchy = 2
 
 [output.html.fold]
 enable = true
