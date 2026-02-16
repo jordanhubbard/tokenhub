@@ -549,3 +549,27 @@ func (s *SQLiteStore) ListRewards(ctx context.Context, limit int, offset int) ([
 	}
 	return logs, rows.Err()
 }
+
+func (s *SQLiteStore) GetRewardSummary(ctx context.Context) ([]RewardSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT model_id, token_bucket,
+		 COUNT(*) as count,
+		 SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successes,
+		 SUM(reward) as sum_reward
+		 FROM reward_logs
+		 GROUP BY model_id, token_bucket`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []RewardSummary
+	for rows.Next() {
+		var s RewardSummary
+		if err := rows.Scan(&s.ModelID, &s.TokenBucket, &s.Count, &s.Successes, &s.SumReward); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, rows.Err()
+}

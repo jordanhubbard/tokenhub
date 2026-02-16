@@ -418,6 +418,66 @@ func TestRewardLogDefaultLimit(t *testing.T) {
 	}
 }
 
+func TestGetRewardSummary(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Log several rewards for different models/buckets.
+	entries := []RewardEntry{
+		{Timestamp: time.Now(), ModelID: "gpt-4", ProviderID: "openai", Mode: "normal", TokenBucket: "small", Success: true, Reward: 0.8},
+		{Timestamp: time.Now(), ModelID: "gpt-4", ProviderID: "openai", Mode: "normal", TokenBucket: "small", Success: true, Reward: 0.9},
+		{Timestamp: time.Now(), ModelID: "gpt-4", ProviderID: "openai", Mode: "normal", TokenBucket: "small", Success: false, Reward: 0.0},
+		{Timestamp: time.Now(), ModelID: "claude", ProviderID: "anthropic", Mode: "normal", TokenBucket: "small", Success: true, Reward: 0.7},
+		{Timestamp: time.Now(), ModelID: "gpt-4", ProviderID: "openai", Mode: "normal", TokenBucket: "large", Success: true, Reward: 0.5},
+	}
+	for _, e := range entries {
+		if err := s.LogReward(ctx, e); err != nil {
+			t.Fatalf("log reward failed: %v", err)
+		}
+	}
+
+	summaries, err := s.GetRewardSummary(ctx)
+	if err != nil {
+		t.Fatalf("get reward summary failed: %v", err)
+	}
+
+	// Expect 3 groups: (gpt-4, small), (claude, small), (gpt-4, large).
+	if len(summaries) != 3 {
+		t.Fatalf("expected 3 summaries, got %d", len(summaries))
+	}
+
+	// Find gpt-4/small summary.
+	var gpt4Small *RewardSummary
+	for i := range summaries {
+		if summaries[i].ModelID == "gpt-4" && summaries[i].TokenBucket == "small" {
+			gpt4Small = &summaries[i]
+		}
+	}
+	if gpt4Small == nil {
+		t.Fatal("gpt-4/small summary not found")
+	}
+	if gpt4Small.Count != 3 {
+		t.Errorf("expected count 3, got %d", gpt4Small.Count)
+	}
+	if gpt4Small.Successes != 2 {
+		t.Errorf("expected 2 successes, got %d", gpt4Small.Successes)
+	}
+	if gpt4Small.SumReward < 1.69 || gpt4Small.SumReward > 1.71 {
+		t.Errorf("expected sum_reward ~1.7, got %f", gpt4Small.SumReward)
+	}
+}
+
+func TestGetRewardSummaryEmpty(t *testing.T) {
+	s := newTestStore(t)
+	summaries, err := s.GetRewardSummary(context.Background())
+	if err != nil {
+		t.Fatalf("get reward summary failed: %v", err)
+	}
+	if summaries != nil {
+		t.Errorf("expected nil for empty db, got %d", len(summaries))
+	}
+}
+
 func TestAPIKeysCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -51,6 +51,7 @@ type Store interface {
 	// Reward logging (contextual bandit data collection)
 	LogReward(ctx context.Context, entry RewardEntry) error
 	ListRewards(ctx context.Context, limit int, offset int) ([]RewardEntry, error)
+	GetRewardSummary(ctx context.Context) ([]RewardSummary, error)
 
 	// API key management
 	CreateAPIKey(ctx context.Context, key APIKeyRecord) error
@@ -114,6 +115,16 @@ type RequestLog struct {
 	StatusCode       int       `json:"status_code"`
 	ErrorClass       string    `json:"error_class,omitempty"`
 	RequestID        string    `json:"request_id,omitempty"`
+}
+
+// RewardSummary aggregates reward data per model per token bucket for
+// Thompson Sampling parameter estimation.
+type RewardSummary struct {
+	ModelID     string  `json:"model_id"`
+	TokenBucket string  `json:"token_bucket"`
+	Count       int     `json:"count"`
+	Successes   int     `json:"successes"`
+	SumReward   float64 `json:"sum_reward"`
 }
 
 // RewardEntry captures the features and outcome of a routing decision

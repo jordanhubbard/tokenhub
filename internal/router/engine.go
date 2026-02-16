@@ -84,6 +84,7 @@ type EngineConfig struct {
 type Engine struct {
 	cfg    EngineConfig
 	health HealthChecker
+	bandit *ThompsonSampler // nil = disabled
 
 	mu       sync.RWMutex
 	models   map[string]Model
@@ -104,6 +105,13 @@ func NewEngine(cfg EngineConfig) *Engine {
 // SetHealthChecker attaches a health tracker to the engine.
 func (e *Engine) SetHealthChecker(h HealthChecker) {
 	e.health = h
+}
+
+// SetBanditPolicy attaches a Thompson Sampling policy for RL-based routing.
+// When set and mode is "thompson", model selection uses probabilistic sampling
+// instead of the deterministic multi-objective scoring function.
+func (e *Engine) SetBanditPolicy(ts *ThompsonSampler) {
+	e.bandit = ts
 }
 
 // RegisterAdapter registers a provider adapter.
@@ -196,6 +204,25 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 			}
 		}
 		eligible = append(eligible, m)
+	}
+
+	// When Thompson Sampling is enabled and mode is "thompson", use
+	// probabilistic selection instead of deterministic scoring.
+	if p.Mode == "thompson" && e.bandit != nil {
+		bucket := TokenBucketLabel(tokensNeeded)
+		ids := make([]string, len(eligible))
+		for i, m := range eligible {
+			ids[i] = m.ID
+		}
+		ranked := e.bandit.Sample(ids, bucket)
+		idxMap := make(map[string]int, len(ranked))
+		for i, id := range ranked {
+			idxMap[id] = i
+		}
+		sort.Slice(eligible, func(i, j int) bool {
+			return idxMap[eligible[i].ID] < idxMap[eligible[j].ID]
+		})
+		return eligible
 	}
 
 	// Sort by multi-objective score (lower is better).

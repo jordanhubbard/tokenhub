@@ -37,8 +37,9 @@ type Server struct {
 	engine   *router.Engine
 	store    store.Store
 	logger   *slog.Logger
-	temporal *temporalpkg.Manager // nil when Temporal disabled
-	prober   *health.Prober      // nil when no probeable adapters
+	temporal  *temporalpkg.Manager // nil when Temporal disabled
+	prober    *health.Prober      // nil when no probeable adapters
+	stopBandit func()             // nil when Thompson Sampling disabled
 
 	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
@@ -118,6 +119,29 @@ func NewServer(cfg Config) (*Server, error) {
 	loadPersistedModels(eng, db, logger)
 	loadRoutingConfig(eng, db, logger)
 
+	// Initialize Thompson Sampling bandit policy.
+	sampler := router.NewThompsonSampler()
+	eng.SetBanditPolicy(sampler)
+	fetchRewards := func() ([]router.RewardSummaryRow, error) {
+		summaries, err := db.GetRewardSummary(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]router.RewardSummaryRow, len(summaries))
+		for i, s := range summaries {
+			rows[i] = router.RewardSummaryRow{
+				ModelID:     s.ModelID,
+				TokenBucket: s.TokenBucket,
+				Count:       s.Count,
+				Successes:   s.Successes,
+				SumReward:   s.SumReward,
+			}
+		}
+		return rows, nil
+	}
+	stopBandit := router.StartRefreshLoop(router.DefaultRefreshConfig(), sampler, fetchRewards, logger)
+	logger.Info("thompson sampling bandit policy initialized")
+
 	// Initialize API key manager.
 	keyMgr := apikey.NewManager(db)
 
@@ -132,14 +156,15 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:       cfg,
-		r:         r,
-		vault:     v,
-		engine:    eng,
-		store:     db,
-		logger:    logger,
-		prober:    prober,
-		stopPrune: make(chan struct{}),
+		cfg:        cfg,
+		r:          r,
+		vault:      v,
+		engine:     eng,
+		store:      db,
+		logger:     logger,
+		prober:     prober,
+		stopBandit: stopBandit,
+		stopPrune:  make(chan struct{}),
 	}
 
 	// Start TSDB auto-prune goroutine.
@@ -204,6 +229,9 @@ func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) Close() error {
 	close(s.stopPrune)
+	if s.stopBandit != nil {
+		s.stopBandit()
+	}
 	if s.prober != nil {
 		s.prober.Stop()
 	}
