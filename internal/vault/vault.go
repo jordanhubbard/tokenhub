@@ -276,6 +276,84 @@ func (v *Vault) Decrypt(ciphertext []byte) ([]byte, error) {
 	return plain, nil
 }
 
+// RotatePassword re-encrypts all stored values with a new password.
+// The vault must be unlocked and enabled. The new password must be at least 8 bytes.
+// This operation is atomic: all values are decrypted, a new salt and key are
+// generated, and all values are re-encrypted under the write lock.
+func (v *Vault) RotatePassword(oldPassword, newPassword []byte) error {
+	if !v.enabled {
+		return errors.New("vault is not enabled")
+	}
+	if len(newPassword) < 8 {
+		return errors.New("new password too short")
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.locked {
+		return errors.New("vault is locked")
+	}
+
+	// Step 1: Decrypt all values with the current key.
+	plaintext := make(map[string][]byte, len(v.values))
+	for k, ciphertext := range v.values {
+		block, err := aes.NewCipher(v.key)
+		if err != nil {
+			return fmt.Errorf("failed to create cipher for key %s: %w", k, err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return fmt.Errorf("failed to create GCM for key %s: %w", k, err)
+		}
+		if len(ciphertext) < gcm.NonceSize() {
+			return fmt.Errorf("ciphertext too short for key %s", k)
+		}
+		nonce := ciphertext[:gcm.NonceSize()]
+		data := ciphertext[gcm.NonceSize():]
+		plain, err := gcm.Open(nil, nonce, data, nil)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt key %s: %w", k, err)
+		}
+		plaintext[k] = plain
+	}
+
+	// Step 2: Generate a new salt.
+	newSalt := make([]byte, saltLen)
+	if _, err := io.ReadFull(rand.Reader, newSalt); err != nil {
+		return fmt.Errorf("failed to generate new salt: %w", err)
+	}
+
+	// Step 3: Derive a new key from the new password.
+	newKey := argon2.IDKey(newPassword, newSalt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+
+	// Step 4: Re-encrypt all values with the new key.
+	newValues := make(map[string][]byte, len(plaintext))
+	for k, plain := range plaintext {
+		block, err := aes.NewCipher(newKey)
+		if err != nil {
+			return fmt.Errorf("failed to create cipher for re-encryption of key %s: %w", k, err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return fmt.Errorf("failed to create GCM for re-encryption of key %s: %w", k, err)
+		}
+		nonce := make([]byte, gcm.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			return fmt.Errorf("failed to generate nonce for key %s: %w", k, err)
+		}
+		newValues[k] = gcm.Seal(nonce, nonce, plain, nil)
+	}
+
+	// Step 5: Atomically update the vault state.
+	v.salt = newSalt
+	v.key = newKey
+	v.values = newValues
+	v.lastActivity = time.Now()
+
+	return nil
+}
+
 // autoLockLoop runs in a goroutine and locks the vault after a period of
 // inactivity. It checks every minute (or more frequently for short durations)
 // and exits when signalled via stopAutoLock.

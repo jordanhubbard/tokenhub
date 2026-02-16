@@ -1085,3 +1085,284 @@ func TestRoutingConfigSetValid(t *testing.T) {
 		t.Errorf("expected 200 for valid config, got %d", resp.StatusCode)
 	}
 }
+
+// --- Additional coverage tests ---
+
+func TestVaultLockHandler(t *testing.T) {
+	ts, _, v := setupTestServer(t)
+	defer ts.Close()
+
+	// Unlock vault first so Lock actually transitions state.
+	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
+	resp, _ := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+	if v.IsLocked() {
+		t.Fatal("vault should be unlocked before lock test")
+	}
+
+	// Lock the vault.
+	resp, err := http.Post(ts.URL+"/admin/v1/vault/lock", "application/json", nil)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok:true, got %v", result["ok"])
+	}
+	if !v.IsLocked() {
+		t.Error("vault should be locked")
+	}
+}
+
+func TestProvidersListHandler(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/providers")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	// Empty database returns either [] or null; both are valid.
+	s := string(result)
+	if s != "null" && s != "[]" {
+		t.Errorf("expected empty array or null, got %s", s)
+	}
+}
+
+func TestProvidersDeleteHandler(t *testing.T) {
+	ts, _, v := setupTestServer(t)
+	defer ts.Close()
+
+	// Unlock vault and create a provider first.
+	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
+	resp, _ := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+	if v.IsLocked() {
+		t.Fatal("vault should be unlocked")
+	}
+
+	provBody, _ := json.Marshal(map[string]any{
+		"id":      "del-provider",
+		"type":    "openai",
+		"enabled": true,
+	})
+	resp, _ = http.Post(ts.URL+"/admin/v1/providers", "application/json", bytes.NewReader(provBody))
+	resp.Body.Close()
+
+	// Delete the provider.
+	req, _ := http.NewRequest("DELETE", ts.URL+"/admin/v1/providers/del-provider", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok:true, got %v", result["ok"])
+	}
+}
+
+func TestModelsListHandler(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/models")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	// Empty database returns either [] or null; both are valid.
+	s := string(result)
+	if s != "null" && s != "[]" {
+		t.Errorf("expected empty array or null, got %s", s)
+	}
+}
+
+func TestModelsDeleteHandler(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// Register adapter and upsert a model so there's something to delete.
+	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
+	eng.RegisterAdapter(mock)
+
+	model := router.Model{ID: "delete-me", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true}
+	body, _ := json.Marshal(model)
+	resp, _ := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+
+	// Delete the model.
+	req, _ := http.NewRequest("DELETE", ts.URL+"/admin/v1/models/delete-me", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok:true, got %v", result["ok"])
+	}
+}
+
+func TestRoutingConfigGetHandler(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/routing-config")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	// Default config should decode without error; presence of the object is sufficient.
+}
+
+func TestHealthStatsHandlerFields(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/health")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if _, ok := result["providers"]; !ok {
+		t.Error("expected 'providers' key in health response")
+	}
+}
+
+func TestStatsHandlerFields(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/stats")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if _, ok := result["global"]; !ok {
+		t.Error("expected 'global' key in stats response")
+	}
+	if _, ok := result["by_model"]; !ok {
+		t.Error("expected 'by_model' key in stats response")
+	}
+	if _, ok := result["by_provider"]; !ok {
+		t.Error("expected 'by_provider' key in stats response")
+	}
+}
+
+func TestAuditLogsHandler(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/audit?limit=10")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if _, ok := result["logs"]; !ok {
+		t.Error("expected 'logs' key in audit response")
+	}
+}
+
+func TestRewardsHandler(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/rewards?limit=10")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if _, ok := result["rewards"]; !ok {
+		t.Error("expected 'rewards' key in rewards response")
+	}
+}

@@ -63,6 +63,58 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
+func VaultRotateHandler(d Dependencies) http.HandlerFunc {
+	type rotateReq struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req rotateReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if req.OldPassword == "" || req.NewPassword == "" {
+			http.Error(w, "old_password and new_password required", http.StatusBadRequest)
+			return
+		}
+
+		if err := d.Vault.RotatePassword([]byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
+			// Distinguish validation errors from internal errors.
+			switch err.Error() {
+			case "vault is locked", "vault is not enabled", "new password too short":
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			default:
+				http.Error(w, "rotation failed: "+err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+
+		// Persist the new vault blob to the store.
+		if d.Store != nil {
+			salt := d.Vault.Salt()
+			data := d.Vault.Export()
+			if salt != nil {
+				if err := d.Store.SaveVaultBlob(r.Context(), salt, data); err != nil {
+					http.Error(w, "failed to persist vault: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+
+		// Log audit entry.
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.rotate",
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
 // ProviderUpsertRequest extends ProviderRecord with optional credential.
 type ProviderUpsertRequest struct {
 	store.ProviderRecord

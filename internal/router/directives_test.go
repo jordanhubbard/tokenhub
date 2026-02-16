@@ -202,6 +202,37 @@ func TestStripDirectivesBlockMalformedNoEnd(t *testing.T) {
 	}
 }
 
+func TestParseDirectivesOutputSchema(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: `@@tokenhub output_schema={"type":"object","required":["name","age"]}` + "\nDescribe a person."},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected policy from directive with output_schema")
+	}
+	expected := `{"type":"object","required":["name","age"]}`
+	if p.OutputSchema != expected {
+		t.Errorf("expected output_schema=%s, got %s", expected, p.OutputSchema)
+	}
+}
+
+func TestParseDirectivesBlockOutputSchema(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub\nmode=planning\noutput_schema={\"type\":\"object\",\"required\":[\"summary\"]}\n@@end\nSummarize this."},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected policy from block directive with output_schema")
+	}
+	if p.Mode != "planning" {
+		t.Errorf("expected mode=planning, got %s", p.Mode)
+	}
+	expected := `{"type":"object","required":["summary"]}`
+	if p.OutputSchema != expected {
+		t.Errorf("expected output_schema=%s, got %s", expected, p.OutputSchema)
+	}
+}
+
 func TestSingleLineStillWorksAfterBlockSupport(t *testing.T) {
 	// Verify that existing single-line behavior is fully preserved.
 	msgs := []Message{

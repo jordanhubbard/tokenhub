@@ -240,6 +240,94 @@ func TestAutoLock(t *testing.T) {
 	}
 }
 
+func TestRotatePassword(t *testing.T) {
+	v := unlocked(t)
+
+	// Store some values.
+	if err := v.Set("key1", "value1"); err != nil {
+		t.Fatalf("Set key1: %v", err)
+	}
+	if err := v.Set("key2", "value2"); err != nil {
+		t.Fatalf("Set key2: %v", err)
+	}
+
+	oldPassword := []byte("a]strong-password-for-testing!!")
+	newPassword := []byte("new-strong-password!!")
+
+	// Rotate password.
+	if err := v.RotatePassword(oldPassword, newPassword); err != nil {
+		t.Fatalf("RotatePassword: %v", err)
+	}
+
+	// Values should still be accessible after rotation.
+	val1, err := v.Get("key1")
+	if err != nil {
+		t.Fatalf("Get key1 after rotate: %v", err)
+	}
+	if val1 != "value1" {
+		t.Errorf("key1 = %q, want %q", val1, "value1")
+	}
+
+	val2, err := v.Get("key2")
+	if err != nil {
+		t.Fatalf("Get key2 after rotate: %v", err)
+	}
+	if val2 != "value2" {
+		t.Errorf("key2 = %q, want %q", val2, "value2")
+	}
+
+	// Lock and re-unlock with new password to verify the new key works.
+	newSalt := v.Salt()
+	v.Lock()
+
+	v2, err := New(true)
+	if err != nil {
+		t.Fatalf("New v2: %v", err)
+	}
+	v2.SetSalt(newSalt)
+	if err := v2.Unlock(newPassword); err != nil {
+		t.Fatalf("Unlock v2 with new password: %v", err)
+	}
+
+	// Import the exported data and verify.
+	exported := v.Export()
+	if err := v2.Import(exported); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	val1, err = v2.Get("key1")
+	if err != nil {
+		t.Fatalf("Get key1 from v2: %v", err)
+	}
+	if val1 != "value1" {
+		t.Errorf("key1 from v2 = %q, want %q", val1, "value1")
+	}
+}
+
+func TestRotatePasswordTooShort(t *testing.T) {
+	v := unlocked(t)
+
+	oldPassword := []byte("a]strong-password-for-testing!!")
+	shortPassword := []byte("short")
+
+	err := v.RotatePassword(oldPassword, shortPassword)
+	if err == nil {
+		t.Error("expected error for short new password")
+	}
+}
+
+func TestRotatePasswordWhileLocked(t *testing.T) {
+	v, err := New(true)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Vault starts locked; rotation should fail.
+	err = v.RotatePassword([]byte("old-password!!"), []byte("new-password!!"))
+	if err == nil {
+		t.Error("expected error when vault is locked")
+	}
+}
+
 func TestAutoLockTouch(t *testing.T) {
 	v, err := New(true, WithAutoLockDuration(150*time.Millisecond))
 	if err != nil {

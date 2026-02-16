@@ -106,6 +106,8 @@ func applyDirectiveKV(p *Policy, token string) {
 		if i, err := strconv.Atoi(val); err == nil {
 			p.MinWeight = i
 		}
+	case "output_schema":
+		p.OutputSchema = val
 	}
 }
 

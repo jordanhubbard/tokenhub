@@ -18,6 +18,10 @@ type Request struct {
 
 	// Arbitrary metadata for policy & tracing; NOT forwarded to providers.
 	Meta map[string]any `json:"meta,omitempty"`
+
+	// Optional JSON Schema that the orchestration output should conform to.
+	// Used for structured output from LLMs.
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 }
 
 type Message struct {
@@ -30,6 +34,7 @@ type Policy struct {
 	MaxBudgetUSD float64
 	MaxLatencyMs int
 	MinWeight    int
+	OutputSchema string
 }
 
 type Decision struct {
@@ -61,7 +66,8 @@ type OrchestrationDirective struct {
 	ReviewModelID  string `json:"review_model_id,omitempty"`
 
 	// Output shaping (non-forwarded)
-	ReturnPlanOnly bool `json:"return_plan_only,omitempty"`
+	ReturnPlanOnly bool   `json:"return_plan_only,omitempty"`
+	OutputSchema   string `json:"output_schema,omitempty"`
 }
 
 // OutputFormat specifies how the response should be shaped before returning to the client.
