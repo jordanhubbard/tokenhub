@@ -8,7 +8,7 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "flask>=3.0.0",
-        "cryptography>=41.0.7",
+        "cryptography>=46.0.5",
         "prometheus-client>=0.19.0",
         "requests>=2.31.0",
         "pydantic>=2.5.0",
