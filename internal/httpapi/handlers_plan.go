@@ -19,6 +19,28 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
+
+		// Validate messages.
+		if len(req.Request.Messages) == 0 {
+			http.Error(w, "messages required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate orchestration iterations.
+		if req.Orchestration.Iterations < 0 || req.Orchestration.Iterations > 10 {
+			http.Error(w, "iterations must be between 0 and 10", http.StatusBadRequest)
+			return
+		}
+
+		// Validate orchestration mode.
+		switch req.Orchestration.Mode {
+		case "", "planning", "adversarial", "vote", "refine":
+			// valid
+		default:
+			http.Error(w, "unknown orchestration mode", http.StatusBadRequest)
+			return
+		}
+
 		decision, resp, err := d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)

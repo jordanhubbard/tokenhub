@@ -618,3 +618,187 @@ func TestUpdateDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestAdversarialExplicitModels(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+
+	// Set up two providers: one for primary, one for review.
+	primaryMock := newMockSender("primary-provider")
+	reviewMock := newMockSender("review-provider")
+	fallbackMock := newMockSender("fallback-provider")
+	eng.RegisterAdapter(primaryMock)
+	eng.RegisterAdapter(reviewMock)
+	eng.RegisterAdapter(fallbackMock)
+
+	eng.RegisterModel(Model{
+		ID: "primary-model", ProviderID: "primary-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "review-model", ProviderID: "review-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "fallback-model", ProviderID: "fallback-provider",
+		Weight: 10, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	// Configure specific responses for the explicit models.
+	primaryMock.setResponse("primary-model", oaiResponse("explicit plan"), nil)
+	reviewMock.setResponse("review-model", oaiResponse("explicit critique"), nil)
+
+	dec, resp, err := eng.Orchestrate(context.Background(), makeRequest("build something"), OrchestrationDirective{
+		Mode:           "adversarial",
+		Iterations:     1,
+		PrimaryModelID: "primary-model",
+		ReviewModelID:  "review-model",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.Reason != "adversarial-orchestration" {
+		t.Errorf("expected adversarial-orchestration reason, got %s", dec.Reason)
+	}
+
+	// Verify the response contains the explicit model outputs.
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if plan, ok := result["initial_plan"].(string); !ok || plan != "explicit plan" {
+		t.Errorf("expected initial_plan='explicit plan', got %v", result["initial_plan"])
+	}
+	if critique, ok := result["critique"].(string); !ok || critique != "explicit critique" {
+		t.Errorf("expected critique='explicit critique', got %v", result["critique"])
+	}
+
+	// Verify primary-model was called for plan and refine (2 calls), not the fallback.
+	primaryMock.mu.Lock()
+	primaryCalls := len(primaryMock.calls)
+	primaryMock.mu.Unlock()
+	if primaryCalls != 2 {
+		t.Errorf("expected primary-model to be called 2 times (plan + refine), got %d", primaryCalls)
+	}
+
+	// Verify review-model was called for critique (1 call).
+	reviewMock.mu.Lock()
+	reviewCalls := len(reviewMock.calls)
+	reviewMock.mu.Unlock()
+	if reviewCalls != 1 {
+		t.Errorf("expected review-model to be called 1 time (critique), got %d", reviewCalls)
+	}
+
+	// Verify fallback-model was NOT called (explicit models succeeded).
+	fallbackMock.mu.Lock()
+	fallbackCalls := len(fallbackMock.calls)
+	fallbackMock.mu.Unlock()
+	if fallbackCalls != 0 {
+		t.Errorf("expected fallback-model to not be called, got %d calls", fallbackCalls)
+	}
+}
+
+func TestAdversarialExplicitModelFallback(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+
+	// Primary model will fail; fallback should be used.
+	failMock := newMockSender("fail-provider")
+	fallbackMock := newMockSender("fallback-provider")
+	eng.RegisterAdapter(failMock)
+	eng.RegisterAdapter(fallbackMock)
+
+	eng.RegisterModel(Model{
+		ID: "fail-model", ProviderID: "fail-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "fallback-model", ProviderID: "fallback-provider",
+		Weight: 10, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	// fail-model returns an error.
+	failMock.setResponse("fail-model", nil, fmt.Errorf("model unavailable"))
+	// fallback-model succeeds.
+	fallbackMock.setResponse("fallback-model", oaiResponse("fallback response"), nil)
+
+	dec, _, err := eng.Orchestrate(context.Background(), makeRequest("build something"), OrchestrationDirective{
+		Mode:           "adversarial",
+		Iterations:     1,
+		PrimaryModelID: "fail-model",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.Reason != "adversarial-orchestration" {
+		t.Errorf("expected adversarial-orchestration reason, got %s", dec.Reason)
+	}
+
+	// The fallback model should have been called (via RouteAndSend) since the explicit model failed.
+	fallbackMock.mu.Lock()
+	fallbackCalls := len(fallbackMock.calls)
+	fallbackMock.mu.Unlock()
+	if fallbackCalls == 0 {
+		t.Error("expected fallback-model to be called after explicit model failure")
+	}
+}
+
+func TestVoteExplicitJudge(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+
+	// Set up voter models and an explicit judge model.
+	voterMock := newMockSender("voter-provider")
+	judgeMock := newMockSender("judge-provider")
+	eng.RegisterAdapter(voterMock)
+	eng.RegisterAdapter(judgeMock)
+
+	eng.RegisterModel(Model{
+		ID: "voter-1", ProviderID: "voter-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "voter-2", ProviderID: "voter-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "explicit-judge", ProviderID: "judge-provider",
+		Weight: 10, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	// Configure voter responses.
+	voterMock.setResponse("voter-1", oaiResponse("Answer from voter 1"), nil)
+	voterMock.setResponse("voter-2", oaiResponse("Answer from voter 2"), nil)
+	// Judge picks response 2.
+	judgeMock.setResponse("explicit-judge", oaiResponse("2"), nil)
+
+	dec, resp, err := eng.Orchestrate(context.Background(), makeRequest("test prompt"), OrchestrationDirective{
+		Mode:          "vote",
+		Iterations:    2,
+		ReviewModelID: "explicit-judge",
+	})
+	if err != nil {
+		t.Fatalf("vote failed: %v", err)
+	}
+	if dec.Reason != "vote-orchestration" {
+		t.Errorf("expected vote-orchestration reason, got %s", dec.Reason)
+	}
+
+	// Parse composite response and check that the judge field is the explicit judge.
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	judge, ok := result["judge"].(string)
+	if !ok {
+		t.Fatal("expected 'judge' field in vote result")
+	}
+	if judge != "explicit-judge" {
+		t.Errorf("expected judge='explicit-judge', got %s", judge)
+	}
+
+	// Verify the explicit judge model was called.
+	judgeMock.mu.Lock()
+	judgeCalls := len(judgeMock.calls)
+	judgeMock.mu.Unlock()
+	if judgeCalls != 1 {
+		t.Errorf("expected explicit-judge to be called 1 time, got %d", judgeCalls)
+	}
+}

@@ -49,6 +49,28 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Validate messages.
+		if len(req.Request.Messages) == 0 {
+			http.Error(w, "messages required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate policy hints if provided.
+		if req.Policy != nil {
+			if req.Policy.MaxBudgetUSD < 0 || req.Policy.MaxBudgetUSD > 100.0 {
+				http.Error(w, "max_budget_usd must be between 0 and 100", http.StatusBadRequest)
+				return
+			}
+			if req.Policy.MaxLatencyMs < 0 || req.Policy.MaxLatencyMs > 300000 {
+				http.Error(w, "max_latency_ms must be between 0 and 300000", http.StatusBadRequest)
+				return
+			}
+			if req.Policy.MinWeight < 0 || req.Policy.MinWeight > 10 {
+				http.Error(w, "min_weight must be between 0 and 10", http.StatusBadRequest)
+				return
+			}
+		}
+
 		var policy router.Policy
 		if req.Policy != nil {
 			policy = router.Policy{

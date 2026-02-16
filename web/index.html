@@ -55,7 +55,48 @@
     .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
     .tabs button { background: #12141d; border: 1px solid #2a2d3a; color: #8a8d9a; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
     .tabs button.active { background: #2a2d3a; color: #fff; }
-    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } }
+    .panel.full-width { grid-column: 1 / 3; }
+    .vault-status { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .vault-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    .vault-indicator.locked { background: #f44336; }
+    .vault-indicator.unlocked { background: #4caf50; }
+    .vault-label { font-size: 14px; font-weight: 500; }
+    .vault-controls { display: flex; gap: 8px; align-items: center; }
+    .vault-controls input[type=password] { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 13px; width: 220px; }
+    .btn { background: #2a2d3a; border: 1px solid #3a3d4a; color: #e0e0e0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .btn:hover { background: #3a3d4a; }
+    .btn.primary { background: #1b5e20; border-color: #2e7d32; color: #fff; }
+    .btn.primary:hover { background: #2e7d32; }
+    .btn.danger { background: #b71c1c; border-color: #c62828; color: #fff; }
+    .btn.danger:hover { background: #c62828; }
+    .btn.sm { padding: 3px 10px; font-size: 11px; }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .admin-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; }
+    .admin-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; }
+    .admin-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2d3a; }
+    .admin-form .field { display: flex; flex-direction: column; gap: 3px; }
+    .admin-form .field label { font-size: 11px; color: #8a8d9a; }
+    .admin-form .field input, .admin-form .field select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 5px 8px; border-radius: 4px; font-size: 12px; }
+    .admin-form .field select { min-width: 120px; }
+    .admin-form .field input { min-width: 140px; }
+    .health-row.healthy td { border-left: 3px solid #4caf50; }
+    .health-row.degraded td { border-left: 3px solid #ffc107; }
+    .health-row.unavailable td { border-left: 3px solid #f44336; }
+    .health-avail { font-weight: 500; }
+    .health-avail.yes { color: #4caf50; }
+    .health-avail.no { color: #f44336; }
+    .health-avail.degraded { color: #ffc107; }
+    .routing-form { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+    .routing-form .field { display: flex; flex-direction: column; gap: 4px; }
+    .routing-form .field label { font-size: 11px; color: #8a8d9a; }
+    .routing-form .field input, .routing-form .field select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 13px; }
+    .routing-form .field select { min-width: 160px; }
+    .routing-form .field input { min-width: 120px; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 18px; border-radius: 6px; font-size: 13px; color: #fff; z-index: 1000; opacity: 0; transition: opacity 0.3s; }
+    .toast.success { background: #1b5e20; }
+    .toast.error { background: #b71c1c; }
+    .toast.visible { opacity: 1; }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } .panel.full-width { grid-column: 1; } }
   </style>
 </head>
 <body>
@@ -64,7 +105,21 @@
     <span id="sse-status" class="status disconnected">Disconnected</span>
   </div>
 
+  <div id="toast" class="toast"></div>
+
   <div class="dashboard">
+    <div class="panel full-width">
+      <h2>Vault Status</h2>
+      <div class="vault-status">
+        <span id="vault-indicator" class="vault-indicator locked"></span>
+        <span id="vault-label" class="vault-label">Locked</span>
+      </div>
+      <div id="vault-controls" class="vault-controls">
+        <input type="password" id="vault-password" placeholder="Admin password">
+        <button class="btn primary" onclick="vaultUnlock()">Unlock</button>
+      </div>
+    </div>
+
     <div class="panel graph">
       <h2>Request Flow</h2>
       <div id="cy"></div>
@@ -96,6 +151,74 @@
       </table>
       <h2 style="margin-top:16px">Weight Adjustment</h2>
       <div id="weight-sliders"></div>
+    </div>
+
+    <div class="panel full-width">
+      <h2>Provider Management</h2>
+      <table class="admin-table">
+        <thead>
+          <tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Enabled</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="providers-body"></tbody>
+      </table>
+      <div class="admin-form" id="provider-form">
+        <div class="field">
+          <label>ID</label>
+          <input type="text" id="prov-id" placeholder="my-openai">
+        </div>
+        <div class="field">
+          <label>Type</label>
+          <select id="prov-type">
+            <option value="openai">openai</option>
+            <option value="anthropic">anthropic</option>
+            <option value="vllm">vllm</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Base URL</label>
+          <input type="text" id="prov-url" placeholder="https://api.openai.com">
+        </div>
+        <div class="field">
+          <label>API Key (optional)</label>
+          <input type="password" id="prov-apikey" placeholder="sk-...">
+        </div>
+        <button class="btn primary" onclick="addProvider()">Add Provider</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Routing Config</h2>
+      <div class="routing-form">
+        <div class="field">
+          <label>Default Mode</label>
+          <select id="route-mode">
+            <option value="cheap">cheap</option>
+            <option value="normal" selected>normal</option>
+            <option value="high_confidence">high_confidence</option>
+            <option value="planning">planning</option>
+            <option value="adversarial">adversarial</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Max Budget (USD)</label>
+          <input type="number" id="route-budget" step="0.01" min="0" value="0.05">
+        </div>
+        <div class="field">
+          <label>Max Latency (ms)</label>
+          <input type="number" id="route-latency" step="1000" min="0" value="20000">
+        </div>
+        <button class="btn primary" onclick="saveRoutingConfig()">Save</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Health Status</h2>
+      <table class="admin-table">
+        <thead>
+          <tr><th>Provider</th><th>Available</th><th>Avg Latency</th><th>Error Rate</th><th>Consec Errors</th><th>State</th></tr>
+        </thead>
+        <tbody id="health-body"></tbody>
+      </table>
     </div>
 
     <div class="panel audit">
@@ -352,6 +475,188 @@
         }).catch(() => {});
     }
 
+    // ---- Toast notification ----
+    function showToast(msg, type) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'toast ' + type + ' visible';
+      setTimeout(() => { toast.className = 'toast'; }, 3000);
+    }
+
+    // ---- Vault Status ----
+    function fetchVaultStatus() {
+      fetch('/admin/api/info')
+        .then(r => r.json())
+        .then(data => {
+          const locked = data.vault_locked;
+          const indicator = document.getElementById('vault-indicator');
+          const label = document.getElementById('vault-label');
+          const controls = document.getElementById('vault-controls');
+          indicator.className = 'vault-indicator ' + (locked ? 'locked' : 'unlocked');
+          label.textContent = locked ? 'Locked' : 'Unlocked';
+          if (locked) {
+            controls.innerHTML = '<input type="password" id="vault-password" placeholder="Admin password">' +
+              ' <button class="btn primary" onclick="vaultUnlock()">Unlock</button>';
+          } else {
+            controls.innerHTML = '<button class="btn danger" onclick="vaultLock()">Lock</button>';
+          }
+        }).catch(() => {});
+    }
+
+    function vaultUnlock() {
+      const pw = document.getElementById('vault-password');
+      if (!pw || !pw.value) return;
+      fetch('/admin/v1/vault/unlock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ admin_password: pw.value })
+      }).then(r => {
+        if (!r.ok) throw new Error('Unlock failed');
+        return r.json();
+      }).then(() => {
+        showToast('Vault unlocked', 'success');
+        fetchVaultStatus();
+      }).catch(() => {
+        showToast('Unlock failed - check password', 'error');
+      });
+    }
+
+    function vaultLock() {
+      fetch('/admin/v1/vault/lock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+      }).then(r => r.json()).then(() => {
+        showToast('Vault locked', 'success');
+        fetchVaultStatus();
+      }).catch(() => {
+        showToast('Lock failed', 'error');
+      });
+    }
+
+    // ---- Provider Management ----
+    function fetchProviders() {
+      fetch('/admin/v1/providers')
+        .then(r => r.json())
+        .then(providers => {
+          const tbody = document.getElementById('providers-body');
+          if (!Array.isArray(providers) || providers.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center;">No providers configured</td></tr>';
+            return;
+          }
+          tbody.innerHTML = providers.map(p => `
+            <tr>
+              <td>${p.id}</td>
+              <td>${p.type}</td>
+              <td style="font-family:monospace;font-size:12px">${p.base_url || '-'}</td>
+              <td>${p.cred_store || 'none'}</td>
+              <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
+              <td><button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button></td>
+            </tr>
+          `).join('');
+        }).catch(() => {});
+    }
+
+    function addProvider() {
+      const id = document.getElementById('prov-id').value.trim();
+      const type = document.getElementById('prov-type').value;
+      const baseURL = document.getElementById('prov-url').value.trim();
+      const apiKey = document.getElementById('prov-apikey').value.trim();
+      if (!id) { showToast('Provider ID is required', 'error'); return; }
+      const body = { id: id, type: type, base_url: baseURL, enabled: true };
+      if (apiKey) body.api_key = apiKey;
+      fetch('/admin/v1/providers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(() => {
+        showToast('Provider added', 'success');
+        document.getElementById('prov-id').value = '';
+        document.getElementById('prov-url').value = '';
+        document.getElementById('prov-apikey').value = '';
+        fetchProviders();
+      }).catch(() => {
+        showToast('Failed to add provider', 'error');
+      });
+    }
+
+    function deleteProvider(id) {
+      if (!confirm('Delete provider "' + id + '"?')) return;
+      fetch('/admin/v1/providers/' + encodeURIComponent(id), {
+        method: 'DELETE'
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(() => {
+        showToast('Provider deleted', 'success');
+        fetchProviders();
+      }).catch(() => {
+        showToast('Failed to delete provider', 'error');
+      });
+    }
+
+    // ---- Routing Config ----
+    function fetchRoutingConfig() {
+      fetch('/admin/v1/routing-config')
+        .then(r => r.json())
+        .then(cfg => {
+          if (cfg.default_mode) document.getElementById('route-mode').value = cfg.default_mode;
+          if (cfg.default_max_budget_usd !== undefined) document.getElementById('route-budget').value = cfg.default_max_budget_usd;
+          if (cfg.default_max_latency_ms !== undefined) document.getElementById('route-latency').value = cfg.default_max_latency_ms;
+        }).catch(() => {});
+    }
+
+    function saveRoutingConfig() {
+      const cfg = {
+        default_mode: document.getElementById('route-mode').value,
+        default_max_budget_usd: parseFloat(document.getElementById('route-budget').value) || 0,
+        default_max_latency_ms: parseInt(document.getElementById('route-latency').value) || 0
+      };
+      fetch('/admin/v1/routing-config', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(cfg)
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(() => {
+        showToast('Routing config saved', 'success');
+      }).catch(() => {
+        showToast('Failed to save routing config', 'error');
+      });
+    }
+
+    // ---- Health Status ----
+    function fetchHealthStatus() {
+      fetch('/admin/v1/health')
+        .then(r => r.json())
+        .then(data => {
+          const tbody = document.getElementById('health-body');
+          const providers = data.providers || [];
+          if (providers.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center;">No provider health data</td></tr>';
+            return;
+          }
+          tbody.innerHTML = providers.map(p => {
+            const errorRate = p.total_requests > 0 ? (p.total_errors / p.total_requests * 100).toFixed(1) : '0.0';
+            const state = (p.state || 'healthy').toLowerCase();
+            const available = state === 'healthy' ? 'yes' : (state === 'degraded' ? 'degraded' : 'no');
+            const availClass = state === 'healthy' ? 'yes' : (state === 'degraded' ? 'degraded' : 'no');
+            const rowClass = state === 'healthy' ? 'healthy' : (state === 'degraded' ? 'degraded' : 'unavailable');
+            return `<tr class="health-row ${rowClass}">
+              <td>${p.provider_id}</td>
+              <td><span class="health-avail ${availClass}">${available}</span></td>
+              <td>${Math.round(p.avg_latency_ms || 0)}ms</td>
+              <td>${errorRate}%</td>
+              <td>${p.consec_errors || 0}</td>
+              <td><span class="badge ${state === 'healthy' ? 'healthy' : (state === 'degraded' ? 'degraded' : 'down')}">${state}</span></td>
+            </tr>`;
+          }).join('');
+        }).catch(() => {});
+    }
+
     // ---- Init ----
     document.addEventListener('DOMContentLoaded', () => {
       initChart();
@@ -359,7 +664,14 @@
       // Fetch initial stats and health.
       updateLeaderboard();
       fetchAuditLog();
+      fetchVaultStatus();
+      fetchProviders();
+      fetchRoutingConfig();
+      fetchHealthStatus();
       setInterval(fetchAuditLog, 10000);
+      setInterval(fetchProviders, 30000);
+      setInterval(fetchHealthStatus, 10000);
+      setInterval(fetchVaultStatus, 15000);
       fetch('/admin/v1/health').then(r => r.json()).then(data => {
         (data.providers || []).forEach(p => {
           ensureNode(p.provider_id, p.provider_id, 'provider');

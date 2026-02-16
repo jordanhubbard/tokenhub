@@ -738,3 +738,350 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 		t.Errorf("expected 1 snapshot, got %d", sc.SnapshotCount())
 	}
 }
+
+// --- Input validation tests ---
+
+func TestChatEmptyMessages(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{},
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty messages, got %d", resp.StatusCode)
+	}
+}
+
+func TestChatNilMessages(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// Send a request with no messages field at all.
+	body, _ := json.Marshal(map[string]any{
+		"request": map[string]any{},
+	})
+
+	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for nil messages, got %d", resp.StatusCode)
+	}
+}
+
+func TestChatPolicyOutOfRange(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	tests := []struct {
+		name   string
+		policy *PolicyHint
+	}{
+		{"negative budget", &PolicyHint{MaxBudgetUSD: -1}},
+		{"budget too high", &PolicyHint{MaxBudgetUSD: 200}},
+		{"negative latency", &PolicyHint{MaxLatencyMs: -1}},
+		{"latency too high", &PolicyHint{MaxLatencyMs: 500000}},
+		{"negative weight", &PolicyHint{MinWeight: -1}},
+		{"weight too high", &PolicyHint{MinWeight: 11}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(ChatRequest{
+				Policy: tc.policy,
+				Request: router.Request{
+					Messages: []router.Message{{Role: "user", Content: "hi"}},
+				},
+			})
+
+			resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestChatValidPolicyStillWorks(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"ok"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	body, _ := json.Marshal(ChatRequest{
+		Policy: &PolicyHint{MaxBudgetUSD: 50.0, MaxLatencyMs: 5000, MinWeight: 3},
+		Request: router.Request{
+			Messages: []router.Message{{Role: "user", Content: "hi"}},
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for valid policy, got %d", resp.StatusCode)
+	}
+}
+
+func TestPlanEmptyMessages(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	body, _ := json.Marshal(PlanRequest{
+		Request: router.Request{
+			Messages: []router.Message{},
+		},
+		Orchestration: router.OrchestrationDirective{Mode: "planning"},
+	})
+
+	resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty messages, got %d", resp.StatusCode)
+	}
+}
+
+func TestPlanInvalidIterations(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	tests := []struct {
+		name       string
+		iterations int
+	}{
+		{"negative iterations", -1},
+		{"iterations too high", 11},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(PlanRequest{
+				Request: router.Request{
+					Messages: []router.Message{{Role: "user", Content: "plan"}},
+				},
+				Orchestration: router.OrchestrationDirective{
+					Mode:       "planning",
+					Iterations: tc.iterations,
+				},
+			})
+
+			resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestPlanInvalidMode(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	body, _ := json.Marshal(PlanRequest{
+		Request: router.Request{
+			Messages: []router.Message{{Role: "user", Content: "plan"}},
+		},
+		Orchestration: router.OrchestrationDirective{
+			Mode: "invalid_mode",
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid mode, got %d", resp.StatusCode)
+	}
+}
+
+func TestModelsUpsertValidation(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	tests := []struct {
+		name  string
+		model router.Model
+	}{
+		{"empty id", router.Model{ID: "", ProviderID: "p1", Weight: 5}},
+		{"empty provider", router.Model{ID: "m1", ProviderID: "", Weight: 5}},
+		{"weight too high", router.Model{ID: "m1", ProviderID: "p1", Weight: 11}},
+		{"negative weight", router.Model{ID: "m1", ProviderID: "p1", Weight: -1}},
+		{"negative input cost", router.Model{ID: "m1", ProviderID: "p1", Weight: 5, InputPer1K: -0.5}},
+		{"negative output cost", router.Model{ID: "m1", ProviderID: "p1", Weight: 5, OutputPer1K: -0.5}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(tc.model)
+			resp, err := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestModelsUpsertValidModel(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
+	eng.RegisterAdapter(mock)
+
+	model := router.Model{
+		ID: "valid-model", ProviderID: "p1",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+		InputPer1K: 0.01, OutputPer1K: 0.03,
+	}
+	body, _ := json.Marshal(model)
+	resp, err := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for valid model, got %d", resp.StatusCode)
+	}
+}
+
+func TestModelsPatchValidation(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	// Persist the model in the store so PATCH can find it.
+	model := router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true}
+	body, _ := json.Marshal(model)
+	resp, _ := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+
+	tests := []struct {
+		name  string
+		patch map[string]any
+	}{
+		{"weight too high", map[string]any{"weight": 11.0}},
+		{"negative weight", map[string]any{"weight": -1.0}},
+		{"negative input cost", map[string]any{"input_per_1k": -0.5}},
+		{"negative output cost", map[string]any{"output_per_1k": -0.5}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			patchBody, _ := json.Marshal(tc.patch)
+			req, _ := http.NewRequest("PATCH", ts.URL+"/admin/v1/models/m1", bytes.NewReader(patchBody))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestRoutingConfigSetValidation(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	tests := []struct {
+		name string
+		cfg  map[string]any
+	}{
+		{"unknown mode", map[string]any{"default_mode": "unknown_mode"}},
+		{"negative budget", map[string]any{"default_max_budget_usd": -1.0}},
+		{"budget too high", map[string]any{"default_max_budget_usd": 200.0}},
+		{"negative latency", map[string]any{"default_max_latency_ms": -1}},
+		{"latency too high", map[string]any{"default_max_latency_ms": 500000}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(tc.cfg)
+			req, _ := http.NewRequest("PUT", ts.URL+"/admin/v1/routing-config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestRoutingConfigSetValid(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	cfg := map[string]any{
+		"default_mode":           "cheap",
+		"default_max_budget_usd": 10.0,
+		"default_max_latency_ms": 5000,
+	}
+	body, _ := json.Marshal(cfg)
+	req, _ := http.NewRequest("PUT", ts.URL+"/admin/v1/routing-config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for valid config, got %d", resp.StatusCode)
+	}
+}

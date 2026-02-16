@@ -468,6 +468,31 @@ func (e *Engine) findLargerContextModel(current Model, tokensNeeded int) *Model 
 	return best
 }
 
+// sendToModel sends a request to a specific model by ID. Returns an error if
+// the model is not found, not enabled, or the adapter is missing.
+func (e *Engine) sendToModel(ctx context.Context, modelID string, req Request) (Decision, ProviderResponse, error) {
+	m, ok := e.models[modelID]
+	if !ok || !m.Enabled {
+		return Decision{}, nil, fmt.Errorf("model %q not found or disabled", modelID)
+	}
+	adapter, ok := e.adapters[m.ProviderID]
+	if !ok {
+		return Decision{}, nil, fmt.Errorf("no adapter for provider %q", m.ProviderID)
+	}
+	tokens := estimateTokens(req)
+	estCost := estimateCostUSD(tokens, 512, m.InputPer1K, m.OutputPer1K)
+	resp, err := adapter.Send(ctx, m.ID, req)
+	if err != nil {
+		return Decision{}, nil, err
+	}
+	return Decision{
+		ModelID:          m.ID,
+		ProviderID:       m.ProviderID,
+		EstimatedCostUSD: estCost,
+		Reason:           "explicit-model",
+	}, resp, nil
+}
+
 func (e *Engine) Orchestrate(ctx context.Context, req Request, d OrchestrationDirective) (Decision, ProviderResponse, error) {
 	switch d.Mode {
 	case "adversarial":
@@ -500,13 +525,28 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 			{Role: "user", Content: messagesContent(req.Messages)},
 		},
 	}
-	planPolicy := Policy{
-		Mode:      "planning",
-		MinWeight: d.PrimaryMinWeight,
+	var planDec Decision
+	var planResp ProviderResponse
+	var err error
+	if d.PrimaryModelID != "" {
+		planDec, planResp, err = e.sendToModel(ctx, d.PrimaryModelID, planReq)
+		if err != nil {
+			slog.Warn("explicit primary model failed for plan phase, falling through to routing",
+				slog.String("model", d.PrimaryModelID),
+				slog.String("error", err.Error()),
+			)
+			err = nil // reset so fallback can proceed
+		}
 	}
-	planDec, planResp, err := e.RouteAndSend(ctx, planReq, planPolicy)
-	if err != nil {
-		return Decision{}, nil, fmt.Errorf("adversarial plan phase: %w", err)
+	if planResp == nil {
+		planPolicy := Policy{
+			Mode:      "planning",
+			MinWeight: d.PrimaryMinWeight,
+		}
+		planDec, planResp, err = e.RouteAndSend(ctx, planReq, planPolicy)
+		if err != nil {
+			return Decision{}, nil, fmt.Errorf("adversarial plan phase: %w", err)
+		}
 	}
 
 	plan := extractContent(planResp)
@@ -522,13 +562,26 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nProposed plan:\n%s\n\nProvide your critique:", messagesContent(req.Messages), plan)},
 			},
 		}
-		critiquePolicy := Policy{
-			Mode:      "adversarial",
-			MinWeight: d.ReviewMinWeight,
+		var critiqueResp ProviderResponse
+		var critiqueErr error
+		if d.ReviewModelID != "" {
+			_, critiqueResp, critiqueErr = e.sendToModel(ctx, d.ReviewModelID, critiqueReq)
+			if critiqueErr != nil {
+				slog.Warn("explicit review model failed for critique phase, falling through to routing",
+					slog.String("model", d.ReviewModelID),
+					slog.String("error", critiqueErr.Error()),
+				)
+			}
 		}
-		_, critiqueResp, err := e.RouteAndSend(ctx, critiqueReq, critiquePolicy)
-		if err != nil {
-			return Decision{}, nil, fmt.Errorf("adversarial critique phase: %w", err)
+		if critiqueResp == nil {
+			critiquePolicy := Policy{
+				Mode:      "adversarial",
+				MinWeight: d.ReviewMinWeight,
+			}
+			_, critiqueResp, critiqueErr = e.RouteAndSend(ctx, critiqueReq, critiquePolicy)
+			if critiqueErr != nil {
+				return Decision{}, nil, fmt.Errorf("adversarial critique phase: %w", critiqueErr)
+			}
 		}
 		critique = extractContent(critiqueResp)
 
@@ -539,13 +592,27 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nYour plan:\n%s\n\nCritique:\n%s\n\nProvide a refined plan:", messagesContent(req.Messages), plan, critique)},
 			},
 		}
-		refinePolicy := Policy{
-			Mode:      "planning",
-			MinWeight: d.PrimaryMinWeight,
+		var dec Decision
+		var refineResp ProviderResponse
+		var refineErr error
+		if d.PrimaryModelID != "" {
+			dec, refineResp, refineErr = e.sendToModel(ctx, d.PrimaryModelID, refineReq)
+			if refineErr != nil {
+				slog.Warn("explicit primary model failed for refine phase, falling through to routing",
+					slog.String("model", d.PrimaryModelID),
+					slog.String("error", refineErr.Error()),
+				)
+			}
 		}
-		dec, refineResp, err := e.RouteAndSend(ctx, refineReq, refinePolicy)
-		if err != nil {
-			return Decision{}, nil, fmt.Errorf("adversarial refine phase: %w", err)
+		if refineResp == nil {
+			refinePolicy := Policy{
+				Mode:      "planning",
+				MinWeight: d.PrimaryMinWeight,
+			}
+			dec, refineResp, refineErr = e.RouteAndSend(ctx, refineReq, refinePolicy)
+			if refineErr != nil {
+				return Decision{}, nil, fmt.Errorf("adversarial refine phase: %w", refineErr)
+			}
 		}
 		refinedPlan = extractContent(refineResp)
 		plan = refinedPlan // use refined plan for next iteration
@@ -584,6 +651,17 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 	}
 	eligible := e.eligibleModels(tokensNeeded, voterPolicy)
 	e.mu.RUnlock()
+
+	// Exclude the explicit judge from voters to avoid duplication.
+	if d.ReviewModelID != "" {
+		filtered := eligible[:0]
+		for _, m := range eligible {
+			if m.ID != d.ReviewModelID {
+				filtered = append(filtered, m)
+			}
+		}
+		eligible = filtered
+	}
 
 	if len(eligible) == 0 {
 		return Decision{}, nil, errors.New("no eligible models for vote")
@@ -674,11 +752,26 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 			{Role: "user", Content: fmt.Sprintf("Original prompt: %s\n\nResponses:%s\n\nWhich response number is best?", messagesContent(req.Messages), responseSummary)},
 		},
 	}
-	judgePolicy := Policy{
-		Mode:      "high_confidence",
-		MinWeight: d.ReviewMinWeight,
+	var judgeDec Decision
+	var judgeResp ProviderResponse
+	var err error
+	if d.ReviewModelID != "" {
+		judgeDec, judgeResp, err = e.sendToModel(ctx, d.ReviewModelID, judgeReq)
+		if err != nil {
+			slog.Warn("explicit review model failed for judge phase, falling through to routing",
+				slog.String("model", d.ReviewModelID),
+				slog.String("error", err.Error()),
+			)
+			err = nil // reset so fallback can proceed
+		}
 	}
-	judgeDec, judgeResp, err := e.RouteAndSend(ctx, judgeReq, judgePolicy)
+	if judgeResp == nil {
+		judgePolicy := Policy{
+			Mode:      "high_confidence",
+			MinWeight: d.ReviewMinWeight,
+		}
+		judgeDec, judgeResp, err = e.RouteAndSend(ctx, judgeReq, judgePolicy)
+	}
 	totalCost += judgeDec.EstimatedCostUSD
 
 	// Parse the judge's selection.

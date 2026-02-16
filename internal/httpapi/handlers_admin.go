@@ -163,6 +163,29 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
+
+		// Validate required fields.
+		if m.ID == "" {
+			http.Error(w, "model id required", http.StatusBadRequest)
+			return
+		}
+		if m.ProviderID == "" {
+			http.Error(w, "provider_id required", http.StatusBadRequest)
+			return
+		}
+		if m.Weight < 0 || m.Weight > 10 {
+			http.Error(w, "weight must be between 0 and 10", http.StatusBadRequest)
+			return
+		}
+		if m.InputPer1K < 0 {
+			http.Error(w, "input_per_1k must be >= 0", http.StatusBadRequest)
+			return
+		}
+		if m.OutputPer1K < 0 {
+			http.Error(w, "output_per_1k must be >= 0", http.StatusBadRequest)
+			return
+		}
+
 		// Register in the runtime engine.
 		d.Engine.RegisterModel(m)
 		// Persist to store.
@@ -259,6 +282,32 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Validate patch values before applying.
+		if v, ok := patch["weight"]; ok {
+			if f, ok := v.(float64); ok {
+				if f < 0 || f > 10 {
+					http.Error(w, "weight must be between 0 and 10", http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		if v, ok := patch["input_per_1k"]; ok {
+			if f, ok := v.(float64); ok {
+				if f < 0 {
+					http.Error(w, "input_per_1k must be >= 0", http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		if v, ok := patch["output_per_1k"]; ok {
+			if f, ok := v.(float64); ok {
+				if f < 0 {
+					http.Error(w, "output_per_1k must be >= 0", http.StatusBadRequest)
+					return
+				}
+			}
+		}
+
 		// Apply partial updates.
 		if v, ok := patch["weight"]; ok {
 			if f, ok := v.(float64); ok {
@@ -332,6 +381,24 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
+
+		// Validate routing config fields.
+		switch cfg.DefaultMode {
+		case "", "cheap", "normal", "high_confidence", "planning", "adversarial":
+			// valid
+		default:
+			http.Error(w, "unknown default_mode", http.StatusBadRequest)
+			return
+		}
+		if cfg.DefaultMaxBudgetUSD < 0 || cfg.DefaultMaxBudgetUSD > 100 {
+			http.Error(w, "default_max_budget_usd must be between 0 and 100", http.StatusBadRequest)
+			return
+		}
+		if cfg.DefaultMaxLatencyMs < 0 || cfg.DefaultMaxLatencyMs > 300000 {
+			http.Error(w, "default_max_latency_ms must be between 0 and 300000", http.StatusBadRequest)
+			return
+		}
+
 		if d.Store != nil {
 			if err := d.Store.SaveRoutingConfig(r.Context(), cfg); err != nil {
 				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
