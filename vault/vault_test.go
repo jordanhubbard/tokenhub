@@ -7,7 +7,9 @@ import (
 
 func TestVault_SetAndGet(t *testing.T) {
 	key := make([]byte, 32)
-	rand.Read(key)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
 
 	vault, err := NewVault(key)
 	if err != nil {
@@ -41,7 +43,9 @@ func TestVault_InvalidKey(t *testing.T) {
 
 func TestVault_GetNonExistent(t *testing.T) {
 	key := make([]byte, 32)
-	rand.Read(key)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
 
 	vault, err := NewVault(key)
 	if err != nil {
@@ -56,7 +60,9 @@ func TestVault_GetNonExistent(t *testing.T) {
 
 func TestVault_Delete(t *testing.T) {
 	key := make([]byte, 32)
-	rand.Read(key)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
 
 	vault, err := NewVault(key)
 	if err != nil {
@@ -66,7 +72,10 @@ func TestVault_Delete(t *testing.T) {
 	testKey := "test_key"
 	testValue := "secret_value"
 
-	vault.Set(testKey, testValue)
+	if err := vault.Set(testKey, testValue); err != nil {
+		t.Fatalf("Failed to set value: %v", err)
+	}
+	
 	vault.Delete(testKey)
 
 	_, err = vault.Get(testKey)
@@ -77,15 +86,21 @@ func TestVault_Delete(t *testing.T) {
 
 func TestVault_ExportImport(t *testing.T) {
 	key := make([]byte, 32)
-	rand.Read(key)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
 
 	vault1, err := NewVault(key)
 	if err != nil {
 		t.Fatalf("Failed to create vault: %v", err)
 	}
 
-	vault1.Set("key1", "value1")
-	vault1.Set("key2", "value2")
+	if err := vault1.Set("key1", "value1"); err != nil {
+		t.Fatalf("Failed to set key1: %v", err)
+	}
+	if err := vault1.Set("key2", "value2"); err != nil {
+		t.Fatalf("Failed to set key2: %v", err)
+	}
 
 	exported := vault1.Export()
 
