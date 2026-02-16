@@ -101,7 +101,9 @@ func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
+		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
+		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		return nil, se
 	}
 
 	return body, nil

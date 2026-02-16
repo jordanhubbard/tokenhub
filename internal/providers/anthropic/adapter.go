@@ -72,7 +72,11 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 	if errors.As(err, &se) {
 		switch {
 		case se.StatusCode == 429 || se.StatusCode == 529:
-			return &router.ClassifiedError{Err: err, Class: router.ErrRateLimited}
+			ce := &router.ClassifiedError{Err: err, Class: router.ErrRateLimited}
+			if se.RetryAfterSecs > 0 {
+				ce.RetryAfter = se.RetryAfterSecs
+			}
+			return ce
 		case se.StatusCode >= 500:
 			return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 		case strings.Contains(se.Body, "prompt is too long") || strings.Contains(se.Body, "prompt_too_long"):
@@ -109,7 +113,9 @@ func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
+		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
+		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		return nil, se
 	}
 
 	return body, nil

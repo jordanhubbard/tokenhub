@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
@@ -71,6 +72,10 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	logger.Info("database initialized", slog.String("dsn", cfg.DBDSN))
 
+	// Set up health tracking.
+	ht := health.NewTracker(health.DefaultConfig())
+	eng.SetHealthChecker(ht)
+
 	// Register provider adapters from environment.
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second
 	registerProviders(eng, timeout, logger)
@@ -94,6 +99,7 @@ func NewServer(cfg Config) (*Server, error) {
 		Vault:   v,
 		Metrics: m,
 		Store:   db,
+		Health:  ht,
 	})
 
 	return s, nil

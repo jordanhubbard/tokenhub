@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Sender is the interface that provider adapters must implement for the engine.
@@ -39,6 +40,14 @@ type ClassifiedError struct {
 func (e *ClassifiedError) Error() string { return e.Err.Error() }
 func (e *ClassifiedError) Unwrap() error { return e.Err }
 
+// HealthChecker is an optional interface for provider health tracking.
+// Defined here to avoid import cycles with the health package.
+type HealthChecker interface {
+	IsAvailable(providerID string) bool
+	RecordSuccess(providerID string, latencyMs float64)
+	RecordError(providerID string, errMsg string)
+}
+
 type EngineConfig struct {
 	DefaultMode         string
 	DefaultMaxBudgetUSD float64
@@ -47,7 +56,8 @@ type EngineConfig struct {
 }
 
 type Engine struct {
-	cfg EngineConfig
+	cfg    EngineConfig
+	health HealthChecker
 
 	mu       sync.RWMutex
 	models   map[string]Model
@@ -63,6 +73,11 @@ func NewEngine(cfg EngineConfig) *Engine {
 		models:   make(map[string]Model),
 		adapters: make(map[string]Sender),
 	}
+}
+
+// SetHealthChecker attaches a health tracker to the engine.
+func (e *Engine) SetHealthChecker(h HealthChecker) {
+	e.health = h
 }
 
 // RegisterAdapter registers a provider adapter.
@@ -105,6 +120,9 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 		}
 		if _, ok := e.adapters[m.ProviderID]; !ok {
 			continue // skip models without a registered adapter
+		}
+		if e.health != nil && !e.health.IsAvailable(m.ProviderID) {
+			continue // skip providers in cooldown
 		}
 		if p.MaxBudgetUSD > 0 {
 			est := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
@@ -150,14 +168,24 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			slog.Int("total", len(eligible)),
 		)
 
+		sendStart := time.Now()
 		resp, err := adapter.Send(ctx, m.ID, req)
+		sendMs := float64(time.Since(sendStart).Milliseconds())
+
 		if err == nil {
+			if e.health != nil {
+				e.health.RecordSuccess(m.ProviderID, sendMs)
+			}
 			return Decision{
 				ModelID:          m.ID,
 				ProviderID:       m.ProviderID,
 				EstimatedCostUSD: estCost,
 				Reason:           fmt.Sprintf("routed-weight-%d", m.Weight),
 			}, resp, nil
+		}
+
+		if e.health != nil {
+			e.health.RecordError(m.ProviderID, err.Error())
 		}
 
 		// Classify the error and decide whether to escalate.

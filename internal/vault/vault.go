@@ -9,15 +9,30 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"golang.org/x/crypto/argon2"
+)
+
+// Argon2id parameters (OWASP recommended minimums).
+const (
+	argon2Time    = 3
+	argon2Memory  = 64 * 1024 // 64 MB
+	argon2Threads = 4
+	argon2KeyLen  = 32
+	saltLen       = 16
 )
 
 // Vault provides encrypted credential storage with a lock/unlock lifecycle.
 // API keys and other secrets are encrypted at rest using AES-256-GCM.
+// Key derivation uses Argon2id.
 type Vault struct {
 	enabled bool
 
 	mu     sync.RWMutex
 	locked bool
+
+	// salt for Argon2id (persisted alongside encrypted data)
+	salt []byte
 
 	// derived key (in-memory only; cleared on lock)
 	key []byte
@@ -47,13 +62,19 @@ func (v *Vault) Unlock(master []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// TODO: derive key via argon2id with stored salt.
-	// Placeholder: pad/truncate master to 32 bytes.
 	if len(master) < 8 {
 		return errors.New("password too short")
 	}
-	v.key = make([]byte, 32)
-	copy(v.key, master)
+
+	// Generate salt on first unlock; reuse existing salt on subsequent unlocks.
+	if v.salt == nil {
+		v.salt = make([]byte, saltLen)
+		if _, err := io.ReadFull(rand.Reader, v.salt); err != nil {
+			return fmt.Errorf("failed to generate salt: %w", err)
+		}
+	}
+
+	v.key = argon2.IDKey(master, v.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
 	v.locked = false
 	return nil
 }
@@ -66,6 +87,26 @@ func (v *Vault) Lock() {
 	}
 	v.key = nil
 	v.locked = true
+}
+
+// Salt returns the vault salt (for persistence). Returns nil if no salt yet.
+func (v *Vault) Salt() []byte {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.salt == nil {
+		return nil
+	}
+	s := make([]byte, len(v.salt))
+	copy(s, v.salt)
+	return s
+}
+
+// SetSalt restores a previously persisted salt (call before Unlock).
+func (v *Vault) SetSalt(salt []byte) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.salt = make([]byte, len(salt))
+	copy(v.salt, salt)
 }
 
 // Set encrypts and stores a value.

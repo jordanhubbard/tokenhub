@@ -43,3 +43,13 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
 }
+
+func HealthStatsHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Health == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"providers": []any{}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"providers": d.Health.AllStats()})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/store"
@@ -16,6 +17,7 @@ type Dependencies struct {
 	Vault   *vault.Vault
 	Metrics *metrics.Registry
 	Store   store.Store
+	Health  *health.Tracker
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {
@@ -41,6 +43,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Post("/vault/unlock", VaultUnlockHandler(d))
 		r.Post("/providers", ProvidersUpsertHandler(d))
 		r.Post("/models", ModelsUpsertHandler(d))
+		r.Get("/health", HealthStatsHandler(d))
 	})
 
 	r.Handle("/metrics", d.Metrics.Handler())

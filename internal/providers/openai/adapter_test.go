@@ -171,5 +171,30 @@ func TestSendPayload(t *testing.T) {
 	}
 }
 
-// Ensure unused import is legitimate
+func TestRetryAfterHeader(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+	}))
+	defer ts.Close()
+
+	a := New("openai", "test-key", ts.URL)
+	_, err := a.Send(context.Background(), "gpt-4", router.Request{
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	classified := a.ClassifyError(err)
+	if classified.Class != router.ErrRateLimited {
+		t.Errorf("expected ErrRateLimited, got %s", classified.Class)
+	}
+	if classified.RetryAfter != 30 {
+		t.Errorf("expected RetryAfter=30, got %d", classified.RetryAfter)
+	}
+}
+
+// Keep providers import used.
 var _ = providers.StatusError{}

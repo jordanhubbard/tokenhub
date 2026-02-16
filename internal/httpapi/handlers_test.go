@@ -316,6 +316,29 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 }
 
+func TestHealthStatsEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/v1/health")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if _, ok := result["providers"]; !ok {
+		t.Error("expected 'providers' key in health stats response")
+	}
+}
+
 func TestAdminEndpoint(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()

@@ -156,3 +156,28 @@ func TestSendPayloadIncludesMaxTokens(t *testing.T) {
 		t.Errorf("expected max_tokens=4096, got %v", payload["max_tokens"])
 	}
 }
+
+func TestRetryAfterHeader529(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(529)
+		_, _ = w.Write([]byte(`{"error":{"message":"overloaded"}}`))
+	}))
+	defer ts.Close()
+
+	a := New("anthropic", "test-key", ts.URL)
+	_, err := a.Send(context.Background(), "claude-opus", router.Request{
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	classified := a.ClassifyError(err)
+	if classified.Class != router.ErrRateLimited {
+		t.Errorf("expected ErrRateLimited, got %s", classified.Class)
+	}
+	if classified.RetryAfter != 60 {
+		t.Errorf("expected RetryAfter=60, got %d", classified.RetryAfter)
+	}
+}
