@@ -49,6 +49,12 @@ func WithTimeout(d time.Duration) Option {
 
 func (a *Adapter) ID() string { return a.id }
 
+// HealthEndpoint returns a URL for health probing. A GET to the messages
+// endpoint returns 405 (Method Not Allowed) which proves reachability.
+func (a *Adapter) HealthEndpoint() string {
+	return a.baseURL + "/v1/messages"
+}
+
 func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (router.ProviderResponse, error) {
 	messages := make([]map[string]string, len(req.Messages))
 	for i, msg := range req.Messages {

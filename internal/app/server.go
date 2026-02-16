@@ -38,6 +38,7 @@ type Server struct {
 	store    store.Store
 	logger   *slog.Logger
 	temporal *temporalpkg.Manager // nil when Temporal disabled
+	prober   *health.Prober      // nil when no probeable adapters
 
 	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
@@ -98,6 +99,20 @@ func NewServer(cfg Config) (*Server, error) {
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second
 	registerProviders(eng, timeout, logger)
 
+	// Start health check prober for registered adapters.
+	var probeTargets []health.Probeable
+	for _, id := range eng.ListAdapterIDs() {
+		if p, ok := eng.GetAdapter(id).(health.Probeable); ok {
+			probeTargets = append(probeTargets, p)
+		}
+	}
+	var prober *health.Prober
+	if len(probeTargets) > 0 {
+		prober = health.NewProber(health.DefaultProberConfig(), ht, probeTargets, logger)
+		prober.Start()
+		logger.Info("health prober started", slog.Int("targets", len(probeTargets)))
+	}
+
 	// Register default models, then load any persisted models from DB.
 	registerDefaultModels(eng)
 	loadPersistedModels(eng, db, logger)
@@ -123,6 +138,7 @@ func NewServer(cfg Config) (*Server, error) {
 		engine:    eng,
 		store:     db,
 		logger:    logger,
+		prober:    prober,
 		stopPrune: make(chan struct{}),
 	}
 
@@ -188,6 +204,9 @@ func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) Close() error {
 	close(s.stopPrune)
+	if s.prober != nil {
+		s.prober.Stop()
+	}
 	if s.temporal != nil {
 		s.temporal.Stop()
 	}

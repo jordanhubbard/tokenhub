@@ -57,6 +57,11 @@ func WithEndpoints(endpoints ...string) Option {
 
 func (a *Adapter) ID() string { return a.id }
 
+// HealthEndpoint returns the /health URL of the first endpoint for probing.
+func (a *Adapter) HealthEndpoint() string {
+	return a.endpoints[0] + "/health"
+}
+
 // nextEndpoint returns the next endpoint in round-robin order.
 func (a *Adapter) nextEndpoint() string {
 	idx := a.counter.Add(1) - 1
