@@ -40,8 +40,24 @@ type Dependencies struct {
 
 func MountRoutes(r chi.Router, d Dependencies) {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		// Verify the system can actually route requests.
+		modelCount := len(d.Engine.ListModels())
+		adapterCount := len(d.Engine.ListAdapterIDs())
+		if adapterCount == 0 || modelCount == 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":   "unhealthy",
+				"adapters": adapterCount,
+				"models":   modelCount,
+			})
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":   "ok",
+			"adapters": adapterCount,
+			"models":   modelCount,
+		})
 	})
 
 	// Serve the embedded admin UI at /admin.

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
+	"github.com/jordanhubbard/tokenhub/internal/providers"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
@@ -67,6 +68,9 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 			apiKeyID = rec.ID
 		}
 
+		// Inject request ID into context for provider tracing.
+		reqCtx := providers.WithRequestID(r.Context(), middleware.GetReqID(r.Context()))
+
 		var decision router.Decision
 		var resp json.RawMessage
 		var err error
@@ -82,17 +86,17 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				Directive: req.Orchestration,
 			}
 			workflowID := fmt.Sprintf("plan-%s", requestID)
-			run, terr := d.TemporalClient.ExecuteWorkflow(r.Context(), client.StartWorkflowOptions{
+			run, terr := d.TemporalClient.ExecuteWorkflow(reqCtx, client.StartWorkflowOptions{
 				ID:        workflowID,
 				TaskQueue: d.TemporalTaskQueue,
 			}, temporalpkg.OrchestrationWorkflow, input)
 			if terr != nil {
 				// Temporal unavailable — fall back to direct path.
-				decision, resp, err = d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+				decision, resp, err = d.Engine.Orchestrate(reqCtx, req.Request, req.Orchestration)
 			} else {
 				var output temporalpkg.ChatOutput
-				if terr = run.Get(r.Context(), &output); terr != nil {
-					decision, resp, err = d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+				if terr = run.Get(reqCtx, &output); terr != nil {
+					decision, resp, err = d.Engine.Orchestrate(reqCtx, req.Request, req.Orchestration)
 				} else if output.Error != "" {
 					err = fmt.Errorf("%s", output.Error)
 					decision = output.Decision
@@ -104,7 +108,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				}
 			}
 		} else {
-			decision, resp, err = d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+			decision, resp, err = d.Engine.Orchestrate(reqCtx, req.Request, req.Orchestration)
 		}
 		latencyMs := time.Since(start).Milliseconds()
 

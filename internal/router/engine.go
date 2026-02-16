@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"math/rand"
@@ -20,6 +21,12 @@ type Sender interface {
 	ID() string
 	Send(ctx context.Context, model string, req Request) (ProviderResponse, error)
 	ClassifyError(err error) *ClassifiedError
+}
+
+// StreamSender is an optional interface for provider adapters that support SSE streaming.
+type StreamSender interface {
+	Sender
+	SendStream(ctx context.Context, model string, req Request) (io.ReadCloser, error)
 }
 
 // ErrorClass classifies provider errors for routing decisions.
@@ -544,6 +551,45 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	}
 
 	return Decision{}, nil, errors.New("all providers failed")
+}
+
+// RouteAndStream selects a model and opens a streaming connection.
+// Returns the decision, the SSE stream body, and any error.
+func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Decision, io.ReadCloser, error) {
+	decision, eligible, err := e.SelectModel(ctx, req, p)
+	if err != nil {
+		return Decision{}, nil, err
+	}
+
+	e.mu.RLock()
+	adapter := e.adapters[decision.ProviderID]
+	e.mu.RUnlock()
+
+	streamer, ok := adapter.(StreamSender)
+	if !ok {
+		return Decision{}, nil, fmt.Errorf("provider %s does not support streaming", decision.ProviderID)
+	}
+
+	body, err := streamer.SendStream(ctx, decision.ModelID, req)
+	if err != nil {
+		// Try fallback models.
+		for _, m := range eligible[1:] {
+			e.mu.RLock()
+			fallbackAdapter := e.adapters[m.ProviderID]
+			e.mu.RUnlock()
+			if fs, ok := fallbackAdapter.(StreamSender); ok {
+				body, err = fs.SendStream(ctx, m.ID, req)
+				if err == nil {
+					decision.ModelID = m.ID
+					decision.ProviderID = m.ProviderID
+					return decision, body, nil
+				}
+			}
+		}
+		return Decision{}, nil, fmt.Errorf("all providers failed for streaming: %w", err)
+	}
+
+	return decision, body, nil
 }
 
 // findLargerContextModel finds the smallest model with context larger than needed.

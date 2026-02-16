@@ -22,6 +22,13 @@ type Request struct {
 	// Optional JSON Schema that the orchestration output should conform to.
 	// Used for structured output from LLMs.
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+
+	// Parameters forwarded to the provider (temperature, max_tokens, top_p, etc.)
+	// These are merged directly into the provider request payload.
+	Parameters map[string]any `json:"parameters,omitempty"`
+
+	// Stream requests SSE streaming from the provider.
+	Stream bool `json:"stream,omitempty"`
 }
 
 type Message struct {

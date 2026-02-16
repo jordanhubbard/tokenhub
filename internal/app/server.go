@@ -119,6 +119,28 @@ func NewServer(cfg Config) (*Server, error) {
 	loadPersistedModels(eng, db, logger)
 	loadRoutingConfig(eng, db, logger)
 
+	// Startup validation: warn if system cannot route requests.
+	adapterIDs := eng.ListAdapterIDs()
+	modelList := eng.ListModels()
+	if len(adapterIDs) == 0 {
+		logger.Warn("NO PROVIDERS REGISTERED — set TOKENHUB_OPENAI_API_KEY, TOKENHUB_ANTHROPIC_API_KEY, or TOKENHUB_VLLM_ENDPOINTS")
+	}
+	if len(modelList) == 0 {
+		logger.Warn("NO MODELS REGISTERED — requests will fail until models are configured")
+	} else {
+		enabledCount := 0
+		for _, m := range modelList {
+			if m.Enabled {
+				enabledCount++
+			}
+		}
+		if enabledCount == 0 {
+			logger.Warn("ALL MODELS DISABLED — requests will fail until models are enabled")
+		} else {
+			logger.Info("startup ready", slog.Int("providers", len(adapterIDs)), slog.Int("models", enabledCount))
+		}
+	}
+
 	// Initialize Thompson Sampling bandit policy.
 	sampler := router.NewThompsonSampler()
 	eng.SetBanditPolicy(sampler)

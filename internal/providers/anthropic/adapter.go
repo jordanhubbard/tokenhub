@@ -65,9 +65,18 @@ func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (r
 	}
 
 	payload := map[string]any{
-		"model":      model,
-		"messages":   messages,
-		"max_tokens": 4096,
+		"model":    model,
+		"messages": messages,
+	}
+	// Merge client parameters
+	for k, v := range req.Parameters {
+		if k != "model" && k != "messages" {
+			payload[k] = v
+		}
+	}
+	// Anthropic requires max_tokens — default if not provided.
+	if _, ok := payload["max_tokens"]; !ok {
+		payload["max_tokens"] = 4096
 	}
 
 	return a.makeRequest(ctx, "/v1/messages", payload)
@@ -92,6 +101,68 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }
 
+// SendStream sends a streaming request and returns the raw SSE response body.
+func (a *Adapter) SendStream(ctx context.Context, model string, req router.Request) (io.ReadCloser, error) {
+	messages := make([]map[string]string, len(req.Messages))
+	for i, msg := range req.Messages {
+		messages[i] = map[string]string{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+	}
+
+	payload := map[string]any{
+		"model":    model,
+		"messages": messages,
+		"stream":   true,
+	}
+	for k, v := range req.Parameters {
+		if k != "model" && k != "messages" && k != "stream" {
+			payload[k] = v
+		}
+	}
+	if _, ok := payload["max_tokens"]; !ok {
+		payload["max_tokens"] = 4096
+	}
+
+	return a.makeStreamRequest(ctx, "/v1/messages", payload)
+}
+
+func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payload any) (io.ReadCloser, error) {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.baseURL+endpoint, bytes.NewReader(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", a.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	// Forward request ID for tracing.
+	if reqID := providers.GetRequestID(ctx); reqID != "" {
+		req.Header.Set("X-Request-ID", reqID)
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
+		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		return nil, se
+	}
+
+	return resp.Body, nil
+}
+
 func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -106,6 +177,10 @@ func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", a.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	// Forward request ID for tracing.
+	if reqID := providers.GetRequestID(ctx); reqID != "" {
+		req.Header.Set("X-Request-ID", reqID)
+	}
 
 	resp, err := a.client.Do(req)
 	if err != nil {

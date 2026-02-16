@@ -113,17 +113,34 @@ func authGet(url string) (*http.Response, error) {
 }
 
 func TestHealthz(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
+	ts, eng, _ := setupTestServer(t)
 	defer ts.Close()
 
+	// healthz returns 503 when no adapters/models are registered.
 	resp, err := http.Get(ts.URL + "/healthz")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 with no adapters, got %d", resp.StatusCode)
+	}
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
+	// Register an adapter and model so healthz passes.
+	eng.RegisterAdapter(&mockSender{id: "test-provider", resp: json.RawMessage(`{}`)})
+	eng.RegisterModel(router.Model{
+		ID: "test-model", ProviderID: "test-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	resp2, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 with adapters, got %d", resp2.StatusCode)
 	}
 }
 

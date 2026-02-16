@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
+	"github.com/jordanhubbard/tokenhub/internal/providers"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
@@ -120,6 +121,41 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			apiKeyID = rec.ID
 		}
 
+		// Inject request ID into context for provider tracing.
+		reqCtx := providers.WithRequestID(r.Context(), middleware.GetReqID(r.Context()))
+
+		// Handle streaming requests.
+		if req.Request.Stream {
+			decision, body, serr := d.Engine.RouteAndStream(reqCtx, req.Request, policy)
+			if serr != nil {
+				http.Error(w, serr.Error(), http.StatusBadGateway)
+				return
+			}
+			defer body.Close()
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("X-Negotiated-Model", decision.ModelID)
+			w.WriteHeader(http.StatusOK)
+
+			flusher, _ := w.(http.Flusher)
+			buf := make([]byte, 4096)
+			for {
+				n, readErr := body.Read(buf)
+				if n > 0 {
+					_, _ = w.Write(buf[:n])
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			return
+		}
+
 		var decision router.Decision
 		var resp json.RawMessage
 		var err error
@@ -135,17 +171,17 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				Policy:    policy,
 			}
 			workflowID := fmt.Sprintf("chat-%s", requestID)
-			run, terr := d.TemporalClient.ExecuteWorkflow(r.Context(), client.StartWorkflowOptions{
+			run, terr := d.TemporalClient.ExecuteWorkflow(reqCtx, client.StartWorkflowOptions{
 				ID:        workflowID,
 				TaskQueue: d.TemporalTaskQueue,
 			}, temporalpkg.ChatWorkflow, input)
 			if terr != nil {
 				// Temporal unavailable — fall back to direct path.
-				decision, resp, err = d.Engine.RouteAndSend(r.Context(), req.Request, policy)
+				decision, resp, err = d.Engine.RouteAndSend(reqCtx, req.Request, policy)
 			} else {
 				var output temporalpkg.ChatOutput
-				if terr = run.Get(r.Context(), &output); terr != nil {
-					decision, resp, err = d.Engine.RouteAndSend(r.Context(), req.Request, policy)
+				if terr = run.Get(reqCtx, &output); terr != nil {
+					decision, resp, err = d.Engine.RouteAndSend(reqCtx, req.Request, policy)
 				} else if output.Error != "" {
 					err = fmt.Errorf("%s", output.Error)
 					decision = output.Decision
@@ -158,7 +194,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			}
 		} else {
 			// Direct engine call (fallback path).
-			decision, resp, err = d.Engine.RouteAndSend(r.Context(), req.Request, policy)
+			decision, resp, err = d.Engine.RouteAndSend(reqCtx, req.Request, policy)
 		}
 		latencyMs := time.Since(start).Milliseconds()
 

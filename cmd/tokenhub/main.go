@@ -31,6 +31,8 @@ func main() {
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		WriteTimeout:      300 * time.Second, // allow long LLM streaming responses
 	}
 
 	go func() {
@@ -40,13 +42,19 @@ func main() {
 		}
 	}()
 
-	// graceful shutdown
+	// Graceful shutdown: drain in-flight requests, then close resources.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	log.Printf("shutting down (draining in-flight requests)...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_ = httpServer.Shutdown(ctx)
-	_ = srv.Close()
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Printf("HTTP shutdown error: %v", err)
+	}
+	if err := srv.Close(); err != nil {
+		log.Printf("server close error: %v", err)
+	}
+	log.Printf("shutdown complete")
 }

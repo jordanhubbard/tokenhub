@@ -81,6 +81,12 @@ func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (r
 		"model":    model,
 		"messages": messages,
 	}
+	// Merge client parameters (temperature, max_tokens, top_p, etc.)
+	for k, v := range req.Parameters {
+		if k != "model" && k != "messages" { // never override model/messages
+			payload[k] = v
+		}
+	}
 
 	baseURL := a.nextEndpoint()
 	return a.makeRequest(ctx, baseURL, "/v1/chat/completions", payload)
@@ -103,6 +109,64 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }
 
+// SendStream sends a streaming request and returns the raw SSE response body.
+func (a *Adapter) SendStream(ctx context.Context, model string, req router.Request) (io.ReadCloser, error) {
+	messages := make([]map[string]string, len(req.Messages))
+	for i, msg := range req.Messages {
+		messages[i] = map[string]string{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+	}
+
+	payload := map[string]any{
+		"model":    model,
+		"messages": messages,
+		"stream":   true,
+	}
+	for k, v := range req.Parameters {
+		if k != "model" && k != "messages" && k != "stream" {
+			payload[k] = v
+		}
+	}
+
+	baseURL := a.nextEndpoint()
+	return a.makeStreamRequest(ctx, baseURL, "/v1/chat/completions", payload)
+}
+
+func (a *Adapter) makeStreamRequest(ctx context.Context, baseURL, endpoint string, payload any) (io.ReadCloser, error) {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+endpoint, bytes.NewReader(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	// Forward request ID for tracing.
+	if reqID := providers.GetRequestID(ctx); reqID != "" {
+		req.Header.Set("X-Request-ID", reqID)
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
+		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		return nil, se
+	}
+
+	return resp.Body, nil
+}
+
 func (a *Adapter) makeRequest(ctx context.Context, baseURL, endpoint string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -115,6 +179,10 @@ func (a *Adapter) makeRequest(ctx context.Context, baseURL, endpoint string, pay
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	// Forward request ID for tracing.
+	if reqID := providers.GetRequestID(ctx); reqID != "" {
+		req.Header.Set("X-Request-ID", reqID)
+	}
 
 	resp, err := a.client.Do(req)
 	if err != nil {
