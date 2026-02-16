@@ -3,8 +3,11 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jordanhubbard/tokenhub/internal/router"
+	"github.com/jordanhubbard/tokenhub/internal/store"
 )
 
 type ChatRequest struct {
@@ -32,6 +35,8 @@ type ChatResponse struct {
 
 func ChatHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
 		var req ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -49,16 +54,51 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		decision, resp, err := d.Engine.RouteAndSend(r.Context(), req.Request, policy)
+		latencyMs := time.Since(start).Milliseconds()
+
 		if err != nil {
+			// Record metrics for failed requests.
+			if d.Metrics != nil {
+				d.Metrics.RequestsTotal.WithLabelValues(policy.Mode, "", "", "error").Inc()
+			}
+			if d.Store != nil {
+				_ = d.Store.LogRequest(r.Context(), store.RequestLog{
+					Timestamp:  time.Now().UTC(),
+					Mode:       policy.Mode,
+					LatencyMs:  latencyMs,
+					StatusCode: http.StatusBadGateway,
+					ErrorClass: "routing_failure",
+					RequestID:  middleware.GetReqID(r.Context()),
+				})
+			}
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
+		// Record metrics for successful requests.
+		if d.Metrics != nil {
+			d.Metrics.RequestsTotal.WithLabelValues(policy.Mode, decision.ModelID, decision.ProviderID, "ok").Inc()
+			d.Metrics.RequestLatency.WithLabelValues(policy.Mode, decision.ModelID, decision.ProviderID).Observe(float64(latencyMs))
+			d.Metrics.CostUSD.WithLabelValues(decision.ModelID, decision.ProviderID).Add(decision.EstimatedCostUSD)
+		}
+		if d.Store != nil {
+			_ = d.Store.LogRequest(r.Context(), store.RequestLog{
+				Timestamp:        time.Now().UTC(),
+				ModelID:          decision.ModelID,
+				ProviderID:       decision.ProviderID,
+				Mode:             policy.Mode,
+				EstimatedCostUSD: decision.EstimatedCostUSD,
+				LatencyMs:        latencyMs,
+				StatusCode:       http.StatusOK,
+				RequestID:        middleware.GetReqID(r.Context()),
+			})
+		}
+
 		_ = json.NewEncoder(w).Encode(ChatResponse{
-			NegotiatedModel: decision.ModelID,
+			NegotiatedModel:  decision.ModelID,
 			EstimatedCostUSD: decision.EstimatedCostUSD,
-			RoutingReason: decision.Reason,
-			Response: resp,
+			RoutingReason:    decision.Reason,
+			Response:         resp,
 		})
 	}
 }

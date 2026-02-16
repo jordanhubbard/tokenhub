@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/jordanhubbard/tokenhub/internal/providers"
 	"github.com/jordanhubbard/tokenhub/internal/router"
@@ -20,12 +21,26 @@ type Adapter struct {
 	client  *http.Client
 }
 
-// New creates a new vLLM adapter.
-func New(id, baseURL string) *Adapter {
-	return &Adapter{
+// New creates a new vLLM adapter. A zero timeout defaults to 30s.
+func New(id, baseURL string, opts ...Option) *Adapter {
+	a := &Adapter{
 		id:      id,
 		baseURL: baseURL,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 30 * time.Second},
+	}
+	for _, o := range opts {
+		o(a)
+	}
+	return a
+}
+
+// Option configures an Adapter.
+type Option func(*Adapter)
+
+// WithTimeout sets the HTTP client timeout.
+func WithTimeout(d time.Duration) Option {
+	return func(a *Adapter) {
+		a.client.Timeout = d
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"sort"
 	"sync"
@@ -75,9 +75,6 @@ func (e *Engine) RegisterAdapter(a Sender) {
 func (e *Engine) RegisterModel(m Model) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !m.Enabled {
-		m.Enabled = true
-	}
 	e.models[m.ID] = m
 }
 
@@ -146,7 +143,12 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		adapter := e.adapters[m.ProviderID]
 		estCost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
 
-		log.Printf("routing to provider=%s model=%s (attempt %d/%d)", m.ProviderID, m.ID, i+1, len(eligible))
+		slog.Info("routing request",
+			slog.String("provider", m.ProviderID),
+			slog.String("model", m.ID),
+			slog.Int("attempt", i+1),
+			slog.Int("total", len(eligible)),
+		)
 
 		resp, err := adapter.Send(ctx, m.ID, req)
 		if err == nil {
@@ -160,14 +162,22 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 
 		// Classify the error and decide whether to escalate.
 		classified := adapter.ClassifyError(err)
-		log.Printf("provider=%s model=%s failed: %v (class=%s)", m.ProviderID, m.ID, err, classified.Class)
+		slog.Warn("provider failed",
+			slog.String("provider", m.ProviderID),
+			slog.String("model", m.ID),
+			slog.String("error", err.Error()),
+			slog.String("class", string(classified.Class)),
+		)
 
 		switch classified.Class {
 		case ErrContextOverflow:
 			// Find a model with larger context.
 			larger := e.findLargerContextModel(m, tokensNeeded*2)
 			if larger != nil {
-				log.Printf("context overflow: escalating to model=%s (context=%d)", larger.ID, larger.MaxContextTokens)
+				slog.Info("escalating on context overflow",
+					slog.String("target_model", larger.ID),
+					slog.Int("context_tokens", larger.MaxContextTokens),
+				)
 				a2 := e.adapters[larger.ProviderID]
 				resp2, err2 := a2.Send(ctx, larger.ID, req)
 				if err2 == nil {

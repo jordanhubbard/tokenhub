@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
+	"github.com/jordanhubbard/tokenhub/internal/store"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
 
@@ -14,6 +15,7 @@ type Dependencies struct {
 	Engine  *router.Engine
 	Vault   *vault.Vault
 	Metrics *metrics.Registry
+	Store   store.Store
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {
