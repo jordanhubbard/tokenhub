@@ -86,6 +86,23 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			request_id TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)`,
+		`CREATE TABLE IF NOT EXISTS reward_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp TEXT NOT NULL,
+			request_id TEXT,
+			model_id TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			mode TEXT,
+			estimated_tokens INTEGER,
+			token_bucket TEXT,
+			latency_budget_ms INTEGER,
+			latency_ms REAL,
+			cost_usd REAL,
+			success INTEGER,
+			error_class TEXT,
+			reward REAL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_reward_logs_ts ON reward_logs(timestamp)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -317,6 +334,55 @@ func (s *SQLiteStore) ListAuditLogs(ctx context.Context, limit int, offset int) 
 			return nil, err
 		}
 		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
+}
+
+// Reward Logs
+
+func (s *SQLiteStore) LogReward(ctx context.Context, entry RewardEntry) error {
+	successInt := 0
+	if entry.Success {
+		successInt = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO reward_logs (timestamp, request_id, model_id, provider_id, mode,
+		 estimated_tokens, token_bucket, latency_budget_ms, latency_ms, cost_usd,
+		 success, error_class, reward)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.Timestamp, entry.RequestID, entry.ModelID, entry.ProviderID, entry.Mode,
+		entry.EstimatedTokens, entry.TokenBucket, entry.LatencyBudgetMs, entry.LatencyMs,
+		entry.CostUSD, successInt, entry.ErrorClass, entry.Reward)
+	return err
+}
+
+func (s *SQLiteStore) ListRewards(ctx context.Context, limit int, offset int) ([]RewardEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, timestamp, request_id, model_id, provider_id, mode,
+		 estimated_tokens, token_bucket, latency_budget_ms, latency_ms, cost_usd,
+		 success, error_class, reward
+		 FROM reward_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []RewardEntry
+	for rows.Next() {
+		var l RewardEntry
+		var ts string
+		var successInt int
+		if err := rows.Scan(&l.ID, &ts, &l.RequestID, &l.ModelID, &l.ProviderID, &l.Mode,
+			&l.EstimatedTokens, &l.TokenBucket, &l.LatencyBudgetMs, &l.LatencyMs,
+			&l.CostUSD, &successInt, &l.ErrorClass, &l.Reward); err != nil {
+			return nil, err
+		}
+		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		l.Success = successInt != 0
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()

@@ -34,6 +34,10 @@ type Store interface {
 	LogAudit(ctx context.Context, entry AuditEntry) error
 	ListAuditLogs(ctx context.Context, limit int, offset int) ([]AuditEntry, error)
 
+	// Reward logging (contextual bandit data collection)
+	LogReward(ctx context.Context, entry RewardEntry) error
+	ListRewards(ctx context.Context, limit int, offset int) ([]RewardEntry, error)
+
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
 	Close() error
@@ -88,4 +92,23 @@ type RequestLog struct {
 	StatusCode       int       `json:"status_code"`
 	ErrorClass       string    `json:"error_class,omitempty"`
 	RequestID        string    `json:"request_id,omitempty"`
+}
+
+// RewardEntry captures the features and outcome of a routing decision
+// for contextual bandit reward logging (RL-based routing data collection).
+type RewardEntry struct {
+	ID              int64     `json:"id"`
+	Timestamp       time.Time `json:"timestamp"`
+	RequestID       string    `json:"request_id,omitempty"`
+	ModelID         string    `json:"model_id"`
+	ProviderID      string    `json:"provider_id"`
+	Mode            string    `json:"mode"`
+	EstimatedTokens int       `json:"estimated_tokens"`
+	TokenBucket     string    `json:"token_bucket"`
+	LatencyBudgetMs int       `json:"latency_budget_ms"`
+	LatencyMs       float64   `json:"latency_ms"`
+	CostUSD         float64   `json:"cost_usd"`
+	Success         bool      `json:"success"`
+	ErrorClass      string    `json:"error_class,omitempty"`
+	Reward          float64   `json:"reward"`
 }

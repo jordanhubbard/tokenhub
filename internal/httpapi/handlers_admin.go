@@ -491,6 +491,34 @@ func AuditLogsHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
+// RewardsHandler handles GET /admin/v1/rewards?limit=N&offset=N
+func RewardsHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Store == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"rewards": []any{}})
+			return
+		}
+		limit := 100
+		offset := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := parseIntParam(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if v := r.URL.Query().Get("offset"); v != "" {
+			if n, err := parseIntParam(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+		rewards, err := d.Store.ListRewards(r.Context(), limit, offset)
+		if err != nil {
+			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"rewards": rewards})
+	}
+}
+
 func HealthStatsHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.Health == nil {

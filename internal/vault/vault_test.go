@@ -2,6 +2,7 @@ package vault
 
 import (
 	"testing"
+	"time"
 )
 
 func unlocked(t *testing.T) *Vault {
@@ -215,5 +216,55 @@ func TestVault_LockClearsKey(t *testing.T) {
 	_, err := v.Get("k")
 	if err == nil {
 		t.Error("expected Get to fail after Lock()")
+	}
+}
+
+func TestAutoLock(t *testing.T) {
+	v, err := New(true, WithAutoLockDuration(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := v.Unlock([]byte("a]strong-password-for-testing!!")); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	if v.IsLocked() {
+		t.Fatal("expected vault to be unlocked immediately after Unlock")
+	}
+
+	// Wait long enough for the auto-lock to trigger.
+	time.Sleep(200 * time.Millisecond)
+
+	if !v.IsLocked() {
+		t.Error("expected vault to be auto-locked after inactivity timeout")
+	}
+}
+
+func TestAutoLockTouch(t *testing.T) {
+	v, err := New(true, WithAutoLockDuration(150*time.Millisecond))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := v.Unlock([]byte("a]strong-password-for-testing!!")); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	// Touch the vault periodically to keep it alive past the auto-lock timeout.
+	for i := 0; i < 4; i++ {
+		time.Sleep(50 * time.Millisecond)
+		v.Touch()
+	}
+
+	// At this point ~200ms have elapsed, but the vault should still be unlocked
+	// because Touch() kept resetting the timer.
+	if v.IsLocked() {
+		t.Error("expected vault to remain unlocked because Touch() was called")
+	}
+
+	// Now stop touching and let the auto-lock kick in.
+	time.Sleep(200 * time.Millisecond)
+
+	if !v.IsLocked() {
+		t.Error("expected vault to be auto-locked after Touch() stopped")
 	}
 }

@@ -96,7 +96,19 @@
     .toast.success { background: #1b5e20; }
     .toast.error { background: #b71c1c; }
     .toast.visible { opacity: 1; }
-    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } .panel.full-width { grid-column: 1; } }
+    .panel.request-log { grid-column: 1 / 3; max-height: 450px; }
+    .request-log-table-wrap { max-height: 340px; overflow-y: auto; }
+    .request-log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .request-log-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; position: sticky; top: 0; background: #1a1d29; }
+    .request-log-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; font-family: monospace; font-size: 12px; }
+    .status-ok { color: #4caf50; }
+    .status-err { color: #f44336; }
+    .latency-fast { color: #4caf50; }
+    .latency-med { color: #ffc107; }
+    .latency-slow { color: #f44336; }
+    .pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .pagination .page-info { font-size: 12px; color: #8a8d9a; margin-left: auto; }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } .panel.request-log { grid-column: 1; } .panel.full-width { grid-column: 1; } }
   </style>
 </head>
 <body>
@@ -230,6 +242,23 @@
           </thead>
           <tbody id="audit-body"></tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="panel request-log">
+      <h2>Request Log</h2>
+      <div class="request-log-table-wrap">
+        <table class="request-log-table">
+          <thead>
+            <tr><th>Time</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency (ms)</th><th>Cost (USD)</th><th>Status</th><th>Request ID</th></tr>
+          </thead>
+          <tbody id="request-log-body"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <button class="btn sm" id="req-log-prev" onclick="requestLogPrev()" disabled>Previous</button>
+        <button class="btn sm" id="req-log-next" onclick="requestLogNext()">Next</button>
+        <span class="page-info" id="req-log-page-info">Page 1</span>
       </div>
     </div>
   </div>
@@ -657,6 +686,70 @@
         }).catch(() => {});
     }
 
+    // ---- Request Log ----
+    let requestLogOffset = 0;
+    const requestLogLimit = 50;
+
+    function formatRequestLogTime(ts) {
+      try {
+        const d = new Date(ts);
+        return d.toLocaleTimeString();
+      } catch { return ts; }
+    }
+
+    function statusClass(code) {
+      return code === 200 ? 'status-ok' : 'status-err';
+    }
+
+    function latencyClass(ms) {
+      if (ms < 1000) return 'latency-fast';
+      if (ms <= 5000) return 'latency-med';
+      return 'latency-slow';
+    }
+
+    function fetchRequestLogs() {
+      fetch(`/admin/v1/logs?limit=${requestLogLimit}&offset=${requestLogOffset}`)
+        .then(r => r.json())
+        .then(data => {
+          const tbody = document.getElementById('request-log-body');
+          const logs = data.logs || [];
+          if (logs.length === 0 && requestLogOffset === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="color:#8a8d9a;text-align:center;">No request logs</td></tr>';
+          } else {
+            tbody.innerHTML = logs.map(entry => {
+              return `<tr>
+                <td>${formatRequestLogTime(entry.timestamp)}</td>
+                <td>${entry.model_id || '-'}</td>
+                <td>${entry.provider_id || '-'}</td>
+                <td>${entry.mode || '-'}</td>
+                <td><span class="${latencyClass(entry.latency_ms)}">${entry.latency_ms}</span></td>
+                <td>$${(entry.estimated_cost_usd || 0).toFixed(6)}</td>
+                <td><span class="${statusClass(entry.status_code)}">${entry.status_code}</span></td>
+                <td>${entry.request_id || '-'}</td>
+              </tr>`;
+            }).join('');
+          }
+          const page = Math.floor(requestLogOffset / requestLogLimit) + 1;
+          document.getElementById('req-log-page-info').textContent = `Page ${page}`;
+          document.getElementById('req-log-prev').disabled = requestLogOffset === 0;
+          document.getElementById('req-log-next').disabled = logs.length < requestLogLimit;
+        }).catch(() => {});
+    }
+
+    function requestLogPrev() {
+      if (requestLogOffset >= requestLogLimit) {
+        requestLogOffset -= requestLogLimit;
+      } else {
+        requestLogOffset = 0;
+      }
+      fetchRequestLogs();
+    }
+
+    function requestLogNext() {
+      requestLogOffset += requestLogLimit;
+      fetchRequestLogs();
+    }
+
     // ---- Init ----
     document.addEventListener('DOMContentLoaded', () => {
       initChart();
@@ -668,6 +761,8 @@
       fetchProviders();
       fetchRoutingConfig();
       fetchHealthStatus();
+      fetchRequestLogs();
+      setInterval(fetchRequestLogs, 10000);
       setInterval(fetchAuditLog, 10000);
       setInterval(fetchProviders, 30000);
       setInterval(fetchHealthStatus, 10000);

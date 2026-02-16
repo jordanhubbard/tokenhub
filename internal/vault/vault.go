@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/argon2"
 )
+
+const defaultAutoLockAfter = 30 * time.Minute
 
 // Argon2id parameters (OWASP recommended minimums).
 const (
@@ -21,6 +24,17 @@ const (
 	argon2KeyLen  = 32
 	saltLen       = 16
 )
+
+// Option configures optional Vault parameters.
+type Option func(*Vault)
+
+// WithAutoLockDuration sets the inactivity duration after which the vault
+// automatically locks itself. The default is 30 minutes.
+func WithAutoLockDuration(d time.Duration) Option {
+	return func(v *Vault) {
+		v.autoLockAfter = d
+	}
+}
 
 // Vault provides encrypted credential storage with a lock/unlock lifecycle.
 // API keys and other secrets are encrypted at rest using AES-256-GCM.
@@ -39,14 +53,25 @@ type Vault struct {
 
 	// encrypted KV store
 	values map[string][]byte
+
+	// auto-lock fields
+	lastActivity  time.Time
+	autoLockAfter time.Duration
+	stopAutoLock  chan struct{}
+	autoLockOn    bool // true when the goroutine is running
 }
 
-func New(enabled bool) (*Vault, error) {
-	return &Vault{
-		enabled: enabled,
-		locked:  enabled, // locked on start if enabled
-		values:  make(map[string][]byte),
-	}, nil
+func New(enabled bool, opts ...Option) (*Vault, error) {
+	v := &Vault{
+		enabled:       enabled,
+		locked:        enabled, // locked on start if enabled
+		values:        make(map[string][]byte),
+		autoLockAfter: defaultAutoLockAfter,
+	}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v, nil
 }
 
 func (v *Vault) IsLocked() bool {
@@ -76,17 +101,43 @@ func (v *Vault) Unlock(master []byte) error {
 
 	v.key = argon2.IDKey(master, v.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
 	v.locked = false
+	v.lastActivity = time.Now()
+
+	// Start auto-lock goroutine if not already running.
+	if !v.autoLockOn {
+		v.stopAutoLock = make(chan struct{})
+		v.autoLockOn = true
+		go v.autoLockLoop()
+	}
+
 	return nil
 }
 
 func (v *Vault) Lock() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.lockLocked()
+}
+
+// lockLocked performs the actual lock operations. Caller must hold v.mu.
+func (v *Vault) lockLocked() {
+	if v.autoLockOn {
+		close(v.stopAutoLock)
+		v.autoLockOn = false
+	}
 	for i := range v.key {
 		v.key[i] = 0
 	}
 	v.key = nil
 	v.locked = true
+}
+
+// Touch resets the auto-lock inactivity timer. Call this on any vault
+// operation to keep the vault alive during use.
+func (v *Vault) Touch() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.lastActivity = time.Now()
 }
 
 // Salt returns the vault salt (for persistence). Returns nil if no salt yet.
@@ -111,6 +162,7 @@ func (v *Vault) SetSalt(salt []byte) {
 
 // Set encrypts and stores a value.
 func (v *Vault) Set(key, value string) error {
+	v.Touch()
 	encrypted, err := v.Encrypt([]byte(value))
 	if err != nil {
 		return err
@@ -123,6 +175,7 @@ func (v *Vault) Set(key, value string) error {
 
 // Get decrypts and retrieves a value.
 func (v *Vault) Get(key string) (string, error) {
+	v.Touch()
 	v.mu.RLock()
 	encrypted, exists := v.values[key]
 	v.mu.RUnlock()
@@ -221,4 +274,37 @@ func (v *Vault) Decrypt(ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 	return plain, nil
+}
+
+// autoLockLoop runs in a goroutine and locks the vault after a period of
+// inactivity. It checks every minute (or more frequently for short durations)
+// and exits when signalled via stopAutoLock.
+func (v *Vault) autoLockLoop() {
+	// Use a check interval that is the lesser of 1 minute or half the
+	// auto-lock duration, so short test durations still work correctly.
+	interval := time.Minute
+	if half := v.autoLockAfter / 2; half < interval {
+		interval = half
+	}
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			v.mu.Lock()
+			if !v.locked && time.Since(v.lastActivity) > v.autoLockAfter {
+				v.lockLocked()
+				v.mu.Unlock()
+				return
+			}
+			v.mu.Unlock()
+		case <-v.stopAutoLock:
+			return
+		}
+	}
 }

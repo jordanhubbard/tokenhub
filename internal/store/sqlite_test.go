@@ -306,6 +306,118 @@ func TestAuditLog(t *testing.T) {
 	}
 }
 
+func TestRewardLog(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	entry := RewardEntry{
+		Timestamp:       time.Now().UTC(),
+		RequestID:       "req-reward-1",
+		ModelID:         "gpt-4",
+		ProviderID:      "openai",
+		Mode:            "normal",
+		EstimatedTokens: 500,
+		TokenBucket:     "small",
+		LatencyBudgetMs: 5000,
+		LatencyMs:       250.5,
+		CostUSD:         0.025,
+		Success:         true,
+		Reward:          0.85,
+	}
+	if err := s.LogReward(ctx, entry); err != nil {
+		t.Fatalf("log reward failed: %v", err)
+	}
+
+	// Log a second entry (failure).
+	entry2 := RewardEntry{
+		Timestamp:       time.Now().UTC(),
+		RequestID:       "req-reward-2",
+		ModelID:         "claude-opus",
+		ProviderID:      "anthropic",
+		Mode:            "cheap",
+		EstimatedTokens: 15000,
+		TokenBucket:     "large",
+		LatencyBudgetMs: 10000,
+		LatencyMs:       0,
+		CostUSD:         0,
+		Success:         false,
+		ErrorClass:      "routing_failure",
+		Reward:          0,
+	}
+	if err := s.LogReward(ctx, entry2); err != nil {
+		t.Fatalf("log reward 2 failed: %v", err)
+	}
+
+	logs, err := s.ListRewards(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list rewards failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 reward logs, got %d", len(logs))
+	}
+	// Most recent first.
+	if logs[0].ModelID != "claude-opus" {
+		t.Errorf("expected claude-opus first (most recent), got %s", logs[0].ModelID)
+	}
+	if logs[0].Success {
+		t.Error("expected first log to be failure")
+	}
+	if logs[0].ErrorClass != "routing_failure" {
+		t.Errorf("expected error_class routing_failure, got %s", logs[0].ErrorClass)
+	}
+	if logs[1].ModelID != "gpt-4" {
+		t.Errorf("expected gpt-4 second, got %s", logs[1].ModelID)
+	}
+	if !logs[1].Success {
+		t.Error("expected second log to be success")
+	}
+	if logs[1].Reward != 0.85 {
+		t.Errorf("expected reward 0.85, got %f", logs[1].Reward)
+	}
+	if logs[1].TokenBucket != "small" {
+		t.Errorf("expected token_bucket small, got %s", logs[1].TokenBucket)
+	}
+}
+
+func TestRewardLogLimit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		entry := RewardEntry{
+			Timestamp:  time.Now().UTC(),
+			ModelID:    "gpt-4",
+			ProviderID: "openai",
+			Success:    true,
+			Reward:     0.5,
+		}
+		if err := s.LogReward(ctx, entry); err != nil {
+			t.Fatalf("log reward failed: %v", err)
+		}
+	}
+
+	logs, err := s.ListRewards(ctx, 3, 0)
+	if err != nil {
+		t.Fatalf("list rewards failed: %v", err)
+	}
+	if len(logs) != 3 {
+		t.Errorf("expected 3 rewards with limit, got %d", len(logs))
+	}
+}
+
+func TestRewardLogDefaultLimit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	logs, err := s.ListRewards(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("list rewards failed: %v", err)
+	}
+	if logs != nil {
+		t.Errorf("expected nil rewards for empty db, got %d", len(logs))
+	}
+}
+
 func TestVaultBlobEmpty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -100,6 +100,15 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			req.Request.Messages = router.StripDirectives(req.Request.Messages)
 		}
 
+		// Estimate tokens for reward logging.
+		estimatedTokens := req.Request.EstimatedInputTokens
+		if estimatedTokens == 0 {
+			for _, msg := range req.Request.Messages {
+				estimatedTokens += len(msg.Content) / 4
+			}
+		}
+		latencyBudgetMs := policy.MaxLatencyMs
+
 		decision, resp, err := d.Engine.RouteAndSend(r.Context(), req.Request, policy)
 		latencyMs := time.Since(start).Milliseconds()
 
@@ -116,6 +125,22 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					StatusCode: http.StatusBadGateway,
 					ErrorClass: "routing_failure",
 					RequestID:  middleware.GetReqID(r.Context()),
+				})
+			}
+			// Log reward for failed routing decision.
+			if d.Store != nil {
+				_ = d.Store.LogReward(r.Context(), store.RewardEntry{
+					Timestamp:       time.Now().UTC(),
+					RequestID:       middleware.GetReqID(r.Context()),
+					Mode:            policy.Mode,
+					EstimatedTokens: estimatedTokens,
+					TokenBucket:     router.TokenBucketLabel(estimatedTokens),
+					LatencyBudgetMs: latencyBudgetMs,
+					LatencyMs:       float64(latencyMs),
+					CostUSD:         0,
+					Success:         false,
+					ErrorClass:      "routing_failure",
+					Reward:          router.ComputeReward(float64(latencyMs), 0, false, latencyBudgetMs),
 				})
 			}
 			if d.EventBus != nil {
@@ -152,6 +177,23 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				LatencyMs:        latencyMs,
 				StatusCode:       http.StatusOK,
 				RequestID:        middleware.GetReqID(r.Context()),
+			})
+		}
+		// Log reward for successful routing decision.
+		if d.Store != nil {
+			_ = d.Store.LogReward(r.Context(), store.RewardEntry{
+				Timestamp:       time.Now().UTC(),
+				RequestID:       middleware.GetReqID(r.Context()),
+				ModelID:         decision.ModelID,
+				ProviderID:      decision.ProviderID,
+				Mode:            policy.Mode,
+				EstimatedTokens: estimatedTokens,
+				TokenBucket:     router.TokenBucketLabel(estimatedTokens),
+				LatencyBudgetMs: latencyBudgetMs,
+				LatencyMs:       float64(latencyMs),
+				CostUSD:         decision.EstimatedCostUSD,
+				Success:         true,
+				Reward:          router.ComputeReward(float64(latencyMs), decision.EstimatedCostUSD, true, latencyBudgetMs),
 			})
 		}
 		if d.EventBus != nil {
