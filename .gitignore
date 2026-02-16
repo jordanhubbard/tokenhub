@@ -34,3 +34,9 @@ go.work.sum
 # Build
 /dist/
 /tmp/
+
+# Tool config
+.beads/
+.vibe/
+.mcp.json
+settings.json

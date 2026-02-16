@@ -802,3 +802,147 @@ func TestVoteExplicitJudge(t *testing.T) {
 		t.Errorf("expected explicit-judge to be called 1 time, got %d", judgeCalls)
 	}
 }
+
+func TestRefineBasic(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(Model{
+		ID: "m1", ProviderID: "p1",
+		Weight: 10, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	// Set up a response for the model.
+	mock.setResponse("m1", oaiResponse("initial response"), nil)
+
+	dec, resp, err := eng.Orchestrate(context.Background(), makeRequest("explain Go interfaces"), OrchestrationDirective{
+		Mode:       "refine",
+		Iterations: 3,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.Reason != "refine-orchestration" {
+		t.Errorf("expected refine-orchestration reason, got %s", dec.Reason)
+	}
+
+	// Verify the mock was called 1 (initial) + 3 (iterations) = 4 times.
+	mock.mu.Lock()
+	callCount := len(mock.calls)
+	mock.mu.Unlock()
+	if callCount != 4 {
+		t.Errorf("expected 4 calls (1 initial + 3 iterations), got %d", callCount)
+	}
+
+	// Verify composite response structure.
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if _, ok := result["refined_response"]; !ok {
+		t.Error("expected 'refined_response' key in refine response")
+	}
+	if _, ok := result["iterations"]; !ok {
+		t.Error("expected 'iterations' key in refine response")
+	}
+	if model, ok := result["model"].(string); !ok || model != "m1" {
+		t.Errorf("expected model='m1', got %v", result["model"])
+	}
+}
+
+func TestRefineExplicitModel(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+
+	primaryMock := newMockSender("primary-provider")
+	fallbackMock := newMockSender("fallback-provider")
+	eng.RegisterAdapter(primaryMock)
+	eng.RegisterAdapter(fallbackMock)
+
+	eng.RegisterModel(Model{
+		ID: "primary-model", ProviderID: "primary-provider",
+		Weight: 5, MaxContextTokens: 4096, Enabled: true,
+	})
+	eng.RegisterModel(Model{
+		ID: "fallback-model", ProviderID: "fallback-provider",
+		Weight: 10, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	primaryMock.setResponse("primary-model", oaiResponse("primary response"), nil)
+	fallbackMock.setResponse("fallback-model", oaiResponse("fallback response"), nil)
+
+	dec, _, err := eng.Orchestrate(context.Background(), makeRequest("test"), OrchestrationDirective{
+		Mode:           "refine",
+		Iterations:     2,
+		PrimaryModelID: "primary-model",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.ModelID != "primary-model" {
+		t.Errorf("expected primary-model, got %s", dec.ModelID)
+	}
+	if dec.Reason != "refine-orchestration" {
+		t.Errorf("expected refine-orchestration reason, got %s", dec.Reason)
+	}
+
+	// Verify primary-model was called for all phases: 1 initial + 2 refinement = 3.
+	primaryMock.mu.Lock()
+	primaryCalls := len(primaryMock.calls)
+	primaryMock.mu.Unlock()
+	if primaryCalls != 3 {
+		t.Errorf("expected primary-model to be called 3 times (1 initial + 2 refinement), got %d", primaryCalls)
+	}
+
+	// Verify fallback-model was NOT called.
+	fallbackMock.mu.Lock()
+	fallbackCalls := len(fallbackMock.calls)
+	fallbackMock.mu.Unlock()
+	if fallbackCalls != 0 {
+		t.Errorf("expected fallback-model to not be called, got %d calls", fallbackCalls)
+	}
+}
+
+func TestRefineDefaultIterations(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(Model{
+		ID: "m1", ProviderID: "p1",
+		Weight: 10, MaxContextTokens: 4096, Enabled: true,
+	})
+
+	mock.setResponse("m1", oaiResponse("response"), nil)
+
+	// Iterations=0 should default to 2.
+	dec, resp, err := eng.Orchestrate(context.Background(), makeRequest("test"), OrchestrationDirective{
+		Mode:       "refine",
+		Iterations: 0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dec.Reason != "refine-orchestration" {
+		t.Errorf("expected refine-orchestration reason, got %s", dec.Reason)
+	}
+
+	// Verify the mock was called 1 (initial) + 2 (default iterations) = 3 times.
+	mock.mu.Lock()
+	callCount := len(mock.calls)
+	mock.mu.Unlock()
+	if callCount != 3 {
+		t.Errorf("expected 3 calls (1 initial + 2 default iterations), got %d", callCount)
+	}
+
+	// Verify the iterations field in the response is 2 (the default).
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	iterFloat, ok := result["iterations"].(float64)
+	if !ok {
+		t.Fatal("expected 'iterations' to be a number in refine response")
+	}
+	if int(iterFloat) != 2 {
+		t.Errorf("expected iterations=2 (default), got %d", int(iterFloat))
+	}
+}

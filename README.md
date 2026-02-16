@@ -3,15 +3,19 @@
 Tokenhub is a containerized **LLM token interposer** that routes, arbitrates, and orchestrates requests across multiple providers (OpenAI, Anthropic, local vLLM, etc.) to optimize **cost / latency / reliability / context capacity / model “weight.”**
 
 This repo contains:
-- Go service skeleton (modular packages)
-- Admin + consumer REST API design (versioned `/v1`)
-- Secure credential vault (escrow) + environment-based credentials
-- Routing engine + orchestration engine scaffolding
-- Metrics scaffolding (Prometheus-compatible)
-- Docker + docker-compose + basic Kubernetes manifests
-- PRD + architecture + scheduling/RL design + orchestration DSL design
+- Go service with modular `internal/` package layout (chi/v5 router)
+- Admin + consumer REST API (versioned `/v1`) with full CRUD
+- Secure credential vault (AES-256-GCM, Argon2id, auto-lock timeout)
+- Routing engine with weighted model selection, escalation, and failover
+- Orchestration engine (adversarial, vote, refine modes) with directive parsing
+- Provider adapters for OpenAI, Anthropic, and vLLM with retry/backoff
+- SQLite persistence for models, providers, routing config, audit logs, and rewards
+- Contextual bandit reward logging for RL-based routing data collection
+- Embedded admin UI with provider/vault/routing/health/audit/log panels
+- Prometheus metrics, health tracking, embedded TSDB
+- Docker + docker-compose + Kubernetes manifests
 
-> Status: **scaffold**. The bones are here; now you can unleash a coding model to implement the missing pieces.
+> Status: **functional**. Core routing, orchestration, persistence, and admin UI are implemented and tested.
 
 ## Quick start (dev)
 
@@ -22,7 +26,7 @@ docker compose up --build
 ```
 
 - API: http://localhost:8080
-- Admin UI placeholder: http://localhost:8080/admin (returns stub JSON for now)
+- Admin UI: http://localhost:8080/admin
 - Metrics: http://localhost:8080/metrics
 - Health: http://localhost:8080/healthz
 
@@ -50,16 +54,18 @@ See: `config/config.example.yaml` and `.env.example`.
 - Threat model & vault: `docs/SECURITY.md`
 - Provider adapters: `docs/PROVIDERS.md`
 
-## “Release the hounds” checklist
+## Implementation status
 
-- [ ] Implement provider adapters (OpenAI/Anthropic/vLLM)
-- [ ] Implement vault unlock + encrypted key storage
-- [ ] Implement routing policies + fallbacks
-- [ ] Implement orchestration engine using DSL directives
-- [ ] Add persistence (SQLite default; Postgres optional)
-- [ ] Add UI (or wire to your preferred admin UI stack)
-- [ ] Load test + rate limit + timeouts
-- [ ] Deploy (k8s or Railway)
+- [x] Provider adapters (OpenAI, Anthropic, vLLM) with HTTP timeouts and retry/backoff
+- [x] Vault unlock + AES-256-GCM encrypted key storage with auto-lock
+- [x] Routing policies, weighted selection, escalation, and failover
+- [x] Orchestration engine (adversarial, vote, refine) with DSL directive parsing
+- [x] SQLite persistence (models, providers, routing config, audit, rewards)
+- [x] Admin UI (provider/vault/routing/health/audit/log panels)
+- [x] Rate limit header tracking and health monitoring
+- [x] Contextual bandit reward logging for RL-based routing
+- [ ] Load testing and benchmarks
+- [ ] Production deployment guide
 
 ## License
 MIT (see `LICENSE`)

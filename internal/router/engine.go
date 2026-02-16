@@ -499,6 +499,8 @@ func (e *Engine) Orchestrate(ctx context.Context, req Request, d OrchestrationDi
 		return e.adversarial(ctx, req, d)
 	case "vote":
 		return e.vote(ctx, req, d)
+	case "refine":
+		return e.refine(ctx, req, d)
 	default:
 		// Default: single route-and-send (planning mode or fallback).
 		p := Policy{
@@ -807,6 +809,94 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 		ProviderID:       winner.providerID,
 		EstimatedCostUSD: totalCost,
 		Reason:           "vote-orchestration",
+	}, ProviderResponse(resultJSON), nil
+}
+
+// refine implements same-model iterative refinement. It sends the request to a
+// single model, then iteratively asks the same model to review and improve its
+// own response. The number of refinement iterations is controlled by
+// d.Iterations (default 2 if not set).
+func (e *Engine) refine(ctx context.Context, req Request, d OrchestrationDirective) (Decision, ProviderResponse, error) {
+	iterations := d.Iterations
+	if iterations == 0 {
+		iterations = 2
+	}
+
+	// Phase 1: Initial response from a single model.
+	var initialDec Decision
+	var initialResp ProviderResponse
+	var err error
+
+	if d.PrimaryModelID != "" {
+		initialDec, initialResp, err = e.sendToModel(ctx, d.PrimaryModelID, req)
+		if err != nil {
+			slog.Warn("explicit primary model failed for refine initial phase, falling through to routing",
+				slog.String("model", d.PrimaryModelID),
+				slog.String("error", err.Error()),
+			)
+			err = nil // reset so fallback can proceed
+		}
+	}
+	if initialResp == nil {
+		refinePolicy := Policy{
+			Mode:      "high_confidence",
+			MinWeight: d.PrimaryMinWeight,
+		}
+		initialDec, initialResp, err = e.RouteAndSend(ctx, req, refinePolicy)
+		if err != nil {
+			return Decision{}, nil, fmt.Errorf("refine initial phase: %w", err)
+		}
+	}
+
+	currentContent := extractContent(initialResp)
+	lastDec := initialDec
+	totalCost := initialDec.EstimatedCostUSD
+
+	// Determine which model ID to use for refinement iterations.
+	refineModelID := lastDec.ModelID
+
+	// Phase 2: Iterative refinement using the same model.
+	for i := 0; i < iterations; i++ {
+		refineReq := Request{
+			Messages: []Message{
+				{Role: "system", Content: "Review and improve the following response. Fix any errors, add missing details, and improve clarity."},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nCurrent response:\n%s\n\nProvide an improved version:", messagesContent(req.Messages), currentContent)},
+			},
+		}
+
+		var dec Decision
+		var refineResp ProviderResponse
+		var refineErr error
+
+		dec, refineResp, refineErr = e.sendToModel(ctx, refineModelID, refineReq)
+		if refineErr != nil {
+			slog.Warn("refine iteration failed",
+				slog.String("model", refineModelID),
+				slog.Int("iteration", i+1),
+				slog.String("error", refineErr.Error()),
+			)
+			// On failure, return the best response we have so far.
+			break
+		}
+
+		currentContent = extractContent(refineResp)
+		lastDec = dec
+		totalCost += dec.EstimatedCostUSD
+	}
+
+	// Build composite response.
+	result := map[string]any{
+		"refined_response": currentContent,
+		"iterations":       iterations,
+		"model":            lastDec.ModelID,
+	}
+	resultJSON, _ := json.Marshal(result)
+
+	return Decision{
+		ModelID:          lastDec.ModelID,
+		ProviderID:       lastDec.ProviderID,
+		EstimatedCostUSD: totalCost,
+		Reason:           "refine-orchestration",
 	}, ProviderResponse(resultJSON), nil
 }
 
