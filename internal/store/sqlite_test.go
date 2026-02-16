@@ -418,6 +418,126 @@ func TestRewardLogDefaultLimit(t *testing.T) {
 	}
 }
 
+func TestAPIKeysCRUD(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Create
+	key := APIKeyRecord{
+		ID:           "key-1",
+		KeyHash:      "$2a$10$fakehashvalue",
+		KeyPrefix:    "tokenhub_abcd1234",
+		Name:         "test-key",
+		Scopes:       `["chat","plan"]`,
+		CreatedAt:    time.Now().UTC(),
+		RotationDays: 30,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, key); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Get
+	got, err := s.GetAPIKey(ctx, "key-1")
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected key, got nil")
+	}
+	if got.Name != "test-key" {
+		t.Errorf("expected name test-key, got %s", got.Name)
+	}
+	if got.KeyHash != "$2a$10$fakehashvalue" {
+		t.Errorf("expected hash stored, got %s", got.KeyHash)
+	}
+	if !got.Enabled {
+		t.Error("expected enabled")
+	}
+	if got.RotationDays != 30 {
+		t.Errorf("expected rotation_days 30, got %d", got.RotationDays)
+	}
+
+	// List
+	all, err := s.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("expected 1 key, got %d", len(all))
+	}
+
+	// Update
+	got.Name = "updated-key"
+	got.Enabled = false
+	now := time.Now().UTC()
+	got.LastUsedAt = &now
+	if err := s.UpdateAPIKey(ctx, *got); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	got, _ = s.GetAPIKey(ctx, "key-1")
+	if got.Name != "updated-key" {
+		t.Errorf("expected updated name, got %s", got.Name)
+	}
+	if got.Enabled {
+		t.Error("expected disabled after update")
+	}
+	if got.LastUsedAt == nil {
+		t.Error("expected last_used_at to be set")
+	}
+
+	// Delete
+	if err := s.DeleteAPIKey(ctx, "key-1"); err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+	got, _ = s.GetAPIKey(ctx, "key-1")
+	if got != nil {
+		t.Error("expected nil after delete")
+	}
+}
+
+func TestAPIKeyNotFound(t *testing.T) {
+	s := newTestStore(t)
+	got, err := s.GetAPIKey(context.Background(), "nonexistent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil for nonexistent key")
+	}
+}
+
+func TestAPIKeyWithExpiry(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	expires := time.Now().UTC().Add(24 * time.Hour)
+	key := APIKeyRecord{
+		ID:        "key-exp",
+		KeyHash:   "$2a$10$hash",
+		KeyPrefix: "tokenhub_prefix",
+		Name:      "expiring-key",
+		Scopes:    `["chat"]`,
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: &expires,
+		Enabled:   true,
+	}
+	if err := s.CreateAPIKey(ctx, key); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	got, err := s.GetAPIKey(ctx, "key-exp")
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.ExpiresAt == nil {
+		t.Fatal("expected expires_at to be set")
+	}
+	if got.ExpiresAt.Before(time.Now()) {
+		t.Error("expected expires_at to be in the future")
+	}
+}
+
 func TestVaultBlobEmpty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

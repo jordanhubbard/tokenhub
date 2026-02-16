@@ -1,0 +1,236 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
+	"github.com/jordanhubbard/tokenhub/internal/store"
+)
+
+// APIKeysCreateHandler handles POST /admin/v1/apikeys — creates a new API key.
+func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
+	type createReq struct {
+		Name         string  `json:"name"`
+		Scopes       string  `json:"scopes"`        // JSON array, e.g. '["chat","plan"]'
+		RotationDays int     `json:"rotation_days"`
+		ExpiresIn    *string `json:"expires_in"`     // duration string, e.g. "720h"
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.APIKeyMgr == nil {
+			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		var req createReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if req.Scopes == "" {
+			req.Scopes = `["chat","plan"]`
+		}
+
+		var expiresAt *time.Time
+		if req.ExpiresIn != nil && *req.ExpiresIn != "" {
+			dur, err := time.ParseDuration(*req.ExpiresIn)
+			if err != nil {
+				http.Error(w, "invalid expires_in duration", http.StatusBadRequest)
+				return
+			}
+			t := time.Now().UTC().Add(dur)
+			expiresAt = &t
+		}
+
+		plaintext, rec, err := d.APIKeyMgr.Generate(r.Context(), req.Name, req.Scopes, req.RotationDays, expiresAt)
+		if err != nil {
+			http.Error(w, "failed to create key: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "apikey.create",
+				Resource:  rec.ID,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"key":     plaintext,
+			"id":      rec.ID,
+			"prefix":  rec.KeyPrefix,
+			"name":    rec.Name,
+			"scopes":  rec.Scopes,
+			"warning": "This is the only time the full key will be shown. Store it securely.",
+		})
+	}
+}
+
+// APIKeysListHandler handles GET /admin/v1/apikeys — lists all API keys (no plaintext).
+func APIKeysListHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.APIKeyMgr == nil {
+			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		keys, err := d.Store.ListAPIKeys(r.Context())
+		if err != nil {
+			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// KeyHash is already excluded via json:"-" tag.
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+	}
+}
+
+// APIKeysRotateHandler handles POST /admin/v1/apikeys/{id}/rotate — rotates a key.
+func APIKeysRotateHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.APIKeyMgr == nil {
+			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		id := chi.URLParam(r, "id")
+		if id == "" {
+			http.Error(w, "key id required", http.StatusBadRequest)
+			return
+		}
+
+		plaintext, err := d.APIKeyMgr.Rotate(r.Context(), id)
+		if err != nil {
+			http.Error(w, "rotate failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "apikey.rotate",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"key":     plaintext,
+			"warning": "This is the only time the new key will be shown. Store it securely.",
+		})
+	}
+}
+
+// APIKeysPatchHandler handles PATCH /admin/v1/apikeys/{id} — update name/scopes/enabled.
+func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.APIKeyMgr == nil {
+			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		id := chi.URLParam(r, "id")
+		if id == "" {
+			http.Error(w, "key id required", http.StatusBadRequest)
+			return
+		}
+
+		var patch map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+
+		rec, err := d.Store.GetAPIKey(r.Context(), id)
+		if err != nil {
+			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if rec == nil {
+			http.Error(w, "api key not found", http.StatusNotFound)
+			return
+		}
+
+		if v, ok := patch["name"]; ok {
+			if s, ok := v.(string); ok {
+				rec.Name = s
+			}
+		}
+		if v, ok := patch["scopes"]; ok {
+			if s, ok := v.(string); ok {
+				rec.Scopes = s
+			}
+		}
+		if v, ok := patch["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				rec.Enabled = b
+			}
+		}
+		if v, ok := patch["rotation_days"]; ok {
+			if f, ok := v.(float64); ok {
+				rec.RotationDays = int(f)
+			}
+		}
+
+		if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {
+			http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "apikey.update",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
+// APIKeysDeleteHandler handles DELETE /admin/v1/apikeys/{id} — revoke a key.
+func APIKeysDeleteHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.APIKeyMgr == nil {
+			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		id := chi.URLParam(r, "id")
+		if id == "" {
+			http.Error(w, "key id required", http.StatusBadRequest)
+			return
+		}
+
+		if err := d.Store.DeleteAPIKey(r.Context(), id); err != nil {
+			http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "apikey.revoke",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
+// Ensure apikey import is used (for CheckScope and Manager types).
+var _ = apikey.CheckScope

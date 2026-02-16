@@ -10,10 +10,14 @@ import (
 type EventType string
 
 const (
-	EventRouteSuccess EventType = "route_success"
-	EventRouteError   EventType = "route_error"
-	EventEscalation   EventType = "escalation"
-	EventHealthChange EventType = "health_change"
+	EventRouteSuccess       EventType = "route_success"
+	EventRouteError         EventType = "route_error"
+	EventEscalation         EventType = "escalation"
+	EventHealthChange       EventType = "health_change"
+	EventWorkflowStarted   EventType = "workflow_started"
+	EventActivityCompleted  EventType = "activity_completed"
+	EventWorkflowCompleted  EventType = "workflow_completed"
+	EventWorkflowFailed     EventType = "workflow_failed"
 )
 
 // Event is a single routing event published on the bus.
@@ -33,6 +37,14 @@ type Event struct {
 	// Health fields (populated for health_change events).
 	OldState string `json:"old_state,omitempty"`
 	NewState string `json:"new_state,omitempty"`
+
+	// Workflow fields (populated for workflow events).
+	WorkflowID   string `json:"workflow_id,omitempty"`
+	WorkflowType string `json:"workflow_type,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	APIKeyName   string `json:"api_key_name,omitempty"`
+	Activity     string `json:"activity,omitempty"`
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 }
 
 // JSON returns the event as a JSON byte slice.

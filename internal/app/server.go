@@ -11,7 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
+	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
@@ -31,10 +33,11 @@ type Server struct {
 
 	r *chi.Mux
 
-	vault  *vault.Vault
-	engine *router.Engine
-	store  store.Store
-	logger *slog.Logger
+	vault    *vault.Vault
+	engine   *router.Engine
+	store    store.Store
+	logger   *slog.Logger
+	temporal *temporalpkg.Manager // nil when Temporal disabled
 
 	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
@@ -100,6 +103,9 @@ func NewServer(cfg Config) (*Server, error) {
 	loadPersistedModels(eng, db, logger)
 	loadRoutingConfig(eng, db, logger)
 
+	// Initialize API key manager.
+	keyMgr := apikey.NewManager(db)
+
 	m := metrics.New()
 	bus := events.NewBus()
 	sc := stats.NewCollector()
@@ -125,16 +131,55 @@ func NewServer(cfg Config) (*Server, error) {
 		go s.tsdbPruneLoop(ts)
 	}
 
-	httpapi.MountRoutes(r, httpapi.Dependencies{
-		Engine:   eng,
-		Vault:    v,
-		Metrics:  m,
-		Store:    db,
-		Health:   ht,
-		EventBus: bus,
-		Stats:    sc,
-		TSDB:     ts,
-	})
+	deps := httpapi.Dependencies{
+		Engine:    eng,
+		Vault:     v,
+		Metrics:   m,
+		Store:     db,
+		Health:    ht,
+		EventBus:  bus,
+		Stats:     sc,
+		TSDB:      ts,
+		APIKeyMgr: keyMgr,
+	}
+
+	// Initialize Temporal workflow engine if enabled.
+	if cfg.TemporalEnabled {
+		acts := &temporalpkg.Activities{
+			Engine:   eng,
+			Store:    db,
+			Health:   ht,
+			Metrics:  m,
+			EventBus: bus,
+			Stats:    sc,
+			TSDB:     ts,
+		}
+		tmgr, err := temporalpkg.New(temporalpkg.Config{
+			HostPort:  cfg.TemporalHostPort,
+			Namespace: cfg.TemporalNamespace,
+			TaskQueue: cfg.TemporalTaskQueue,
+		}, acts)
+		if err != nil {
+			logger.Error("failed to initialize Temporal", slog.String("error", err.Error()))
+			// Non-fatal: fall back to direct engine calls.
+		} else {
+			if err := tmgr.Start(); err != nil {
+				logger.Error("failed to start Temporal worker", slog.String("error", err.Error()))
+				tmgr.Stop()
+			} else {
+				s.temporal = tmgr
+				deps.TemporalClient = tmgr.Client()
+				deps.TemporalTaskQueue = cfg.TemporalTaskQueue
+				logger.Info("temporal workflow engine started",
+					slog.String("host", cfg.TemporalHostPort),
+					slog.String("namespace", cfg.TemporalNamespace),
+					slog.String("task_queue", cfg.TemporalTaskQueue),
+				)
+			}
+		}
+	}
+
+	httpapi.MountRoutes(r, deps)
 
 	return s, nil
 }
@@ -143,6 +188,9 @@ func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) Close() error {
 	close(s.stopPrune)
+	if s.temporal != nil {
+		s.temporal.Stop()
+	}
 	if s.store != nil {
 		return s.store.Close()
 	}

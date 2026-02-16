@@ -2,9 +2,15 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"go.temporal.io/sdk/client"
+
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/router"
+	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
 )
 
 type PlanRequest struct {
@@ -41,15 +47,54 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
-		decision, resp, err := d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+		var decision router.Decision
+		var resp json.RawMessage
+		var err error
+
+		if d.TemporalClient != nil {
+			// Dispatch via Temporal orchestration workflow.
+			requestID := middleware.GetReqID(r.Context())
+			apiKeyID := ""
+			if rec := apikey.FromContext(r.Context()); rec != nil {
+				apiKeyID = rec.ID
+			}
+			input := temporalpkg.OrchestrationInput{
+				RequestID: requestID,
+				APIKeyID:  apiKeyID,
+				Request:   req.Request,
+				Directive: req.Orchestration,
+			}
+			workflowID := fmt.Sprintf("plan-%s", requestID)
+			run, terr := d.TemporalClient.ExecuteWorkflow(r.Context(), client.StartWorkflowOptions{
+				ID:        workflowID,
+				TaskQueue: d.TemporalTaskQueue,
+			}, temporalpkg.OrchestrationWorkflow, input)
+			if terr != nil {
+				// Temporal unavailable — fall back to direct path.
+				decision, resp, err = d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+			} else {
+				var output temporalpkg.ChatOutput
+				if terr = run.Get(r.Context(), &output); terr != nil {
+					decision, resp, err = d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+				} else if output.Error != "" {
+					err = fmt.Errorf("%s", output.Error)
+				} else {
+					decision = output.Decision
+					resp = output.Response
+				}
+			}
+		} else {
+			decision, resp, err = d.Engine.Orchestrate(r.Context(), req.Request, req.Orchestration)
+		}
+
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"negotiated_model": decision.ModelID,
-			"routing_reason": decision.Reason,
-			"response": resp,
+			"routing_reason":   decision.Reason,
+			"response":         resp,
 		})
 	}
 }

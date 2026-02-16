@@ -10,10 +10,33 @@ services:
       - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
       - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
       - TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000
+      - TOKENHUB_TEMPORAL_ENABLED=${TOKENHUB_TEMPORAL_ENABLED:-false}
+      - TOKENHUB_TEMPORAL_HOST=temporal:7233
+      - TOKENHUB_TEMPORAL_NAMESPACE=${TOKENHUB_TEMPORAL_NAMESPACE:-tokenhub}
+      - TOKENHUB_TEMPORAL_TASK_QUEUE=${TOKENHUB_TEMPORAL_TASK_QUEUE:-tokenhub-tasks}
     volumes:
       - tokenhub_data:/data
     depends_on:
       - vllm-1
+      - temporal
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=sqlite
+    volumes:
+      - temporal_data:/etc/temporal/data
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8233:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
 
   # Minimal vLLM placeholders (replace with your actual vLLM deployments)
   vllm-1:
@@ -23,3 +46,4 @@ services:
 
 volumes:
   tokenhub_data:
+  temporal_data:

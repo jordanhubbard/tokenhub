@@ -103,6 +103,18 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			reward REAL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_reward_logs_ts ON reward_logs(timestamp)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id TEXT PRIMARY KEY,
+			key_hash TEXT NOT NULL,
+			key_prefix TEXT NOT NULL,
+			name TEXT NOT NULL,
+			scopes TEXT NOT NULL DEFAULT '["chat","plan"]',
+			created_at TEXT NOT NULL,
+			last_used_at TEXT,
+			expires_at TEXT,
+			rotation_days INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1
+		)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -354,6 +366,121 @@ func (s *SQLiteStore) LogReward(ctx context.Context, entry RewardEntry) error {
 		entry.Timestamp, entry.RequestID, entry.ModelID, entry.ProviderID, entry.Mode,
 		entry.EstimatedTokens, entry.TokenBucket, entry.LatencyBudgetMs, entry.LatencyMs,
 		entry.CostUSD, successInt, entry.ErrorClass, entry.Reward)
+	return err
+}
+
+// API Keys
+
+func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key APIKeyRecord) error {
+	var lastUsed, expires *string
+	if key.LastUsedAt != nil {
+		t := key.LastUsedAt.UTC().Format(time.RFC3339)
+		lastUsed = &t
+	}
+	if key.ExpiresAt != nil {
+		t := key.ExpiresAt.UTC().Format(time.RFC3339)
+		expires = &t
+	}
+	enabledInt := 0
+	if key.Enabled {
+		enabledInt = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key.ID, key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
+		key.CreatedAt.UTC().Format(time.RFC3339), lastUsed, expires,
+		key.RotationDays, enabledInt)
+	return err
+}
+
+func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error) {
+	var k APIKeyRecord
+	var createdAt string
+	var lastUsed, expires sql.NullString
+	var enabledInt int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled
+		 FROM api_keys WHERE id = ?`, id).
+		Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if lastUsed.Valid {
+		t, _ := time.Parse(time.RFC3339, lastUsed.String)
+		k.LastUsedAt = &t
+	}
+	if expires.Valid {
+		t, _ := time.Parse(time.RFC3339, expires.String)
+		k.ExpiresAt = &t
+	}
+	k.Enabled = enabledInt != 0
+	return &k, nil
+}
+
+func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled
+		 FROM api_keys ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []APIKeyRecord
+	for rows.Next() {
+		var k APIKeyRecord
+		var createdAt string
+		var lastUsed, expires sql.NullString
+		var enabledInt int
+		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt); err != nil {
+			return nil, err
+		}
+		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if lastUsed.Valid {
+			t, _ := time.Parse(time.RFC3339, lastUsed.String)
+			k.LastUsedAt = &t
+		}
+		if expires.Valid {
+			t, _ := time.Parse(time.RFC3339, expires.String)
+			k.ExpiresAt = &t
+		}
+		k.Enabled = enabledInt != 0
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key APIKeyRecord) error {
+	var lastUsed, expires *string
+	if key.LastUsedAt != nil {
+		t := key.LastUsedAt.UTC().Format(time.RFC3339)
+		lastUsed = &t
+	}
+	if key.ExpiresAt != nil {
+		t := key.ExpiresAt.UTC().Format(time.RFC3339)
+		expires = &t
+	}
+	enabledInt := 0
+	if key.Enabled {
+		enabledInt = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?
+		 WHERE id=?`,
+		key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
+		lastUsed, expires, key.RotationDays, enabledInt, key.ID)
+	return err
+}
+
+func (s *SQLiteStore) DeleteAPIKey(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ?`, id)
 	return err
 }
 

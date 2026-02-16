@@ -18,6 +18,12 @@ type Config struct {
 	DefaultMaxLatencyMs int
 
 	ProviderTimeoutSecs int
+
+	// Temporal workflow engine.
+	TemporalEnabled   bool
+	TemporalHostPort  string
+	TemporalNamespace string
+	TemporalTaskQueue string
 }
 
 func LoadConfig() (Config, error) {
@@ -32,6 +38,11 @@ func LoadConfig() (Config, error) {
 		DefaultMaxLatencyMs: getEnvInt("TOKENHUB_DEFAULT_MAX_LATENCY_MS", 20000),
 
 		ProviderTimeoutSecs: getEnvInt("TOKENHUB_PROVIDER_TIMEOUT_SECS", 30),
+
+		TemporalEnabled:   getEnvBool("TOKENHUB_TEMPORAL_ENABLED", false),
+		TemporalHostPort:  getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),
+		TemporalNamespace: getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
+		TemporalTaskQueue: getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
 	}
 	return cfg, nil
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
@@ -44,6 +45,9 @@ func (m *mockSender) ClassifyError(err error) *router.ClassifiedError {
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }
 
+// testAPIKey is the plaintext key generated during test setup.
+var testAPIKey string
+
 func setupTestServer(t *testing.T) (*httptest.Server, *router.Engine, *vault.Vault) {
 	t.Helper()
 
@@ -73,9 +77,39 @@ func setupTestServer(t *testing.T) (*httptest.Server, *router.Engine, *vault.Vau
 		t.Fatalf("failed to create TSDB: %v", err)
 	}
 
-	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc, Store: db, TSDB: ts})
+	keyMgr := apikey.NewManager(db)
+
+	// Create a test API key for authenticating /v1 requests.
+	plaintext, _, err := keyMgr.Generate(context.Background(), "test-api-key", `["chat","plan"]`, 0, nil)
+	if err != nil {
+		t.Fatalf("failed to generate test API key: %v", err)
+	}
+	testAPIKey = plaintext
+
+	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc, Store: db, TSDB: ts, APIKeyMgr: keyMgr})
 	srv := httptest.NewServer(r)
 	return srv, eng, v
+}
+
+// authPost sends a POST with the test API key bearer token.
+func authPost(url, contentType string, body *bytes.Reader) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	return http.DefaultClient.Do(req)
+}
+
+// authGet sends a GET with the test API key bearer token.
+func authGet(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	return http.DefaultClient.Do(req)
 }
 
 func TestHealthz(t *testing.T) {
@@ -113,7 +147,7 @@ func TestChatSuccess(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -143,7 +177,7 @@ func TestChatBadJSON(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader([]byte("not json")))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader([]byte("not json")))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -164,7 +198,7 @@ func TestChatNoEligibleModels(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -193,7 +227,7 @@ func TestChatWithPolicy(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -222,7 +256,7 @@ func TestPlanSuccess(t *testing.T) {
 		Orchestration: router.OrchestrationDirective{Mode: "planning"},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -313,7 +347,7 @@ func TestModelsUpsert(t *testing.T) {
 			Messages: []router.Message{{Role: "user", Content: "hi"}},
 		},
 	})
-	chatResp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(chatBody))
+	chatResp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(chatBody))
 	if err != nil {
 		t.Fatalf("chat request failed: %v", err)
 	}
@@ -526,7 +560,7 @@ func TestChatWithDirectives(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -694,7 +728,28 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 	bus := events.NewBus()
 	sc := stats.NewCollector()
 
-	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc})
+	// Create in-memory store and TSDB for this standalone test.
+	db, err := store.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	tsd, err := tsdb.New(db.DB())
+	if err != nil {
+		t.Fatalf("failed to create TSDB: %v", err)
+	}
+
+	keyMgr := apikey.NewManager(db)
+	plaintext, _, err := keyMgr.Generate(context.Background(), "events-test-key", `["chat","plan"]`, 0, nil)
+	if err != nil {
+		t.Fatalf("failed to generate API key: %v", err)
+	}
+
+	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: m, EventBus: bus, Stats: sc, Store: db, TSDB: tsd, APIKeyMgr: keyMgr})
 	ts := httptest.NewServer(r)
 	defer ts.Close()
 
@@ -714,7 +769,12 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 			Messages: []router.Message{{Role: "user", Content: "hi"}},
 		},
 	})
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+
+	// Use local auth key for this standalone test.
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/chat", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -751,7 +811,7 @@ func TestChatEmptyMessages(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -771,7 +831,7 @@ func TestChatNilMessages(t *testing.T) {
 		"request": map[string]any{},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -807,7 +867,7 @@ func TestChatPolicyOutOfRange(t *testing.T) {
 				},
 			})
 
-			resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+			resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
@@ -838,7 +898,7 @@ func TestChatValidPolicyStillWorks(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -860,7 +920,7 @@ func TestPlanEmptyMessages(t *testing.T) {
 		Orchestration: router.OrchestrationDirective{Mode: "planning"},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -895,7 +955,7 @@ func TestPlanInvalidIterations(t *testing.T) {
 				},
 			})
 
-			resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+			resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
@@ -921,7 +981,7 @@ func TestPlanInvalidMode(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}

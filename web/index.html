@@ -108,7 +108,33 @@
     .latency-slow { color: #f44336; }
     .pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
     .pagination .page-info { font-size: 12px; color: #8a8d9a; margin-left: auto; }
-    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } .panel.request-log { grid-column: 1; } .panel.full-width { grid-column: 1; } }
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 100; display: none; align-items: center; justify-content: center; }
+    .modal-overlay.visible { display: flex; }
+    .modal { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 8px; padding: 24px; min-width: 400px; max-width: 500px; }
+    .modal h3 { font-size: 16px; margin-bottom: 16px; color: #fff; }
+    .modal .field { margin-bottom: 12px; }
+    .modal .field label { display: block; font-size: 11px; color: #8a8d9a; margin-bottom: 4px; }
+    .modal .field input, .modal .field select { width: 100%; background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 13px; }
+    .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    .key-display { background: #12141d; border: 1px solid #2a2d3a; border-radius: 4px; padding: 12px; font-family: monospace; font-size: 13px; color: #4caf50; word-break: break-all; margin: 8px 0; }
+    .key-warning { color: #ffc107; font-size: 12px; margin-top: 8px; }
+    .scope-checks { display: flex; gap: 16px; }
+    .scope-checks label { font-size: 13px; color: #e0e0e0; cursor: pointer; }
+    .scope-checks input[type=checkbox] { accent-color: #4caf50; }
+    .toggle-switch { cursor: pointer; font-size: 18px; }
+    .wf-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .wf-badge.running { background: #1b2a3a; color: #64b5f6; }
+    .wf-badge.completed { background: #1b3a1b; color: #4caf50; }
+    .wf-badge.failed { background: #3a1b1b; color: #f44336; }
+    .wf-badge.timed-out { background: #3a3a1b; color: #ffc107; }
+    .wf-badge.canceled { background: #2a2a2a; color: #8a8d9a; }
+    .panel.apikeys { grid-column: 1 / 3; max-height: 450px; }
+    .apikeys-table-wrap { max-height: 300px; overflow-y: auto; }
+    .panel.workflows { grid-column: 1 / 3; max-height: 450px; }
+    .workflows-table-wrap { max-height: 300px; overflow-y: auto; }
+    .wf-filter { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+    .wf-filter select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } .panel.request-log { grid-column: 1; } .panel.full-width { grid-column: 1; } .panel.apikeys { grid-column: 1; } .panel.workflows { grid-column: 1; } }
   </style>
 </head>
 <body>
@@ -118,6 +144,53 @@
   </div>
 
   <div id="toast" class="toast"></div>
+
+  <div id="create-key-modal" class="modal-overlay">
+    <div class="modal">
+      <h3>Create API Key</h3>
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="new-key-name" placeholder="my-app-key">
+      </div>
+      <div class="field">
+        <label>Scopes</label>
+        <div class="scope-checks">
+          <label><input type="checkbox" id="scope-chat" checked> chat</label>
+          <label><input type="checkbox" id="scope-plan" checked> plan</label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Rotation (days, 0 = manual)</label>
+        <select id="new-key-rotation">
+          <option value="0">Manual only</option>
+          <option value="7">7 days</option>
+          <option value="30">30 days</option>
+          <option value="90">90 days</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Expires at (optional)</label>
+        <input type="date" id="new-key-expiry">
+      </div>
+      <div class="actions">
+        <button class="btn" onclick="hideCreateKeyModal()">Cancel</button>
+        <button class="btn primary" onclick="createAPIKey()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="key-display-modal" class="modal-overlay">
+    <div class="modal">
+      <h3>API Key Created</h3>
+      <p style="font-size:13px;color:#8a8d9a;margin-bottom:8px">Copy this key now. It will not be shown again.</p>
+      <div class="key-display" id="displayed-key"></div>
+      <p class="key-warning">This is the only time this key will be displayed. Store it securely.</p>
+      <div class="actions">
+        <button class="btn" onclick="copyKey()">Copy</button>
+        <button class="btn primary" onclick="hideKeyDisplay()">Done</button>
+      </div>
+    </div>
+  </div>
 
   <div class="dashboard">
     <div class="panel full-width">
@@ -241,6 +314,41 @@
             <tr><th>Time</th><th>Action</th><th>Resource</th><th>Request ID</th></tr>
           </thead>
           <tbody id="audit-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel apikeys">
+      <h2>API Keys <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="showCreateKeyModal()">+ Create Key</button></h2>
+      <div class="apikeys-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Expires</th><th>Rotation</th><th>Enabled</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="apikeys-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel workflows">
+      <h2>Workflows</h2>
+      <div class="wf-filter">
+        <label style="font-size:12px;color:#8a8d9a">Status:</label>
+        <select id="wf-status-filter" onchange="fetchWorkflows()">
+          <option value="">All</option>
+          <option value="RUNNING">Running</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="FAILED">Failed</option>
+          <option value="TIMED_OUT">Timed Out</option>
+          <option value="CANCELED">Canceled</option>
+        </select>
+      </div>
+      <div class="workflows-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr><th>Workflow ID</th><th>Type</th><th>Status</th><th>Started</th><th>Duration</th><th>Model</th><th>Client Key</th></tr>
+          </thead>
+          <tbody id="workflows-body"></tbody>
         </table>
       </div>
     </div>
@@ -750,6 +858,178 @@
       fetchRequestLogs();
     }
 
+    // ---- API Keys ----
+    function fetchAPIKeys() {
+      fetch('/admin/v1/apikeys')
+        .then(r => r.json())
+        .then(keys => {
+          const tbody = document.getElementById('apikeys-body');
+          if (!Array.isArray(keys) || keys.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="color:#8a8d9a;text-align:center;">No API keys</td></tr>';
+            return;
+          }
+          tbody.innerHTML = keys.map(k => {
+            const scopes = k.scopes || '[]';
+            const created = k.created_at ? new Date(k.created_at).toLocaleDateString() : '-';
+            const lastUsed = k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'never';
+            const expires = k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'never';
+            const rotation = k.rotation_days > 0 ? k.rotation_days + 'd' : 'manual';
+            const enabledIcon = k.enabled ? '✓' : '✗';
+            const enabledColor = k.enabled ? '#4caf50' : '#f44336';
+            return `<tr>
+              <td>${k.name}</td>
+              <td style="font-family:monospace;font-size:12px">${k.key_prefix}...</td>
+              <td>${scopes}</td>
+              <td>${created}</td>
+              <td>${lastUsed}</td>
+              <td>${expires}</td>
+              <td>${rotation}</td>
+              <td style="color:${enabledColor};font-weight:500">${enabledIcon}</td>
+              <td>
+                <button class="btn sm" onclick="rotateKey('${k.id}')">Rotate</button>
+                <button class="btn sm" onclick="toggleKey('${k.id}', ${!k.enabled})">${k.enabled ? 'Disable' : 'Enable'}</button>
+                <button class="btn danger sm" onclick="revokeKey('${k.id}')">Revoke</button>
+              </td>
+            </tr>`;
+          }).join('');
+        }).catch(() => {});
+    }
+
+    function showCreateKeyModal() {
+      document.getElementById('create-key-modal').classList.add('visible');
+    }
+
+    function hideCreateKeyModal() {
+      document.getElementById('create-key-modal').classList.remove('visible');
+    }
+
+    function createAPIKey() {
+      const name = document.getElementById('new-key-name').value.trim();
+      if (!name) { showToast('Name is required', 'error'); return; }
+      const scopes = [];
+      if (document.getElementById('scope-chat').checked) scopes.push('chat');
+      if (document.getElementById('scope-plan').checked) scopes.push('plan');
+      const rotation = parseInt(document.getElementById('new-key-rotation').value) || 0;
+      const expiryVal = document.getElementById('new-key-expiry').value;
+      const body = { name, scopes: JSON.stringify(scopes), rotation_days: rotation };
+      if (expiryVal) body.expires_at = new Date(expiryVal).toISOString();
+      fetch('/admin/v1/apikeys', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(data => {
+        hideCreateKeyModal();
+        showKeyDisplay(data.key);
+        fetchAPIKeys();
+      }).catch(() => {
+        showToast('Failed to create key', 'error');
+      });
+    }
+
+    function showKeyDisplay(key) {
+      document.getElementById('displayed-key').textContent = key;
+      document.getElementById('key-display-modal').classList.add('visible');
+    }
+
+    function hideKeyDisplay() {
+      document.getElementById('key-display-modal').classList.remove('visible');
+    }
+
+    function copyKey() {
+      const key = document.getElementById('displayed-key').textContent;
+      navigator.clipboard.writeText(key).then(() => {
+        showToast('Key copied to clipboard', 'success');
+      }).catch(() => {
+        showToast('Failed to copy', 'error');
+      });
+    }
+
+    function rotateKey(id) {
+      if (!confirm('Rotate this key? The old key will stop working immediately.')) return;
+      fetch('/admin/v1/apikeys/' + encodeURIComponent(id) + '/rotate', {
+        method: 'POST'
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(data => {
+        showKeyDisplay(data.key);
+        fetchAPIKeys();
+      }).catch(() => {
+        showToast('Failed to rotate key', 'error');
+      });
+    }
+
+    function toggleKey(id, enabled) {
+      fetch('/admin/v1/apikeys/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ enabled })
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(() => {
+        showToast(enabled ? 'Key enabled' : 'Key disabled', 'success');
+        fetchAPIKeys();
+      }).catch(() => {
+        showToast('Failed to update key', 'error');
+      });
+    }
+
+    function revokeKey(id) {
+      if (!confirm('Permanently revoke this key?')) return;
+      fetch('/admin/v1/apikeys/' + encodeURIComponent(id), {
+        method: 'DELETE'
+      }).then(r => {
+        if (!r.ok) throw new Error('Failed');
+        return r.json();
+      }).then(() => {
+        showToast('Key revoked', 'success');
+        fetchAPIKeys();
+      }).catch(() => {
+        showToast('Failed to revoke key', 'error');
+      });
+    }
+
+    // ---- Workflows ----
+    function fetchWorkflows() {
+      const status = document.getElementById('wf-status-filter').value;
+      const qs = status ? `?status=${status}&limit=50` : '?limit=50';
+      fetch('/admin/v1/workflows' + qs)
+        .then(r => {
+          if (r.status === 503) return { workflows: [], disabled: true };
+          return r.json();
+        })
+        .then(data => {
+          const tbody = document.getElementById('workflows-body');
+          if (data.disabled) {
+            tbody.innerHTML = '<tr><td colspan="7" style="color:#8a8d9a;text-align:center;">Temporal not enabled</td></tr>';
+            return;
+          }
+          const workflows = data.workflows || [];
+          if (workflows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="color:#8a8d9a;text-align:center;">No workflows</td></tr>';
+            return;
+          }
+          tbody.innerHTML = workflows.map(w => {
+            const statusLower = (w.status || '').toLowerCase().replace(/_/g, '-');
+            const started = w.start_time ? new Date(w.start_time).toLocaleString() : '-';
+            const duration = w.duration_ms ? w.duration_ms + 'ms' : '-';
+            return `<tr>
+              <td style="font-family:monospace;font-size:12px">${w.workflow_id || '-'}</td>
+              <td>${w.workflow_type || '-'}</td>
+              <td><span class="wf-badge ${statusLower}">${w.status || '-'}</span></td>
+              <td>${started}</td>
+              <td>${duration}</td>
+              <td>${w.model_id || '-'}</td>
+              <td>${w.api_key_name || '-'}</td>
+            </tr>`;
+          }).join('');
+        }).catch(() => {});
+    }
+
     // ---- Init ----
     document.addEventListener('DOMContentLoaded', () => {
       initChart();
@@ -762,11 +1042,15 @@
       fetchRoutingConfig();
       fetchHealthStatus();
       fetchRequestLogs();
+      fetchAPIKeys();
+      fetchWorkflows();
       setInterval(fetchRequestLogs, 10000);
       setInterval(fetchAuditLog, 10000);
       setInterval(fetchProviders, 30000);
       setInterval(fetchHealthStatus, 10000);
       setInterval(fetchVaultStatus, 15000);
+      setInterval(fetchAPIKeys, 15000);
+      setInterval(fetchWorkflows, 5000);
       fetch('/admin/v1/health').then(r => r.json()).then(data => {
         (data.providers || []).forEach(p => {
           ensureNode(p.provider_id, p.provider_id, 'provider');

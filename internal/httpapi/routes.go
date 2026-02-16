@@ -7,6 +7,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	tokenhub "github.com/jordanhubbard/tokenhub"
+	"go.temporal.io/sdk/client"
+
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
@@ -26,6 +29,13 @@ type Dependencies struct {
 	EventBus *events.Bus
 	Stats    *stats.Collector
 	TSDB     *tsdb.Store
+
+	// API key management (nil if not configured).
+	APIKeyMgr *apikey.Manager
+
+	// Temporal workflow client (nil when Temporal is disabled).
+	TemporalClient    client.Client
+	TemporalTaskQueue string
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {
@@ -64,11 +74,27 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Route("/v1", func(r chi.Router) {
+		// Apply API key auth middleware if key manager is configured.
+		if d.APIKeyMgr != nil {
+			r.Use(apikey.AuthMiddleware(d.APIKeyMgr))
+		}
 		r.Post("/chat", ChatHandler(d))
 		r.Post("/plan", PlanHandler(d))
 	})
 
 	r.Route("/admin/v1", func(r chi.Router) {
+		// API key management endpoints.
+		r.Post("/apikeys", APIKeysCreateHandler(d))
+		r.Get("/apikeys", APIKeysListHandler(d))
+		r.Post("/apikeys/{id}/rotate", APIKeysRotateHandler(d))
+		r.Patch("/apikeys/{id}", APIKeysPatchHandler(d))
+		r.Delete("/apikeys/{id}", APIKeysDeleteHandler(d))
+
+		// Workflow visibility endpoints.
+		r.Get("/workflows", WorkflowsListHandler(d))
+		r.Get("/workflows/{id}", WorkflowDescribeHandler(d))
+		r.Get("/workflows/{id}/history", WorkflowHistoryHandler(d))
+
 		r.Post("/vault/unlock", VaultUnlockHandler(d))
 		r.Post("/vault/lock", VaultLockHandler(d))
 		r.Post("/vault/rotate", VaultRotateHandler(d))

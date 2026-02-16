@@ -285,6 +285,77 @@ func backoffRetry(ctx context.Context, fn func() error, maxRetries int, baseDela
 	return errors.New("retries exhausted")
 }
 
+// SelectModel performs pure model selection (eligible models + scoring) without
+// making any provider calls. Returns the top pick Decision and ranked fallback list.
+func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decision, []Model, error) {
+	if p.Mode == "" {
+		p.Mode = e.cfg.DefaultMode
+	}
+	if p.MaxBudgetUSD == 0 {
+		p.MaxBudgetUSD = e.cfg.DefaultMaxBudgetUSD
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	tokensNeeded := estimateTokens(req)
+
+	// Honor model hint if specified.
+	if req.ModelHint != "" {
+		if hinted, ok := e.models[req.ModelHint]; ok && hinted.Enabled {
+			if _, hasAdapter := e.adapters[hinted.ProviderID]; hasAdapter {
+				if e.health == nil || e.health.IsAvailable(hinted.ProviderID) {
+					estCost := estimateCostUSD(tokensNeeded, 512, hinted.InputPer1K, hinted.OutputPer1K)
+					eligible := e.eligibleModels(tokensNeeded, p)
+					return Decision{
+						ModelID:          hinted.ID,
+						ProviderID:       hinted.ProviderID,
+						EstimatedCostUSD: estCost,
+						Reason:           "model-hint",
+					}, eligible, nil
+				}
+			}
+		}
+	}
+
+	eligible := e.eligibleModels(tokensNeeded, p)
+	if len(eligible) == 0 {
+		return Decision{}, nil, errors.New("no eligible models registered")
+	}
+
+	top := eligible[0]
+	estCost := estimateCostUSD(tokensNeeded, 512, top.InputPer1K, top.OutputPer1K)
+	return Decision{
+		ModelID:          top.ID,
+		ProviderID:       top.ProviderID,
+		EstimatedCostUSD: estCost,
+		Reason:           fmt.Sprintf("routed-weight-%d", top.Weight),
+	}, eligible, nil
+}
+
+// GetAdapter returns the registered provider adapter for the given provider ID.
+func (e *Engine) GetAdapter(providerID string) Sender {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.adapters[providerID]
+}
+
+// GetModel returns a registered model by ID.
+func (e *Engine) GetModel(modelID string) (Model, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	m, ok := e.models[modelID]
+	return m, ok
+}
+
+// FindLargerContextModel finds the smallest model with context larger than needed.
+// Exported for use by Temporal activities.
+func (e *Engine) FindLargerContextModel(current Model, tokensNeeded int) *Model {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.findLargerContextModel(current, tokensNeeded)
+}
+
 func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decision, ProviderResponse, error) {
 	if p.Mode == "" {
 		p.Mode = e.cfg.DefaultMode

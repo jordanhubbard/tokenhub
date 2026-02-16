@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+// APIKeyRecord is the persisted form of a client API key.
+type APIKeyRecord struct {
+	ID           string     `json:"id"`
+	KeyHash      string     `json:"-"`                     // bcrypt hash, never serialized
+	KeyPrefix    string     `json:"key_prefix"`            // first 8 chars for identification
+	Name         string     `json:"name"`
+	Scopes       string     `json:"scopes"`                // JSON array stored as text
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	RotationDays int        `json:"rotation_days"`          // 0 = manual rotation only
+	Enabled      bool       `json:"enabled"`
+}
+
 // Store defines the persistence interface for tokenhub.
 type Store interface {
 	// Models
@@ -37,6 +51,13 @@ type Store interface {
 	// Reward logging (contextual bandit data collection)
 	LogReward(ctx context.Context, entry RewardEntry) error
 	ListRewards(ctx context.Context, limit int, offset int) ([]RewardEntry, error)
+
+	// API key management
+	CreateAPIKey(ctx context.Context, key APIKeyRecord) error
+	GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error)
+	ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error)
+	UpdateAPIKey(ctx context.Context, key APIKeyRecord) error
+	DeleteAPIKey(ctx context.Context, id string) error
 
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
