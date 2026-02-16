@@ -84,6 +84,8 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Get("/stats", StatsHandler(d))
 		r.Get("/tsdb/query", TSDBQueryHandler(d.TSDB))
 		r.Get("/tsdb/metrics", TSDBMetricsHandler(d.TSDB))
+		r.Post("/tsdb/prune", TSDBPruneHandler(d.TSDB))
+		r.Put("/tsdb/retention", TSDBRetentionHandler(d.TSDB))
 		if d.EventBus != nil {
 			r.Get("/events", SSEHandler(d.EventBus))
 		}

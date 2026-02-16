@@ -37,6 +37,14 @@
     .events-log .event .time { color: #666; }
     .events-log .event .model { color: #64b5f6; }
     .events-log .event .provider { color: #ce93d8; }
+    .weight-slider { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+    .weight-slider label { min-width: 120px; font-size: 12px; }
+    .weight-slider input[type=range] { flex: 1; accent-color: #4caf50; }
+    .weight-slider .weight-val { min-width: 30px; font-size: 12px; text-align: right; }
+    #trend-chart { width: 100%; height: calc(100% - 30px); }
+    .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
+    .tabs button { background: #12141d; border: 1px solid #2a2d3a; color: #8a8d9a; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .tabs button.active { background: #2a2d3a; color: #fff; }
     @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } }
   </style>
 </head>
@@ -60,7 +68,11 @@
         <div class="stat-box"><div class="value" id="avg-latency">0ms</div><div class="label">Avg Latency</div></div>
         <div class="stat-box"><div class="value" id="error-rate">0%</div><div class="label">Error Rate</div></div>
       </div>
-      <h2 style="margin-top:12px">Cost Over Time</h2>
+      <h2 style="margin-top:12px">Trends</h2>
+      <div class="tabs">
+        <button class="active" onclick="switchTrend('cost')">Cost</button>
+        <button onclick="switchTrend('latency')">Latency</button>
+      </div>
       <div id="cost-chart"></div>
     </div>
 
@@ -68,10 +80,12 @@
       <h2>Model Leaderboard</h2>
       <table>
         <thead>
-          <tr><th>Model</th><th>Provider</th><th>Requests</th><th>Avg Latency</th><th>Cost</th><th>Status</th></tr>
+          <tr><th>Model</th><th>Provider</th><th>Weight</th><th>Requests</th><th>Avg Latency</th><th>Cost</th><th>Status</th></tr>
         </thead>
         <tbody id="leaderboard-body"></tbody>
       </table>
+      <h2 style="margin-top:16px">Weight Adjustment</h2>
+      <div id="weight-sliders"></div>
     </div>
   </div>
 
@@ -209,9 +223,40 @@
       document.getElementById('error-rate').textContent = totalRequests > 0 ? `${(totalErrors / totalRequests * 100).toFixed(1)}%` : '0%';
     }
 
+    // ---- Trend switching ----
+    let currentTrend = 'cost';
+    function switchTrend(metric) {
+      currentTrend = metric;
+      document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      fetchTrend(metric);
+    }
+
+    function fetchTrend(metric) {
+      const start = new Date(Date.now() - 3600000).toISOString(); // last hour
+      fetch(`/admin/v1/tsdb/query?metric=${metric}&start=${start}&step=60000`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.series || data.series.length === 0) return;
+          costData.length = 0;
+          data.series[0].points.forEach(p => {
+            costData.push({ time: new Date(p.t), cost: p.v });
+          });
+          updateChart();
+        }).catch(() => {});
+    }
+
     // ---- Leaderboard ----
-    const modelStats = {};
+    let modelWeights = {};
     function updateLeaderboard() {
+      // Fetch models for weight info.
+      fetch('/admin/v1/models').then(r => r.json()).then(models => {
+        if (Array.isArray(models)) {
+          models.forEach(m => { modelWeights[m.id] = m.weight; });
+          renderWeightSliders(models);
+        }
+      }).catch(() => {});
+
       fetch('/admin/v1/stats').then(r => r.json()).then(data => {
         const tbody = document.getElementById('leaderboard-body');
         const models = (data.by_model && data.by_model['1m']) || [];
@@ -219,12 +264,36 @@
           <tr>
             <td>${m.model_id}</td>
             <td>${m.provider_id || '-'}</td>
+            <td>${modelWeights[m.model_id] || '-'}</td>
             <td>${m.request_count}</td>
             <td>${Math.round(m.avg_latency_ms)}ms</td>
             <td>$${(m.total_cost_usd || 0).toFixed(4)}</td>
             <td><span class="badge ${m.error_rate > 0.5 ? 'down' : m.error_rate > 0.1 ? 'degraded' : 'healthy'}">${(m.error_rate * 100).toFixed(0)}% err</span></td>
           </tr>
         `).join('');
+      }).catch(() => {});
+    }
+
+    // ---- Weight sliders ----
+    function renderWeightSliders(models) {
+      const container = document.getElementById('weight-sliders');
+      container.innerHTML = models.map(m => `
+        <div class="weight-slider">
+          <label>${m.id}</label>
+          <input type="range" min="1" max="10" value="${m.weight}" data-model-id="${m.id}" onchange="updateWeight(this)">
+          <span class="weight-val">${m.weight}</span>
+        </div>
+      `).join('');
+    }
+
+    function updateWeight(el) {
+      const modelId = el.dataset.modelId;
+      const newWeight = parseInt(el.value);
+      el.nextElementSibling.textContent = newWeight;
+      fetch(`/admin/v1/models/${encodeURIComponent(modelId)}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ weight: newWeight })
       }).catch(() => {});
     }
 

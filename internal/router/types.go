@@ -64,4 +64,12 @@ type OrchestrationDirective struct {
 	ReturnPlanOnly bool `json:"return_plan_only,omitempty"`
 }
 
+// OutputFormat specifies how the response should be shaped before returning to the client.
+type OutputFormat struct {
+	Type       string `json:"type,omitempty"`        // json, markdown, text, xml
+	Schema     string `json:"schema,omitempty"`       // JSON schema to enforce (for type=json)
+	MaxTokens  int    `json:"max_tokens,omitempty"`   // Truncate response beyond this
+	StripThink bool   `json:"strip_think,omitempty"`  // Remove <think>...</think> blocks
+}
+
 type ProviderResponse = json.RawMessage

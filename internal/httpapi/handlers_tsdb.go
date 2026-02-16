@@ -60,6 +60,46 @@ func TSDBQueryHandler(ts *tsdb.Store) http.HandlerFunc {
 	}
 }
 
+// TSDBPruneHandler handles POST /admin/v1/tsdb/prune - triggers retention cleanup.
+func TSDBPruneHandler(ts *tsdb.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ts == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted": 0})
+			return
+		}
+		deleted, err := ts.Prune(r.Context())
+		if err != nil {
+			http.Error(w, "prune error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": deleted})
+	}
+}
+
+// TSDBRetentionHandler handles PUT /admin/v1/tsdb/retention - sets retention period.
+func TSDBRetentionHandler(ts *tsdb.Store) http.HandlerFunc {
+	type retentionReq struct {
+		Days int `json:"days"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ts == nil {
+			http.Error(w, "tsdb not configured", http.StatusNotImplemented)
+			return
+		}
+		var req retentionReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if req.Days < 1 {
+			http.Error(w, "days must be >= 1", http.StatusBadRequest)
+			return
+		}
+		ts.SetRetention(time.Duration(req.Days) * 24 * time.Hour)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "retention_days": req.Days})
+	}
+}
+
 // TSDBMetricsHandler handles GET /admin/v1/tsdb/metrics - lists available metric names.
 func TSDBMetricsHandler(ts *tsdb.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

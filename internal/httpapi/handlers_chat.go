@@ -18,6 +18,9 @@ type ChatRequest struct {
 	Capabilities map[string]any `json:"capabilities,omitempty"`
 	Policy       *PolicyHint    `json:"policy,omitempty"`
 
+	// Output format shaping
+	OutputFormat *router.OutputFormat `json:"output_format,omitempty"`
+
 	// Main request payload (provider-agnostic envelope)
 	Request router.Request `json:"request"`
 }
@@ -153,6 +156,11 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			now := time.Now().UTC()
 			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: decision.ModelID, ProviderID: decision.ProviderID, Value: float64(latencyMs)})
 			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: decision.ModelID, ProviderID: decision.ProviderID, Value: decision.EstimatedCostUSD})
+		}
+
+		// Apply output format shaping if requested.
+		if req.OutputFormat != nil {
+			resp = router.ShapeOutput(resp, *req.OutputFormat)
 		}
 
 		_ = json.NewEncoder(w).Encode(ChatResponse{
