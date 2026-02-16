@@ -4,5 +4,5 @@
 *~
 .env
 config.json
-tokenhub
+/tokenhub
 *.log
