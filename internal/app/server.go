@@ -92,8 +92,9 @@ func NewServer(cfg Config) (*Server, error) {
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second
 	registerProviders(eng, timeout, logger)
 
-	// Register default models.
+	// Register default models, then load any persisted models from DB.
 	registerDefaultModels(eng)
+	loadPersistedModels(eng, db, logger)
 
 	m := metrics.New()
 	bus := events.NewBus()
@@ -156,6 +157,28 @@ func registerProviders(eng *router.Engine, timeout time.Duration, logger *slog.L
 			eng.RegisterAdapter(vllm.New(id, ep, vllm.WithTimeout(timeout)))
 			logger.Info("registered provider", slog.String("provider", id), slog.String("endpoint", ep))
 		}
+	}
+}
+
+func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger) {
+	models, err := db.ListModels(context.Background())
+	if err != nil {
+		logger.Warn("failed to load persisted models", slog.String("error", err.Error()))
+		return
+	}
+	for _, m := range models {
+		eng.RegisterModel(router.Model{
+			ID:               m.ID,
+			ProviderID:       m.ProviderID,
+			Weight:           m.Weight,
+			MaxContextTokens: m.MaxContextTokens,
+			InputPer1K:       m.InputPer1K,
+			OutputPer1K:      m.OutputPer1K,
+			Enabled:          m.Enabled,
+		})
+	}
+	if len(models) > 0 {
+		logger.Info("loaded persisted models", slog.Int("count", len(models)))
 	}
 }
 
