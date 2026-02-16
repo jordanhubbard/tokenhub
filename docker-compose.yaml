@@ -1,0 +1,25 @@
+services:
+  tokenhub:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - TOKENHUB_LISTEN_ADDR=:8080
+      - TOKENHUB_DB_DSN=file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+      - TOKENHUB_VAULT_ENABLED=true
+      - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
+      - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
+      - TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000
+    volumes:
+      - tokenhub_data:/data
+    depends_on:
+      - vllm-1
+
+  # Minimal vLLM placeholders (replace with your actual vLLM deployments)
+  vllm-1:
+    image: nginx:alpine
+    ports:
+      - "8000:80"
+
+volumes:
+  tokenhub_data:

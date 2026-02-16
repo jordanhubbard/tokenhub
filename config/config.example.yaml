@@ -1,0 +1,67 @@
+listen_addr: ":8080"
+log_level: "info"
+
+db:
+  dsn: "file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+
+vault:
+  enabled: true
+  key_derivation: "argon2id"   # or "scrypt"
+  cipher: "aes-256-gcm"
+  lock_on_start: true
+
+routing:
+  default_mode: "normal"       # normal|cheap|high_confidence|planning|adversarial
+  default_max_budget_usd: 0.05
+  default_max_latency_ms: 20000
+  max_retries: 2
+  retry_backoff_ms: 250
+
+providers:
+  # environment credentials can be referenced by name (TOKENHUB_OPENAI_API_KEY, etc.)
+  - id: "openai"
+    type: "openai"
+    enabled: true
+    credential_source: "env"
+    env_key_name: "TOKENHUB_OPENAI_API_KEY"
+    base_url: "https://api.openai.com"
+
+  - id: "anthropic"
+    type: "anthropic"
+    enabled: true
+    credential_source: "env"
+    env_key_name: "TOKENHUB_ANTHROPIC_API_KEY"
+    base_url: "https://api.anthropic.com"
+
+  - id: "vllm-local"
+    type: "vllm"
+    enabled: true
+    credential_source: "none"
+    endpoints:
+      - "http://vllm-1:8000"
+      - "http://vllm-2:8000"
+
+models:
+  - id: "gpt-3.5"
+    provider_id: "openai"
+    weight: 3
+    max_context_tokens: 16385
+    pricing:
+      input_per_1k: 0.0005
+      output_per_1k: 0.0015
+
+  - id: "claude-opus"
+    provider_id: "anthropic"
+    weight: 10
+    max_context_tokens: 200000
+    pricing:
+      input_per_1k: 0.015
+      output_per_1k: 0.075
+
+  - id: "minimax-2.5"
+    provider_id: "vllm-local"
+    weight: 6
+    max_context_tokens: 65536
+    pricing:
+      input_per_1k: 0.0
+      output_per_1k: 0.0

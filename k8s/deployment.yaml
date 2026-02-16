@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tokenhub
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tokenhub
+  template:
+    metadata:
+      labels:
+        app: tokenhub
+    spec:
+      containers:
+        - name: tokenhub
+          image: tokenhub:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TOKENHUB_LISTEN_ADDR
+              value: ":8080"
+            - name: TOKENHUB_DB_DSN
+              value: "file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+            - name: TOKENHUB_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tokenhub-secrets
+                  key: openai_api_key
+            - name: TOKENHUB_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tokenhub-secrets
+                  key: anthropic_api_key
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          emptyDir: {}

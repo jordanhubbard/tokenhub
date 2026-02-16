@@ -1,38 +1,35 @@
-__pycache__/
-*.py[cod]
-*$py.class
+# Binaries
+bin/
+*.exe
+*.dll
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-.env
-.venv
-env/
-venv/
-ENV/
-*.db
-*.sqlite
-*.sqlite3
-.pytest_cache/
-.coverage
-htmlcov/
+*.dylib
+*.test
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
-=46.0.5
+
+# Environment
+.env
+
+# Data
+*.db
+*.sqlite
+*.sqlite3
+/data/
+*.log
+
+# Build
+/dist/
+/tmp/

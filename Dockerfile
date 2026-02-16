@@ -1,28 +1,17 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
 
-WORKDIR /app
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git ca-certificates
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/tokenhub ./cmd/tokenhub
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application
-COPY tokenhub/ ./tokenhub/
-COPY setup.py .
-
-# Install the package
-RUN pip install -e .
-
-# Create data directory
-RUN mkdir -p /data
-
-# Expose port
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=build /out/tokenhub /tokenhub
+COPY config/config.example.yaml /config/config.yaml
+USER nonroot:nonroot
 EXPOSE 8080
-
-# Set environment variables
-ENV TOKENHUB_DB_PATH=/data/tokenhub.db
-ENV TOKENHUB_HOST=0.0.0.0
-ENV TOKENHUB_PORT=8080
-
-# Run the application
-CMD ["python", "-m", "tokenhub.main"]
+ENTRYPOINT ["/tokenhub"]
