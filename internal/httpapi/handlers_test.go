@@ -447,6 +447,84 @@ func TestSSEEndpoint(t *testing.T) {
 	}
 }
 
+func TestVaultLockUnlockCycle(t *testing.T) {
+	ts, _, v := setupTestServer(t)
+	defer ts.Close()
+
+	// Unlock first.
+	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
+	resp, err := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("unlock failed: %v", err)
+	}
+	resp.Body.Close()
+	if v.IsLocked() {
+		t.Error("vault should be unlocked after unlock")
+	}
+
+	// Lock.
+	resp, err = http.Post(ts.URL+"/admin/v1/vault/lock", "application/json", nil)
+	if err != nil {
+		t.Fatalf("lock failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if !v.IsLocked() {
+		t.Error("vault should be locked after lock")
+	}
+
+	// Lock again (idempotent).
+	resp, err = http.Post(ts.URL+"/admin/v1/vault/lock", "application/json", nil)
+	if err != nil {
+		t.Fatalf("second lock failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var result map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	if result["already_locked"] != true {
+		t.Error("expected already_locked:true on second lock")
+	}
+}
+
+func TestChatWithDirectives(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"cheap reply"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	// Include @@tokenhub directive in message content.
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{
+				{Role: "user", Content: "@@tokenhub mode=cheap\nHello"},
+			},
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var chatResp ChatResponse
+	_ = json.NewDecoder(resp.Body).Decode(&chatResp)
+	if chatResp.NegotiatedModel != "m1" {
+		t.Errorf("expected m1, got %s", chatResp.NegotiatedModel)
+	}
+}
+
 func TestChatPublishesEventsAndStats(t *testing.T) {
 	r := chi.NewRouter()
 	eng := router.NewEngine(router.EngineConfig{})

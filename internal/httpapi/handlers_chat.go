@@ -55,6 +55,25 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 
+		// Parse @@tokenhub in-band directives from message content.
+		if dirPolicy := router.ParseDirectives(req.Request.Messages); dirPolicy != nil {
+			// In-band directives override side-channel policy (more specific).
+			if dirPolicy.Mode != "" {
+				policy.Mode = dirPolicy.Mode
+			}
+			if dirPolicy.MaxBudgetUSD > 0 {
+				policy.MaxBudgetUSD = dirPolicy.MaxBudgetUSD
+			}
+			if dirPolicy.MaxLatencyMs > 0 {
+				policy.MaxLatencyMs = dirPolicy.MaxLatencyMs
+			}
+			if dirPolicy.MinWeight > 0 {
+				policy.MinWeight = dirPolicy.MinWeight
+			}
+			// Strip directives before forwarding to providers.
+			req.Request.Messages = router.StripDirectives(req.Request.Messages)
+		}
+
 		decision, resp, err := d.Engine.RouteAndSend(r.Context(), req.Request, policy)
 		latencyMs := time.Since(start).Milliseconds()
 

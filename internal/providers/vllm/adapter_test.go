@@ -114,6 +114,48 @@ func TestSendPayload(t *testing.T) {
 	}
 }
 
+func TestRoundRobinEndpoints(t *testing.T) {
+	var hits [3]int
+	handler := func(idx int) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			hits[idx]++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+		}
+	}
+
+	ts0 := httptest.NewServer(handler(0))
+	ts1 := httptest.NewServer(handler(1))
+	ts2 := httptest.NewServer(handler(2))
+	defer ts0.Close()
+	defer ts1.Close()
+	defer ts2.Close()
+
+	a := New("vllm", ts0.URL, WithEndpoints(ts1.URL, ts2.URL))
+
+	req := router.Request{Messages: []router.Message{{Role: "user", Content: "hi"}}}
+	for i := 0; i < 9; i++ {
+		_, err := a.Send(context.Background(), "model", req)
+		if err != nil {
+			t.Fatalf("request %d failed: %v", i, err)
+		}
+	}
+
+	// Each endpoint should get exactly 3 requests.
+	for i, count := range hits {
+		if count != 3 {
+			t.Errorf("endpoint %d: expected 3 hits, got %d", i, count)
+		}
+	}
+}
+
+func TestWithEndpointsOption(t *testing.T) {
+	a := New("vllm", "http://ep1", WithEndpoints("http://ep2", "http://ep3"))
+	if len(a.endpoints) != 3 {
+		t.Errorf("expected 3 endpoints, got %d", len(a.endpoints))
+	}
+}
+
 func TestClassifyNonStatusError(t *testing.T) {
 	a := New("vllm", "http://localhost")
 	classified := a.ClassifyError(context.DeadlineExceeded)

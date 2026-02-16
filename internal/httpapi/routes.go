@@ -68,12 +68,16 @@ func MountRoutes(r chi.Router, d Dependencies) {
 
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Post("/vault/unlock", VaultUnlockHandler(d))
+		r.Post("/vault/lock", VaultLockHandler(d))
 		r.Post("/providers", ProvidersUpsertHandler(d))
 		r.Get("/providers", ProvidersListHandler(d))
 		r.Delete("/providers/{id}", ProvidersDeleteHandler(d))
 		r.Post("/models", ModelsUpsertHandler(d))
 		r.Get("/models", ModelsListHandler(d))
+		r.Patch("/models/{id}", ModelsPatchHandler(d))
 		r.Delete("/models/{id}", ModelsDeleteHandler(d))
+		r.Get("/routing-config", RoutingConfigGetHandler(d))
+		r.Put("/routing-config", RoutingConfigSetHandler(d))
 		r.Get("/health", HealthStatsHandler(d))
 		r.Get("/stats", StatsHandler(d))
 		if d.EventBus != nil {

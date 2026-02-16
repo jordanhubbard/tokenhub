@@ -95,6 +95,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// Register default models, then load any persisted models from DB.
 	registerDefaultModels(eng)
 	loadPersistedModels(eng, db, logger)
+	loadRoutingConfig(eng, db, logger)
 
 	m := metrics.New()
 	bus := events.NewBus()
@@ -143,19 +144,20 @@ func registerProviders(eng *router.Engine, timeout time.Duration, logger *slog.L
 	}
 
 	if endpoints := os.Getenv("TOKENHUB_VLLM_ENDPOINTS"); endpoints != "" {
-		for i, ep := range strings.Split(endpoints, ",") {
+		var eps []string
+		for _, ep := range strings.Split(endpoints, ",") {
 			ep = strings.TrimSpace(ep)
-			if ep == "" {
-				continue
+			if ep != "" {
+				eps = append(eps, ep)
 			}
-			id := "vllm"
-			if i > 0 {
-				id = strings.ReplaceAll(ep, "://", "-")
-				id = strings.ReplaceAll(id, ":", "-")
-				id = strings.ReplaceAll(id, "/", "")
+		}
+		if len(eps) > 0 {
+			opts := []vllm.Option{vllm.WithTimeout(timeout)}
+			if len(eps) > 1 {
+				opts = append(opts, vllm.WithEndpoints(eps[1:]...))
 			}
-			eng.RegisterAdapter(vllm.New(id, ep, vllm.WithTimeout(timeout)))
-			logger.Info("registered provider", slog.String("provider", id), slog.String("endpoint", ep))
+			eng.RegisterAdapter(vllm.New("vllm", eps[0], opts...))
+			logger.Info("registered provider", slog.String("provider", "vllm"), slog.Int("endpoints", len(eps)))
 		}
 	}
 }
@@ -179,6 +181,22 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 	}
 	if len(models) > 0 {
 		logger.Info("loaded persisted models", slog.Int("count", len(models)))
+	}
+}
+
+func loadRoutingConfig(eng *router.Engine, db store.Store, logger *slog.Logger) {
+	cfg, err := db.LoadRoutingConfig(context.Background())
+	if err != nil {
+		logger.Warn("failed to load routing config", slog.String("error", err.Error()))
+		return
+	}
+	if cfg.DefaultMode != "" {
+		eng.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudgetUSD, cfg.DefaultMaxLatencyMs)
+		logger.Info("loaded routing config from DB",
+			slog.String("mode", cfg.DefaultMode),
+			slog.Float64("budget", cfg.DefaultMaxBudgetUSD),
+			slog.Int("latency_ms", cfg.DefaultMaxLatencyMs),
+		)
 	}
 }
 

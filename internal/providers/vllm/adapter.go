@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/jordanhubbard/tokenhub/internal/providers"
@@ -15,18 +16,21 @@ import (
 )
 
 // Adapter implements router.Sender for vLLM instances.
+// Supports round-robin across multiple endpoints.
 type Adapter struct {
-	id      string
-	baseURL string
-	client  *http.Client
+	id        string
+	endpoints []string
+	counter   atomic.Uint64
+	client    *http.Client
 }
 
-// New creates a new vLLM adapter. A zero timeout defaults to 30s.
-func New(id, baseURL string, opts ...Option) *Adapter {
+// New creates a new vLLM adapter with one or more endpoints.
+// A zero timeout defaults to 30s.
+func New(id string, endpoint string, opts ...Option) *Adapter {
 	a := &Adapter{
-		id:      id,
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		id:        id,
+		endpoints: []string{endpoint},
+		client:    &http.Client{Timeout: 30 * time.Second},
 	}
 	for _, o := range opts {
 		o(a)
@@ -44,7 +48,20 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
+// WithEndpoints adds additional endpoints for round-robin balancing.
+func WithEndpoints(endpoints ...string) Option {
+	return func(a *Adapter) {
+		a.endpoints = append(a.endpoints, endpoints...)
+	}
+}
+
 func (a *Adapter) ID() string { return a.id }
+
+// nextEndpoint returns the next endpoint in round-robin order.
+func (a *Adapter) nextEndpoint() string {
+	idx := a.counter.Add(1) - 1
+	return a.endpoints[idx%uint64(len(a.endpoints))]
+}
 
 func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (router.ProviderResponse, error) {
 	messages := make([]map[string]string, len(req.Messages))
@@ -60,7 +77,8 @@ func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (r
 		"messages": messages,
 	}
 
-	return a.makeRequest(ctx, "/v1/chat/completions", payload)
+	baseURL := a.nextEndpoint()
+	return a.makeRequest(ctx, baseURL, "/v1/chat/completions", payload)
 }
 
 func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
@@ -76,13 +94,13 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }
 
-func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any) ([]byte, error) {
+func (a *Adapter) makeRequest(ctx context.Context, baseURL, endpoint string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.baseURL+endpoint, bytes.NewReader(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

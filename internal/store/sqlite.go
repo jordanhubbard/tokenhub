@@ -66,6 +66,12 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			salt BLOB NOT NULL,
 			data TEXT NOT NULL DEFAULT '{}'
 		)`,
+		`CREATE TABLE IF NOT EXISTS routing_config (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			default_mode TEXT NOT NULL DEFAULT 'normal',
+			default_max_budget_usd REAL NOT NULL DEFAULT 0.05,
+			default_max_latency_ms INTEGER NOT NULL DEFAULT 20000
+		)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -213,6 +219,32 @@ func (s *SQLiteStore) LoadVaultBlob(ctx context.Context) ([]byte, map[string]str
 		return nil, nil, fmt.Errorf("unmarshal vault data: %w", err)
 	}
 	return salt, data, nil
+}
+
+// Routing Config
+
+func (s *SQLiteStore) SaveRoutingConfig(ctx context.Context, cfg RoutingConfig) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO routing_config (id, default_mode, default_max_budget_usd, default_max_latency_ms)
+		 VALUES (1, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   default_mode=excluded.default_mode,
+		   default_max_budget_usd=excluded.default_max_budget_usd,
+		   default_max_latency_ms=excluded.default_max_latency_ms`,
+		cfg.DefaultMode, cfg.DefaultMaxBudgetUSD, cfg.DefaultMaxLatencyMs)
+	return err
+}
+
+func (s *SQLiteStore) LoadRoutingConfig(ctx context.Context) (RoutingConfig, error) {
+	var cfg RoutingConfig
+	err := s.db.QueryRowContext(ctx,
+		`SELECT default_mode, default_max_budget_usd, default_max_latency_ms FROM routing_config WHERE id = 1`).
+		Scan(&cfg.DefaultMode, &cfg.DefaultMaxBudgetUSD, &cfg.DefaultMaxLatencyMs)
+	if err != nil {
+		// Return zero value if no row (not an error).
+		return RoutingConfig{}, nil
+	}
+	return cfg, nil
 }
 
 func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int) ([]RequestLog, error) {

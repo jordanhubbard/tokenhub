@@ -26,6 +26,10 @@ type Store interface {
 	SaveVaultBlob(ctx context.Context, salt []byte, data map[string]string) error
 	LoadVaultBlob(ctx context.Context) (salt []byte, data map[string]string, err error)
 
+	// Routing config persistence
+	SaveRoutingConfig(ctx context.Context, cfg RoutingConfig) error
+	LoadRoutingConfig(ctx context.Context) (RoutingConfig, error)
+
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
 	Close() error
@@ -49,6 +53,13 @@ type ProviderRecord struct {
 	Enabled   bool   `json:"enabled"`
 	BaseURL   string `json:"base_url"`
 	CredStore string `json:"cred_store"` // env, vault, none
+}
+
+// RoutingConfig holds persisted routing policy defaults.
+type RoutingConfig struct {
+	DefaultMode         string  `json:"default_mode"`
+	DefaultMaxBudgetUSD float64 `json:"default_max_budget_usd"`
+	DefaultMaxLatencyMs int     `json:"default_max_latency_ms"`
 }
 
 // RequestLog captures a single routed request for audit/dashboard.

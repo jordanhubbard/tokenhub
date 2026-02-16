@@ -117,6 +117,21 @@ func (e *Engine) RegisterModel(m Model) {
 	e.models[m.ID] = m
 }
 
+// UpdateDefaults updates the runtime routing policy defaults.
+func (e *Engine) UpdateDefaults(mode string, maxBudget float64, maxLatencyMs int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if mode != "" {
+		e.cfg.DefaultMode = mode
+	}
+	if maxBudget > 0 {
+		e.cfg.DefaultMaxBudgetUSD = maxBudget
+	}
+	if maxLatencyMs > 0 {
+		e.cfg.DefaultMaxLatencyMs = maxLatencyMs
+	}
+}
+
 // estimateTokens estimates the token count for a request (chars/4 heuristic).
 func estimateTokens(req Request) int {
 	if req.EstimatedInputTokens > 0 {
