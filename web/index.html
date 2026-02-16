@@ -13,10 +13,20 @@
     .header h1 { font-size: 18px; color: #fff; }
     .header .status { font-size: 12px; color: #4caf50; }
     .header .status.disconnected { color: #f44336; }
-    .dashboard { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 16px; padding: 16px; height: calc(100vh - 52px); }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr auto; gap: 16px; padding: 16px; min-height: calc(100vh - 52px); }
     .panel { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 8px; padding: 16px; overflow: hidden; }
     .panel h2 { font-size: 14px; color: #8a8d9a; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
     .panel.graph { grid-row: 1 / 3; }
+    .panel.audit { grid-column: 1 / 3; max-height: 350px; }
+    .audit-table-wrap { max-height: 280px; overflow-y: auto; }
+    .audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .audit-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; position: sticky; top: 0; background: #1a1d29; }
+    .audit-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; font-family: monospace; font-size: 12px; }
+    .audit-action { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .audit-action.create-update { background: #1b3a1b; color: #4caf50; }
+    .audit-action.delete { background: #3a1b1b; color: #f44336; }
+    .audit-action.vault { background: #1b2a3a; color: #64b5f6; }
+    .audit-action.other { background: #2a2a2a; color: #8a8d9a; }
     #cy { width: 100%; height: calc(100% - 30px); }
     #cost-chart { width: 100%; height: calc(100% - 30px); }
     .leaderboard table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -45,7 +55,7 @@
     .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
     .tabs button { background: #12141d; border: 1px solid #2a2d3a; color: #8a8d9a; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
     .tabs button.active { background: #2a2d3a; color: #fff; }
-    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } }
   </style>
 </head>
 <body>
@@ -86,6 +96,18 @@
       </table>
       <h2 style="margin-top:16px">Weight Adjustment</h2>
       <div id="weight-sliders"></div>
+    </div>
+
+    <div class="panel audit">
+      <h2>Audit Log</h2>
+      <div class="audit-table-wrap">
+        <table class="audit-table">
+          <thead>
+            <tr><th>Time</th><th>Action</th><th>Resource</th><th>Request ID</th></tr>
+          </thead>
+          <tbody id="audit-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -297,12 +319,47 @@
       }).catch(() => {});
     }
 
+    // ---- Audit Log ----
+    function classifyAction(action) {
+      if (/create|upsert|update|add|register/i.test(action)) return 'create-update';
+      if (/delete|remove|revoke/i.test(action)) return 'delete';
+      if (/vault|secret|key|encrypt|decrypt/i.test(action)) return 'vault';
+      return 'other';
+    }
+
+    function formatAuditTime(ts) {
+      try {
+        const d = new Date(ts);
+        return d.toLocaleTimeString();
+      } catch { return ts; }
+    }
+
+    function fetchAuditLog() {
+      fetch('/admin/v1/audit?limit=50')
+        .then(r => r.json())
+        .then(data => {
+          const tbody = document.getElementById('audit-body');
+          const logs = data.logs || [];
+          tbody.innerHTML = logs.map(entry => {
+            const cls = classifyAction(entry.action);
+            return `<tr>
+              <td>${formatAuditTime(entry.timestamp)}</td>
+              <td><span class="audit-action ${cls}">${entry.action}</span></td>
+              <td>${entry.resource || '-'}</td>
+              <td>${entry.request_id || '-'}</td>
+            </tr>`;
+          }).join('');
+        }).catch(() => {});
+    }
+
     // ---- Init ----
     document.addEventListener('DOMContentLoaded', () => {
       initChart();
       connectSSE();
       // Fetch initial stats and health.
       updateLeaderboard();
+      fetchAuditLog();
+      setInterval(fetchAuditLog, 10000);
       fetch('/admin/v1/health').then(r => r.json()).then(data => {
         (data.providers || []).forEach(p => {
           ensureNode(p.provider_id, p.provider_id, 'provider');

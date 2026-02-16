@@ -413,6 +413,11 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			// Fall through to try next eligible model.
 
 		case ErrRateLimited:
+			if classified.RetryAfter > 0 {
+				slog.Info("rate limited, retry-after reported",
+					slog.Int("retry_after_sec", classified.RetryAfter),
+				)
+			}
 			// Skip to next provider (different provider ID preferred).
 			continue
 

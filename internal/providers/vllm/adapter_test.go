@@ -156,6 +156,31 @@ func TestWithEndpointsOption(t *testing.T) {
 	}
 }
 
+func TestRetryAfterHeader(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+	}))
+	defer ts.Close()
+
+	a := New("vllm", ts.URL)
+	_, err := a.Send(context.Background(), "local-model", router.Request{
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	classified := a.ClassifyError(err)
+	if classified.Class != router.ErrRateLimited {
+		t.Errorf("expected ErrRateLimited, got %s", classified.Class)
+	}
+	if classified.RetryAfter != 45 {
+		t.Errorf("expected RetryAfter=45, got %d", classified.RetryAfter)
+	}
+}
+
 func TestClassifyNonStatusError(t *testing.T) {
 	a := New("vllm", "http://localhost")
 	classified := a.ClassifyError(context.DeadlineExceeded)

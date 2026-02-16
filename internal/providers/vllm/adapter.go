@@ -86,7 +86,11 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 	if errors.As(err, &se) {
 		switch {
 		case se.StatusCode == 429:
-			return &router.ClassifiedError{Err: err, Class: router.ErrRateLimited}
+			ce := &router.ClassifiedError{Err: err, Class: router.ErrRateLimited}
+			if se.RetryAfterSecs > 0 {
+				ce.RetryAfter = se.RetryAfterSecs
+			}
+			return ce
 		case se.StatusCode >= 500:
 			return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 		}

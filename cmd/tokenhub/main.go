@@ -12,7 +12,11 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/app"
 )
 
+// version is set at build time via -ldflags.
+var version = "dev"
+
 func main() {
+	log.Printf("tokenhub version %s", version)
 	cfg, err := app.LoadConfig()
 	if err != nil {
 		log.Fatalf("config error: %v", err)
