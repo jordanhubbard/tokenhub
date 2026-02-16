@@ -1,0 +1,4 @@
+"""
+Test configuration
+"""
+import pytest
