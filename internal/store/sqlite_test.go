@@ -270,6 +270,42 @@ func TestVaultBlobUpsert(t *testing.T) {
 	}
 }
 
+func TestAuditLog(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	entry := AuditEntry{
+		Timestamp: time.Now().UTC(),
+		Action:    "model.upsert",
+		Resource:  "gpt-4",
+		Detail:    `{"weight":8}`,
+		RequestID: "req-123",
+	}
+	if err := s.LogAudit(ctx, entry); err != nil {
+		t.Fatalf("log audit failed: %v", err)
+	}
+
+	logs, err := s.ListAuditLogs(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list audit logs failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 audit log, got %d", len(logs))
+	}
+	if logs[0].Action != "model.upsert" {
+		t.Errorf("expected action model.upsert, got %s", logs[0].Action)
+	}
+	if logs[0].Resource != "gpt-4" {
+		t.Errorf("expected resource gpt-4, got %s", logs[0].Resource)
+	}
+	if logs[0].Detail != `{"weight":8}` {
+		t.Errorf("expected detail {\"weight\":8}, got %s", logs[0].Detail)
+	}
+	if logs[0].RequestID != "req-123" {
+		t.Errorf("expected request_id req-123, got %s", logs[0].RequestID)
+	}
+}
+
 func TestVaultBlobEmpty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

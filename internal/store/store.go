@@ -30,6 +30,10 @@ type Store interface {
 	SaveRoutingConfig(ctx context.Context, cfg RoutingConfig) error
 	LoadRoutingConfig(ctx context.Context) (RoutingConfig, error)
 
+	// Audit logging
+	LogAudit(ctx context.Context, entry AuditEntry) error
+	ListAuditLogs(ctx context.Context, limit int, offset int) ([]AuditEntry, error)
+
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
 	Close() error
@@ -60,6 +64,16 @@ type RoutingConfig struct {
 	DefaultMode         string  `json:"default_mode"`
 	DefaultMaxBudgetUSD float64 `json:"default_max_budget_usd"`
 	DefaultMaxLatencyMs int     `json:"default_max_latency_ms"`
+}
+
+// AuditEntry captures an admin mutation for audit trail.
+type AuditEntry struct {
+	ID        int64     `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	Action    string    `json:"action"`              // e.g. "model.upsert", "provider.delete", "vault.unlock"
+	Resource  string    `json:"resource"`             // e.g. "gpt-4", "openai"
+	Detail    string    `json:"detail,omitempty"`     // optional JSON with change details
+	RequestID string    `json:"request_id,omitempty"` // correlates to HTTP request ID
 }
 
 // RequestLog captures a single routed request for audit/dashboard.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -266,6 +267,24 @@ func safeNorm(v, max float64) float64 {
 	return clamp(v/max, 0, 1)
 }
 
+// backoffRetry retries fn with exponential backoff and jitter.
+func backoffRetry(ctx context.Context, fn func() error, maxRetries int, baseDelay time.Duration) error {
+	for i := 0; i < maxRetries; i++ {
+		delay := baseDelay * time.Duration(1<<uint(i))
+		// Add jitter: 50-150% of delay
+		jitter := time.Duration(float64(delay) * (0.5 + rand.Float64()))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(jitter):
+		}
+		if err := fn(); err == nil {
+			return nil
+		}
+	}
+	return errors.New("retries exhausted")
+}
+
 func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decision, ProviderResponse, error) {
 	if p.Mode == "" {
 		p.Mode = e.cfg.DefaultMode
@@ -289,6 +308,42 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 
 	tokensNeeded := estimateTokens(req)
 	eligible := e.eligibleModels(tokensNeeded, p)
+
+	// Honor model hint if specified.
+	if req.ModelHint != "" {
+		if hinted, ok := e.models[req.ModelHint]; ok && hinted.Enabled {
+			if adapter, hasAdapter := e.adapters[hinted.ProviderID]; hasAdapter {
+				if e.health == nil || e.health.IsAvailable(hinted.ProviderID) {
+					estCost := estimateCostUSD(tokensNeeded, 512, hinted.InputPer1K, hinted.OutputPer1K)
+					slog.Info("trying model hint",
+						slog.String("model", hinted.ID),
+						slog.String("provider", hinted.ProviderID),
+					)
+					sendStart := time.Now()
+					resp, err := adapter.Send(ctx, hinted.ID, req)
+					sendMs := float64(time.Since(sendStart).Milliseconds())
+					if err == nil {
+						if e.health != nil {
+							e.health.RecordSuccess(hinted.ProviderID, sendMs)
+						}
+						return Decision{
+							ModelID:          hinted.ID,
+							ProviderID:       hinted.ProviderID,
+							EstimatedCostUSD: estCost,
+							Reason:           "model-hint",
+						}, resp, nil
+					}
+					if e.health != nil {
+						e.health.RecordError(hinted.ProviderID, err.Error())
+					}
+					slog.Warn("model hint failed, falling through to scored routing",
+						slog.String("model", hinted.ID),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+		}
+	}
 
 	if len(eligible) == 0 {
 		return Decision{}, nil, errors.New("no eligible models registered")
@@ -362,9 +417,14 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			continue
 
 		case ErrTransient:
-			// Retry once with same model, then fall through.
-			resp2, err2 := adapter.Send(ctx, m.ID, req)
-			if err2 == nil {
+			// Retry with exponential backoff + jitter.
+			var resp2 ProviderResponse
+			retryErr := backoffRetry(ctx, func() error {
+				var sendErr error
+				resp2, sendErr = adapter.Send(ctx, m.ID, req)
+				return sendErr
+			}, 2, 100*time.Millisecond)
+			if retryErr == nil {
 				return Decision{
 					ModelID:          m.ID,
 					ProviderID:       m.ProviderID,
@@ -529,7 +589,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 		voters = len(eligible)
 	}
 
-	// Collect responses from each voter.
+	// Collect responses from each voter concurrently.
 	type voteResult struct {
 		modelID    string
 		providerID string
@@ -537,8 +597,8 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 		cost       float64
 	}
 
-	var results []voteResult
-	var totalCost float64
+	resultsCh := make(chan voteResult, voters)
+	var wg sync.WaitGroup
 
 	for i := 0; i < voters; i++ {
 		m := eligible[i%len(eligible)]
@@ -546,19 +606,35 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 		if !ok {
 			continue
 		}
-		estCost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
-		resp, err := adapter.Send(ctx, m.ID, req)
-		if err != nil {
-			continue // skip failed voters
-		}
-		content := extractContent(resp)
-		results = append(results, voteResult{
-			modelID:    m.ID,
-			providerID: m.ProviderID,
-			content:    content,
-			cost:       estCost,
-		})
-		totalCost += estCost
+		wg.Add(1)
+		go func(m Model, adapter Sender) {
+			defer wg.Done()
+			estCost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+			resp, err := adapter.Send(ctx, m.ID, req)
+			if err != nil {
+				return
+			}
+			content := extractContent(resp)
+			resultsCh <- voteResult{
+				modelID:    m.ID,
+				providerID: m.ProviderID,
+				content:    content,
+				cost:       estCost,
+			}
+		}(m, adapter)
+	}
+
+	// Close channel once all goroutines complete.
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	var results []voteResult
+	var totalCost float64
+	for r := range resultsCh {
+		results = append(results, r)
+		totalCost += r.cost
 	}
 
 	if len(results) == 0 {

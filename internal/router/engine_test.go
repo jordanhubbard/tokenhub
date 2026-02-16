@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -12,6 +13,7 @@ import (
 type mockSender struct {
 	id        string
 	responses map[string]mockResponse // keyed by model
+	mu        sync.Mutex
 	calls     []mockCall
 }
 
@@ -32,7 +34,9 @@ func newMockSender(id string) *mockSender {
 func (m *mockSender) ID() string { return m.id }
 
 func (m *mockSender) Send(ctx context.Context, model string, req Request) (ProviderResponse, error) {
+	m.mu.Lock()
 	m.calls = append(m.calls, mockCall{Model: model, Req: req})
+	m.mu.Unlock()
 	if r, ok := m.responses[model]; ok {
 		return r.data, r.err
 	}

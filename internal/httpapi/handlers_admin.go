@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/store"
 )
@@ -17,6 +19,13 @@ func VaultLockHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 		d.Vault.Lock()
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.lock",
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
 }
@@ -42,6 +51,13 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 			if salt != nil {
 				_ = d.Store.SaveVaultBlob(r.Context(), salt, data)
 			}
+		}
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.unlock",
+				RequestID: middleware.GetReqID(r.Context()),
+			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -88,6 +104,14 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 				return
 			}
 		}
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "provider.upsert",
+				Resource:  req.ID,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "cred_store": req.CredStore})
 	}
 }
@@ -120,6 +144,14 @@ func ProvidersDeleteHandler(d Dependencies) http.HandlerFunc {
 				return
 			}
 		}
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "provider.delete",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
 }
@@ -143,6 +175,14 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 				InputPer1K:       m.InputPer1K,
 				OutputPer1K:      m.OutputPer1K,
 				Enabled:          m.Enabled,
+			})
+		}
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "model.upsert",
+				Resource:  m.ID,
+				RequestID: middleware.GetReqID(r.Context()),
 			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -176,6 +216,14 @@ func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+		}
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "model.delete",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -247,6 +295,14 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			OutputPer1K:      existing.OutputPer1K,
 			Enabled:          existing.Enabled,
 		})
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "model.patch",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "model": existing})
 	}
@@ -284,6 +340,13 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 		}
 		// Apply to engine.
 		d.Engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudgetUSD, cfg.DefaultMaxLatencyMs)
+		if d.Store != nil {
+			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "routing-config.update",
+				RequestID: middleware.GetReqID(r.Context()),
+			})
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
 }
@@ -331,6 +394,34 @@ func parseIntParam(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+// AuditLogsHandler handles GET /admin/v1/audit?limit=N&offset=N
+func AuditLogsHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Store == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"logs": []any{}})
+			return
+		}
+		limit := 100
+		offset := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := parseIntParam(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if v := r.URL.Query().Get("offset"); v != "" {
+			if n, err := parseIntParam(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+		logs, err := d.Store.ListAuditLogs(r.Context(), limit, offset)
+		if err != nil {
+			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"logs": logs})
+	}
 }
 
 func HealthStatsHandler(d Dependencies) http.HandlerFunc {

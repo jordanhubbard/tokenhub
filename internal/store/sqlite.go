@@ -77,6 +77,15 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			default_max_budget_usd REAL NOT NULL DEFAULT 0.05,
 			default_max_latency_ms INTEGER NOT NULL DEFAULT 20000
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			action TEXT NOT NULL,
+			resource TEXT NOT NULL DEFAULT '',
+			detail TEXT NOT NULL DEFAULT '',
+			request_id TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -270,6 +279,41 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		var ts string
 		if err := rows.Scan(&l.ID, &ts, &l.ModelID, &l.ProviderID, &l.Mode,
 			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID); err != nil {
+			return nil, err
+		}
+		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
+}
+
+// Audit Logs
+
+func (s *SQLiteStore) LogAudit(ctx context.Context, entry AuditEntry) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO audit_logs (timestamp, action, resource, detail, request_id)
+		 VALUES (?, ?, ?, ?, ?)`,
+		entry.Timestamp, entry.Action, entry.Resource, entry.Detail, entry.RequestID)
+	return err
+}
+
+func (s *SQLiteStore) ListAuditLogs(ctx context.Context, limit int, offset int) ([]AuditEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, timestamp, action, resource, detail, request_id
+		 FROM audit_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []AuditEntry
+	for rows.Next() {
+		var l AuditEntry
+		var ts string
+		if err := rows.Scan(&l.ID, &ts, &l.Action, &l.Resource, &l.Detail, &l.RequestID); err != nil {
 			return nil, err
 		}
 		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
