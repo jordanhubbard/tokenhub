@@ -13,6 +13,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
+	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
 
@@ -24,6 +25,7 @@ type Dependencies struct {
 	Health   *health.Tracker
 	EventBus *events.Bus
 	Stats    *stats.Collector
+	TSDB     *tsdb.Store
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {
@@ -80,6 +82,8 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Put("/routing-config", RoutingConfigSetHandler(d))
 		r.Get("/health", HealthStatsHandler(d))
 		r.Get("/stats", StatsHandler(d))
+		r.Get("/tsdb/query", TSDBQueryHandler(d.TSDB))
+		r.Get("/tsdb/metrics", TSDBMetricsHandler(d.TSDB))
 		if d.EventBus != nil {
 			r.Get("/events", SSEHandler(d.EventBus))
 		}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -384,6 +385,8 @@ func (e *Engine) Orchestrate(ctx context.Context, req Request, d OrchestrationDi
 	switch d.Mode {
 	case "adversarial":
 		return e.adversarial(ctx, req, d)
+	case "vote":
+		return e.vote(ctx, req, d)
 	default:
 		// Default: single route-and-send (planning mode or fallback).
 		p := Policy{
@@ -475,6 +478,139 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 		ProviderID:       lastDec.ProviderID,
 		EstimatedCostUSD: planDec.EstimatedCostUSD + lastDec.EstimatedCostUSD,
 		Reason:           "adversarial-orchestration",
+	}, ProviderResponse(resultJSON), nil
+}
+
+// vote implements multi-model voting: sends the same request to N models,
+// then picks the best response via a judge model.
+func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective) (Decision, ProviderResponse, error) {
+	voters := d.Iterations
+	if voters < 2 {
+		voters = 3 // default to 3 voters
+	}
+
+	e.mu.RLock()
+	tokensNeeded := estimateTokens(req)
+	voterPolicy := Policy{
+		Mode:      "normal",
+		MinWeight: d.PrimaryMinWeight,
+	}
+	eligible := e.eligibleModels(tokensNeeded, voterPolicy)
+	e.mu.RUnlock()
+
+	if len(eligible) == 0 {
+		return Decision{}, nil, errors.New("no eligible models for vote")
+	}
+
+	// Limit voters to available models.
+	if voters > len(eligible) {
+		voters = len(eligible)
+	}
+
+	// Collect responses from each voter.
+	type voteResult struct {
+		modelID    string
+		providerID string
+		content    string
+		cost       float64
+	}
+
+	var results []voteResult
+	var totalCost float64
+
+	for i := 0; i < voters; i++ {
+		m := eligible[i%len(eligible)]
+		adapter, ok := e.adapters[m.ProviderID]
+		if !ok {
+			continue
+		}
+		estCost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+		resp, err := adapter.Send(ctx, m.ID, req)
+		if err != nil {
+			continue // skip failed voters
+		}
+		content := extractContent(resp)
+		results = append(results, voteResult{
+			modelID:    m.ID,
+			providerID: m.ProviderID,
+			content:    content,
+			cost:       estCost,
+		})
+		totalCost += estCost
+	}
+
+	if len(results) == 0 {
+		return Decision{}, nil, errors.New("all voters failed")
+	}
+
+	// If only one response, return it directly.
+	if len(results) == 1 {
+		resultJSON, _ := json.Marshal(map[string]any{
+			"responses": []map[string]any{
+				{"model": results[0].modelID, "content": results[0].content},
+			},
+			"selected": 0,
+		})
+		return Decision{
+			ModelID:          results[0].modelID,
+			ProviderID:       results[0].providerID,
+			EstimatedCostUSD: totalCost,
+			Reason:           "vote-single-response",
+		}, ProviderResponse(resultJSON), nil
+	}
+
+	// Build judge prompt.
+	var responseSummary string
+	for i, r := range results {
+		responseSummary += fmt.Sprintf("\n--- Response %d (model: %s) ---\n%s\n", i+1, r.modelID, r.content)
+	}
+
+	judgeReq := Request{
+		Messages: []Message{
+			{Role: "system", Content: "You are a judge. Given multiple AI responses to the same prompt, select the best one. Reply with ONLY the number (1-based) of the best response."},
+			{Role: "user", Content: fmt.Sprintf("Original prompt: %s\n\nResponses:%s\n\nWhich response number is best?", messagesContent(req.Messages), responseSummary)},
+		},
+	}
+	judgePolicy := Policy{
+		Mode:      "high_confidence",
+		MinWeight: d.ReviewMinWeight,
+	}
+	judgeDec, judgeResp, err := e.RouteAndSend(ctx, judgeReq, judgePolicy)
+	totalCost += judgeDec.EstimatedCostUSD
+
+	// Parse the judge's selection.
+	selectedIdx := 0 // default to first
+	if err == nil {
+		judgeContent := extractContent(judgeResp)
+		for i := len(results); i >= 1; i-- {
+			if strings.Contains(judgeContent, fmt.Sprintf("%d", i)) {
+				selectedIdx = i - 1
+				break
+			}
+		}
+	}
+
+	// Build composite result.
+	var responses []map[string]any
+	for i, r := range results {
+		responses = append(responses, map[string]any{
+			"model":    r.modelID,
+			"content":  r.content,
+			"selected": i == selectedIdx,
+		})
+	}
+	resultJSON, _ := json.Marshal(map[string]any{
+		"responses": responses,
+		"selected":  selectedIdx,
+		"judge":     judgeDec.ModelID,
+	})
+
+	winner := results[selectedIdx]
+	return Decision{
+		ModelID:          winner.modelID,
+		ProviderID:       winner.providerID,
+		EstimatedCostUSD: totalCost,
+		Reason:           "vote-orchestration",
 	}, ProviderResponse(resultJSON), nil
 }
 

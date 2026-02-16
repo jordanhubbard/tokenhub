@@ -29,6 +29,11 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 	return &SQLiteStore{db: db}, nil
 }
 
+// DB returns the underlying sql.DB handle (used by TSDB).
+func (s *SQLiteStore) DB() *sql.DB {
+	return s.db
+}
+
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS models (

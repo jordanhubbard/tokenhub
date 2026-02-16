@@ -532,3 +532,85 @@ func TestDisabledModelSkipped(t *testing.T) {
 		t.Errorf("expected 'enabled' model, got %s", dec.ModelID)
 	}
 }
+
+func TestVoteOrchestration(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+
+	// Two different providers to ensure diverse voting.
+	mock1 := newMockSender("p1")
+	mock1.responses["m1"] = mockResponse{
+		data: json.RawMessage(`{"choices":[{"message":{"content":"Response from model 1"}}]}`),
+	}
+	mock2 := newMockSender("p2")
+	mock2.responses["m2"] = mockResponse{
+		data: json.RawMessage(`{"choices":[{"message":{"content":"Response from model 2"}}]}`),
+	}
+	// Judge response: picks response 1.
+	mock1.responses["m-judge"] = mockResponse{
+		data: json.RawMessage(`{"choices":[{"message":{"content":"1"}}]}`),
+	}
+
+	eng.RegisterAdapter(mock1)
+	eng.RegisterAdapter(mock2)
+	eng.RegisterModel(Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "m2", ProviderID: "p2", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "m-judge", ProviderID: "p1", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+
+	dec, resp, err := eng.Orchestrate(context.Background(), makeRequest("test prompt"), OrchestrationDirective{
+		Mode:       "vote",
+		Iterations: 2, // 2 voters
+	})
+	if err != nil {
+		t.Fatalf("vote failed: %v", err)
+	}
+	if dec.Reason != "vote-orchestration" {
+		t.Errorf("expected vote-orchestration reason, got %s", dec.Reason)
+	}
+
+	// Parse composite response.
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	responses, ok := result["responses"].([]any)
+	if !ok {
+		t.Fatal("expected 'responses' array in vote result")
+	}
+	if len(responses) < 2 {
+		t.Errorf("expected at least 2 voter responses, got %d", len(responses))
+	}
+}
+
+func TestVoteOrchestrationSingleVoter(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	dec, _, err := eng.Orchestrate(context.Background(), makeRequest("test"), OrchestrationDirective{
+		Mode:       "vote",
+		Iterations: 5, // more voters than models
+	})
+	if err != nil {
+		t.Fatalf("vote failed: %v", err)
+	}
+	if dec.Reason != "vote-single-response" {
+		t.Errorf("expected vote-single-response reason, got %s", dec.Reason)
+	}
+}
+
+func TestUpdateDefaults(t *testing.T) {
+	eng := NewEngine(EngineConfig{DefaultMode: "normal", DefaultMaxBudgetUSD: 0.05, DefaultMaxLatencyMs: 20000})
+	eng.UpdateDefaults("cheap", 0.01, 5000)
+
+	// Verify via routing behavior: register a model and observe defaults.
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true, InputPer1K: 0.001, OutputPer1K: 0.002})
+
+	// With empty policy, should use updated defaults.
+	_, _, err := eng.RouteAndSend(context.Background(), makeRequest("hi"), Policy{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

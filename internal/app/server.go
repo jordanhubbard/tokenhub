@@ -22,6 +22,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/store"
+	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
 
@@ -101,6 +102,12 @@ func NewServer(cfg Config) (*Server, error) {
 	bus := events.NewBus()
 	sc := stats.NewCollector()
 
+	// Initialize embedded TSDB.
+	ts, err := tsdb.New(db.DB())
+	if err != nil {
+		logger.Warn("failed to initialize TSDB", slog.String("error", err.Error()))
+	}
+
 	s := &Server{
 		cfg:    cfg,
 		r:      r,
@@ -118,6 +125,7 @@ func NewServer(cfg Config) (*Server, error) {
 		Health:   ht,
 		EventBus: bus,
 		Stats:    sc,
+		TSDB:     ts,
 	})
 
 	return s, nil

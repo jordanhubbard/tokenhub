@@ -10,6 +10,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
+	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 )
 
 type ChatRequest struct {
@@ -146,6 +147,12 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				CostUSD:    decision.EstimatedCostUSD,
 				Success:    true,
 			})
+		}
+		// Record TSDB time-series data for trend lines.
+		if d.TSDB != nil {
+			now := time.Now().UTC()
+			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: decision.ModelID, ProviderID: decision.ProviderID, Value: float64(latencyMs)})
+			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: decision.ModelID, ProviderID: decision.ProviderID, Value: decision.EstimatedCostUSD})
 		}
 
 		_ = json.NewEncoder(w).Encode(ChatResponse{
