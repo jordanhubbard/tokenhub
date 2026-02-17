@@ -1,67 +1,37 @@
-listen_addr: ":8080"
-log_level: "info"
+# TokenHub Configuration Reference
+#
+# TokenHub is configured entirely via environment variables.
+# This file documents all available settings for reference.
+# See also: .env.example
+#
+# NOTE: This YAML file is NOT read by the application.
+# It exists as a structured reference for the env-var-based config.
 
-db:
-  dsn: "file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+# ──── Server ────
+# TOKENHUB_LISTEN_ADDR=:8080
+# TOKENHUB_LOG_LEVEL=info                  # debug, info, warn, error
+# TOKENHUB_DB_DSN=file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+# TOKENHUB_VAULT_ENABLED=true
+# TOKENHUB_PROVIDER_TIMEOUT_SECS=30
 
-vault:
-  enabled: true
-  key_derivation: "argon2id"   # or "scrypt"
-  cipher: "aes-256-gcm"
-  lock_on_start: true
+# ──── Security & Hardening ────
+# TOKENHUB_ADMIN_TOKEN=                    # Required in production; protects /admin/v1/* endpoints
+# TOKENHUB_CORS_ORIGINS=                   # Comma-separated allowed origins; empty = allow all
+# TOKENHUB_RATE_LIMIT_RPS=60              # Requests per second per IP
+# TOKENHUB_RATE_LIMIT_BURST=120           # Burst capacity per IP
 
-routing:
-  default_mode: "normal"       # normal|cheap|high_confidence|planning|adversarial
-  default_max_budget_usd: 0.05
-  default_max_latency_ms: 20000
-  max_retries: 2
-  retry_backoff_ms: 250
+# ──── Routing Defaults ────
+# TOKENHUB_DEFAULT_MODE=normal             # normal, cheap, high_confidence, planning, adversarial
+# TOKENHUB_DEFAULT_MAX_BUDGET_USD=0.05
+# TOKENHUB_DEFAULT_MAX_LATENCY_MS=20000
 
-providers:
-  # environment credentials can be referenced by name (TOKENHUB_OPENAI_API_KEY, etc.)
-  - id: "openai"
-    type: "openai"
-    enabled: true
-    credential_source: "env"
-    env_key_name: "TOKENHUB_OPENAI_API_KEY"
-    base_url: "https://api.openai.com"
+# ──── Provider API Keys ────
+# TOKENHUB_OPENAI_API_KEY=sk-...          # Registers OpenAI provider adapter
+# TOKENHUB_ANTHROPIC_API_KEY=sk-ant-...   # Registers Anthropic provider adapter
+# TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000,http://vllm-2:8000  # Registers vLLM adapter
 
-  - id: "anthropic"
-    type: "anthropic"
-    enabled: true
-    credential_source: "env"
-    env_key_name: "TOKENHUB_ANTHROPIC_API_KEY"
-    base_url: "https://api.anthropic.com"
-
-  - id: "vllm-local"
-    type: "vllm"
-    enabled: true
-    credential_source: "none"
-    endpoints:
-      - "http://vllm-1:8000"
-      - "http://vllm-2:8000"
-
-models:
-  - id: "gpt-3.5"
-    provider_id: "openai"
-    weight: 3
-    max_context_tokens: 16385
-    pricing:
-      input_per_1k: 0.0005
-      output_per_1k: 0.0015
-
-  - id: "claude-opus"
-    provider_id: "anthropic"
-    weight: 10
-    max_context_tokens: 200000
-    pricing:
-      input_per_1k: 0.015
-      output_per_1k: 0.075
-
-  - id: "minimax-2.5"
-    provider_id: "vllm-local"
-    weight: 6
-    max_context_tokens: 65536
-    pricing:
-      input_per_1k: 0.0
-      output_per_1k: 0.0
+# ──── Temporal Workflow Engine (optional) ────
+# TOKENHUB_TEMPORAL_ENABLED=false
+# TOKENHUB_TEMPORAL_HOST=localhost:7233
+# TOKENHUB_TEMPORAL_NAMESPACE=tokenhub
+# TOKENHUB_TEMPORAL_TASK_QUEUE=tokenhub-tasks

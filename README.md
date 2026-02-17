@@ -1,71 +1,154 @@
-# Tokenhub
+# TokenHub
 
-Tokenhub is a containerized **LLM token interposer** that routes, arbitrates, and orchestrates requests across multiple providers (OpenAI, Anthropic, local vLLM, etc.) to optimize **cost / latency / reliability / context capacity / model “weight.”**
+TokenHub is a containerized **LLM routing proxy** that routes, arbitrates, and orchestrates requests across multiple providers (OpenAI, Anthropic, vLLM) to optimize cost, latency, reliability, and model quality.
 
-This repo contains:
-- Go service with modular `internal/` package layout (chi/v5 router)
-- Admin + consumer REST API (versioned `/v1`) with full CRUD
-- Secure credential vault (AES-256-GCM, Argon2id, auto-lock timeout)
-- Routing engine with weighted model selection, escalation, and failover
-- Orchestration engine (adversarial, vote, refine modes) with directive parsing
-- Provider adapters for OpenAI, Anthropic, and vLLM with retry/backoff
-- SQLite persistence for models, providers, routing config, audit logs, and rewards
-- Contextual bandit reward logging for RL-based routing data collection
-- Embedded admin UI with provider/vault/routing/health/audit/log panels
-- Prometheus metrics, health tracking, embedded TSDB
-- Docker + docker-compose + Kubernetes manifests
+## Features
 
-> Status: **functional**. Core routing, orchestration, persistence, and admin UI are implemented and tested.
+**Routing Engine**
+- Weighted model selection with budget, latency, and quality constraints
+- Automatic escalation and failover across providers
+- Thompson Sampling bandit policy for RL-based model selection
+- In-band directive parsing (`@@tokenhub` annotations in messages)
 
-## Quick start (dev)
+**Orchestration**
+- Adversarial mode: plan, critique, refine loops
+- Vote mode: fan-out to N models, judge selects best
+- Refine mode: iterative improvement pipeline
+- Configurable iterations and model hints
 
-### 1) Run with docker compose
+**Provider Adapters**
+- OpenAI, Anthropic, and vLLM with streaming support
+- HTTP timeouts, retry with exponential backoff
+- Request parameter forwarding (temperature, top_p, max_tokens, etc.)
+
+**Security**
+- AES-256-GCM encrypted credential vault with Argon2id key derivation and auto-lock
+- API key management: issue, rotate, revoke, scope-based access control
+- Admin endpoint authentication via Bearer token
+- Per-IP rate limiting (token bucket)
+- Configurable CORS origins
+
+**Observability**
+- Prometheus metrics (`/metrics`)
+- Embedded time-series database with retention management
+- Structured JSON logging with request tracing
+- Proactive health checking of provider endpoints
+- SSE real-time event stream
+- Audit trail for all admin operations
+
+**Admin UI**
+- Real-time request flow graph (Cytoscape.js)
+- Cost and latency trend charts (D3.js)
+- Model leaderboard with weight adjustment sliders
+- Panels: vault, providers, routing, health, audit, request logs, API keys, workflows
+
+**Temporal Workflows** (optional)
+- Every request dispatched as a durable Temporal workflow
+- Parallel activity execution for orchestration modes
+- Workflow visibility in admin UI
+- Graceful fallback to direct engine calls when Temporal is unavailable
+
+**Infrastructure**
+- SQLite with WAL mode for concurrent access
+- Docker with multi-stage build (28 MB image) and HEALTHCHECK
+- Docker Compose with health checks, resource limits, restart policies
+- CI/CD via GitHub Actions (build, lint, test, Docker)
+- Comprehensive mdbook documentation served at `/docs/`
+
+## Quick Start
+
+### Docker Compose
+
 ```bash
 cp .env.example .env
+# Edit .env with your provider API keys
 docker compose up --build
 ```
 
-- API: http://localhost:8080
-- Admin UI: http://localhost:8080/admin
-- Metrics: http://localhost:8080/metrics
-- Health: http://localhost:8080/healthz
+### Run Locally
 
-### 2) Run locally
 ```bash
-go mod download
-go run ./cmd/tokenhub
+export TOKENHUB_OPENAI_API_KEY="sk-..."
+make build && make run
 ```
+
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/chat` | Route a chat request |
+| `POST /v1/plan` | Orchestrated multi-model request |
+| `GET /healthz` | Health check |
+| `GET /admin` | Admin dashboard |
+| `GET /admin/v1/*` | Admin API (see [docs](/docs/)) |
+| `GET /metrics` | Prometheus metrics |
+| `GET /docs/` | Documentation |
 
 ## Configuration
 
-Tokenhub reads config from (in precedence order):
-1. Environment variables (`TOKENHUB_*`)
-2. Config file (`config/config.yaml` by default)
+TokenHub is configured via environment variables. See [`.env.example`](.env.example) for the full list.
 
-See: `config/config.example.yaml` and `.env.example`.
+Key variables:
 
-## Docs
-- PRD: `docs/PRD.md`
-- Architecture: `docs/ARCHITECTURE.md`
-- Routing & policy: `docs/ROUTING.md`
-- Adversarial scheduling + orchestration DSL: `docs/ORCHESTRATION_DSL.md`
-- RL / bandit router design: `docs/RL_ROUTER.md`
-- API: `docs/API.md`
-- Threat model & vault: `docs/SECURITY.md`
-- Provider adapters: `docs/PROVIDERS.md`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_OPENAI_API_KEY` | | OpenAI API key |
+| `TOKENHUB_ANTHROPIC_API_KEY` | | Anthropic API key |
+| `TOKENHUB_VLLM_ENDPOINTS` | | Comma-separated vLLM URLs |
+| `TOKENHUB_ADMIN_TOKEN` | | Bearer token for admin endpoints |
+| `TOKENHUB_CORS_ORIGINS` | `*` | Allowed CORS origins |
+| `TOKENHUB_RATE_LIMIT_RPS` | `60` | Rate limit per IP per second |
+| `TOKENHUB_TEMPORAL_ENABLED` | `false` | Enable Temporal workflow dispatch |
 
-## Implementation status
+## Documentation
 
-- [x] Provider adapters (OpenAI, Anthropic, vLLM) with HTTP timeouts and retry/backoff
-- [x] Vault unlock + AES-256-GCM encrypted key storage with auto-lock
-- [x] Routing policies, weighted selection, escalation, and failover
-- [x] Orchestration engine (adversarial, vote, refine) with DSL directive parsing
-- [x] SQLite persistence (models, providers, routing config, audit, rewards)
-- [x] Admin UI (provider/vault/routing/health/audit/log panels)
-- [x] Rate limit header tracking and health monitoring
-- [x] Contextual bandit reward logging for RL-based routing
-- [ ] Load testing and benchmarks
-- [ ] Production deployment guide
+Build and serve the full documentation:
+
+```bash
+make docs          # Build HTML docs
+make docs-serve    # Live-reload dev server
+```
+
+When running, documentation is served at [`/docs/`](http://localhost:8080/docs/).
+
+## Development
+
+```bash
+make build        # Build binary
+make test         # Run tests
+make test-race    # Run tests with race detector
+make vet          # Go vet
+make lint         # golangci-lint (if installed)
+make docker       # Build Docker image
+make clean        # Remove build artifacts
+```
+
+## Production Deployment
+
+See the [Production Checklist](docs/src/deployment/production.md) for a complete guide. Key steps:
+
+1. Set `TOKENHUB_ADMIN_TOKEN` to protect admin endpoints
+2. Set `TOKENHUB_CORS_ORIGINS` to your domain(s)
+3. Place behind a TLS-terminating reverse proxy
+4. Mount a persistent volume for SQLite
+5. Configure Prometheus to scrape `/metrics`
+6. Set up alerting with [`deploy/prometheus-alerts.yml`](deploy/prometheus-alerts.yml)
+7. Schedule backups with [`scripts/backup.sh`](scripts/backup.sh)
+
+## Architecture
+
+```
+Client --> /v1/chat --> [Rate Limiter] --> [API Key Auth] --> [Routing Engine]
+                                                                    |
+                                                    [Thompson Sampling Policy]
+                                                                    |
+                                          +------------+------------+------------+
+                                          |            |            |            |
+                                       OpenAI     Anthropic      vLLM       (more)
+                                          |            |            |
+                                     [Health Tracker + Metrics + TSDB + Audit]
+```
 
 ## License
-MIT (see `LICENSE`)
+
+MIT (see [`LICENSE`](LICENSE))

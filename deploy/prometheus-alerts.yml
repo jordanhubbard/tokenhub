@@ -1,0 +1,97 @@
+# TokenHub Prometheus Alerting Rules
+#
+# Import into Prometheus via prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/rules/tokenhub-alerts.yml
+
+groups:
+  - name: tokenhub
+    rules:
+      # High error rate across all requests.
+      - alert: TokenHubHighErrorRate
+        expr: |
+          sum(rate(tokenhub_requests_total{status="error"}[5m]))
+          /
+          sum(rate(tokenhub_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TokenHub error rate > 5%"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      # Critical error rate.
+      - alert: TokenHubCriticalErrorRate
+        expr: |
+          sum(rate(tokenhub_requests_total{status="error"}[5m]))
+          /
+          sum(rate(tokenhub_requests_total[5m]))
+          > 0.25
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TokenHub error rate > 25%"
+          description: "Error rate is {{ $value | humanizePercentage }}. Immediate investigation required."
+
+      # High P95 latency.
+      - alert: TokenHubHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(tokenhub_request_latency_ms_bucket[5m])) by (le)
+          ) > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TokenHub P95 latency > 10s"
+          description: "P95 latency is {{ $value | humanizeDuration }}."
+
+      # Provider completely down.
+      - alert: TokenHubProviderDown
+        expr: |
+          sum by (provider_id) (rate(tokenhub_requests_total{status="error"}[5m]))
+          /
+          sum by (provider_id) (rate(tokenhub_requests_total[5m]))
+          > 0.90
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Provider {{ $labels.provider_id }} appears down"
+          description: "Provider {{ $labels.provider_id }} has > 90% error rate for 2 minutes."
+
+      # Cost spike (compared to 1h average).
+      - alert: TokenHubCostSpike
+        expr: |
+          sum(rate(tokenhub_cost_usd_total[5m])) * 3600
+          >
+          2 * sum(rate(tokenhub_cost_usd_total[1h])) * 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TokenHub cost spike detected"
+          description: "Current hourly cost rate is 2x the recent average."
+
+      # No requests (service may be down).
+      - alert: TokenHubNoTraffic
+        expr: sum(rate(tokenhub_requests_total[10m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TokenHub receiving no traffic"
+          description: "No requests recorded in 15 minutes. Service may be down or unreachable."
+
+      # Rate limiting kicking in frequently.
+      - alert: TokenHubHighRateLimiting
+        expr: |
+          sum(rate(tokenhub_requests_total{status="rate_limited"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of rate-limited requests"
+          description: "More than 10 req/s are being rate-limited. Review rate limit settings or investigate abuse."
