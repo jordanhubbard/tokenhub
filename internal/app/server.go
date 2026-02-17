@@ -159,7 +159,9 @@ func NewServer(cfg Config) (*Server, error) {
 	sampler := router.NewThompsonSampler()
 	eng.SetBanditPolicy(sampler)
 	fetchRewards := func() ([]router.RewardSummaryRow, error) {
-		summaries, err := db.GetRewardSummary(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		summaries, err := db.GetRewardSummary(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -257,6 +259,7 @@ func NewServer(cfg Config) (*Server, error) {
 				s.temporal = tmgr
 				deps.TemporalClient = tmgr.Client()
 				deps.TemporalTaskQueue = cfg.TemporalTaskQueue
+				m.TemporalUp.Set(1)
 				logger.Info("temporal workflow engine started",
 					slog.String("host", cfg.TemporalHostPort),
 					slog.String("namespace", cfg.TemporalNamespace),
@@ -302,7 +305,9 @@ func (s *Server) tsdbPruneLoop(ts *tsdb.Store) {
 	for {
 		select {
 		case <-ticker.C:
-			deleted, err := ts.Prune(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			deleted, err := ts.Prune(ctx)
+			cancel()
 			if err != nil {
 				s.logger.Warn("TSDB prune failed", slog.String("error", err.Error()))
 			} else if deleted > 0 {

@@ -10,10 +10,11 @@ import (
 type Registry struct {
 	reg *prometheus.Registry
 
-	RequestsTotal   *prometheus.CounterVec
-	RequestLatency  *prometheus.HistogramVec
-	CostUSD         *prometheus.CounterVec
+	RequestsTotal    *prometheus.CounterVec
+	RequestLatency   *prometheus.HistogramVec
+	CostUSD          *prometheus.CounterVec
 	RateLimitedTotal prometheus.Counter
+	TemporalUp       prometheus.Gauge
 }
 
 func New() *Registry {
@@ -37,8 +38,12 @@ func New() *Registry {
 			Name: "tokenhub_rate_limited_total",
 			Help: "Total requests rejected by rate limiter",
 		}),
+		TemporalUp: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tokenhub_temporal_up",
+			Help: "Whether Temporal workflow engine is connected (1=up, 0=down/disabled)",
+		}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.RateLimitedTotal)
+	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.RateLimitedTotal, m.TemporalUp)
 	return m
 }
 

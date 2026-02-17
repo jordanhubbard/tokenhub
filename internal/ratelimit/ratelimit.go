@@ -17,6 +17,7 @@ type Limiter struct {
 	rate     int           // tokens added per interval
 	burst    int           // max tokens (bucket capacity)
 	interval time.Duration // refill interval
+	maxKeys  int           // max entries before evicting oldest
 	stop     chan struct{}
 	counter  prometheus.Counter // optional: incremented on each 429
 }
@@ -35,6 +36,7 @@ func New(rate, burst int, interval time.Duration, opts ...Option) *Limiter {
 		rate:     rate,
 		burst:    burst,
 		interval: interval,
+		maxKeys:  100000, // default cap: 100k unique IPs
 		stop:     make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -81,6 +83,10 @@ func (l *Limiter) allow(key string) bool {
 
 	b, ok := l.buckets[key]
 	if !ok {
+		// Evict oldest entry if at capacity.
+		if len(l.buckets) >= l.maxKeys {
+			l.evictOldest()
+		}
 		b = &bucket{tokens: l.burst, lastFill: time.Now()}
 		l.buckets[key] = b
 	}
@@ -101,6 +107,24 @@ func (l *Limiter) allow(key string) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// evictOldest removes the bucket with the oldest lastFill time.
+// Must be called with l.mu held.
+func (l *Limiter) evictOldest() {
+	var oldestKey string
+	var oldestTime time.Time
+	first := true
+	for k, b := range l.buckets {
+		if first || b.lastFill.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = b.lastFill
+			first = false
+		}
+	}
+	if !first {
+		delete(l.buckets, oldestKey)
+	}
 }
 
 // Stop terminates the background cleanup goroutine.

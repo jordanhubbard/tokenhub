@@ -1,0 +1,46 @@
+# CronJob: backs up the TokenHub SQLite database every 6 hours.
+# Requires the same PVC (tokenhub-data) used by the main deployment.
+# Backups are written to /backups inside a secondary PVC and pruned after 30 days.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tokenhub-backup
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: tokenhub:latest
+              command: ["/bin/sh", "/app/scripts/backup.sh"]
+              args: ["/data/tokenhub.sqlite", "/backups"]
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: tokenhub-data
+            - name: backups
+              persistentVolumeClaim:
+                claimName: tokenhub-backups
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tokenhub-backups
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
