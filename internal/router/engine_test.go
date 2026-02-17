@@ -79,7 +79,7 @@ func oaiResponse(content string) json.RawMessage {
 
 func TestEstimateTokens(t *testing.T) {
 	req := makeRequest("hello world test message")
-	got := estimateTokens(req)
+	got := EstimateTokens(req)
 	// "hello world test message" = 24 chars, 24/4 = 6
 	if got != 6 {
 		t.Errorf("estimateTokens() = %d, want 6", got)
@@ -91,7 +91,7 @@ func TestEstimateTokensExplicit(t *testing.T) {
 		Messages:             []Message{{Role: "user", Content: "hello"}},
 		EstimatedInputTokens: 100,
 	}
-	got := estimateTokens(req)
+	got := EstimateTokens(req)
 	if got != 100 {
 		t.Errorf("estimateTokens() = %d, want 100 (explicit)", got)
 	}
@@ -365,9 +365,9 @@ func TestOrchestrateAdversarial(t *testing.T) {
 
 func TestExtractContentOpenAI(t *testing.T) {
 	resp := oaiResponse("hello from openai")
-	got := extractContent(resp)
+	got := ExtractContent(resp)
 	if got != "hello from openai" {
-		t.Errorf("extractContent() = %q, want %q", got, "hello from openai")
+		t.Errorf("ExtractContent() = %q, want %q", got, "hello from openai")
 	}
 }
 
@@ -377,9 +377,9 @@ func TestExtractContentAnthropic(t *testing.T) {
 			{"type": "text", "text": "hello from anthropic"},
 		},
 	})
-	got := extractContent(resp)
+	got := ExtractContent(resp)
 	if got != "hello from anthropic" {
-		t.Errorf("extractContent() = %q, want %q", got, "hello from anthropic")
+		t.Errorf("ExtractContent() = %q, want %q", got, "hello from anthropic")
 	}
 }
 

@@ -12,17 +12,24 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/router"
 )
 
+// KeyFunc returns the current API key. It is called on every request so that
+// a vault or secret-manager can rotate keys without restarting the process.
+// Returning an empty string signals that no key is available.
+type KeyFunc func() string
+
 // Adapter implements router.Sender for vLLM instances.
 // Supports round-robin across multiple endpoints.
 type Adapter struct {
 	id        string
+	keyFunc   KeyFunc
 	endpoints []string
 	counter   atomic.Uint64
 	client    *http.Client
 }
 
 // New creates a new vLLM adapter with one or more endpoints.
-// A zero timeout defaults to 30s.
+// A zero timeout defaults to 30s. By default no API key is sent;
+// use WithAPIKey or WithKeyFunc to enable authentication.
 func New(id string, endpoint string, opts ...Option) *Adapter {
 	a := &Adapter{
 		id:        id,
@@ -49,6 +56,22 @@ func WithTimeout(d time.Duration) Option {
 func WithEndpoints(endpoints ...string) Option {
 	return func(a *Adapter) {
 		a.endpoints = append(a.endpoints, endpoints...)
+	}
+}
+
+// WithAPIKey sets a static API key for authenticated vLLM deployments.
+// The key is wrapped in a closure; use WithKeyFunc for dynamic keys.
+func WithAPIKey(apiKey string) Option {
+	return func(a *Adapter) {
+		a.keyFunc = func() string { return apiKey }
+	}
+}
+
+// WithKeyFunc sets a dynamic key resolver. This allows the vault to provide
+// a live key-fetching function that returns an empty string when locked.
+func WithKeyFunc(fn KeyFunc) Option {
+	return func(a *Adapter) {
+		a.keyFunc = fn
 	}
 }
 
@@ -131,10 +154,23 @@ func (a *Adapter) SendStream(ctx context.Context, model string, req router.Reque
 	return a.makeStreamRequest(ctx, baseURL, "/v1/chat/completions", payload)
 }
 
+func (a *Adapter) authHeaders() map[string]string {
+	if a.keyFunc == nil {
+		return nil
+	}
+	key := a.keyFunc()
+	if key == "" {
+		return nil
+	}
+	return map[string]string{
+		"Authorization": "Bearer " + key,
+	}
+}
+
 func (a *Adapter) makeStreamRequest(ctx context.Context, baseURL, endpoint string, payload any) (io.ReadCloser, error) {
-	return providers.DoStreamRequest(ctx, a.client, baseURL+endpoint, payload, nil)
+	return providers.DoStreamRequest(ctx, a.client, baseURL+endpoint, payload, a.authHeaders())
 }
 
 func (a *Adapter) makeRequest(ctx context.Context, baseURL, endpoint string, payload any) ([]byte, error) {
-	return providers.DoRequest(ctx, a.client, baseURL+endpoint, payload, nil)
+	return providers.DoRequest(ctx, a.client, baseURL+endpoint, payload, a.authHeaders())
 }

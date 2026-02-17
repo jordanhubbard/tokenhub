@@ -171,8 +171,9 @@ func (e *Engine) ListAdapterIDs() []string {
 	return ids
 }
 
-// estimateTokens estimates the token count for a request (chars/4 heuristic).
-func estimateTokens(req Request) int {
+// EstimateTokens estimates the token count for a request (chars/4 heuristic).
+// If EstimatedInputTokens is set on the request, that value is returned directly.
+func EstimateTokens(req Request) int {
 	if req.EstimatedInputTokens > 0 {
 		return req.EstimatedInputTokens
 	}
@@ -332,7 +333,7 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	tokensNeeded := estimateTokens(req)
+	tokensNeeded := EstimateTokens(req)
 
 	// Honor model hint if specified.
 	if req.ModelHint != "" {
@@ -411,7 +412,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	tokensNeeded := estimateTokens(req)
+	tokensNeeded := EstimateTokens(req)
 	eligible := e.eligibleModels(tokensNeeded, p)
 
 	// Honor model hint if specified.
@@ -623,7 +624,7 @@ func (e *Engine) sendToModel(ctx context.Context, modelID string, req Request) (
 	if !ok {
 		return Decision{}, nil, fmt.Errorf("no adapter for provider %q", m.ProviderID)
 	}
-	tokens := estimateTokens(req)
+	tokens := EstimateTokens(req)
 	estCost := estimateCostUSD(tokens, 512, m.InputPer1K, m.OutputPer1K)
 	resp, err := adapter.Send(ctx, m.ID, req)
 	if err != nil {
@@ -668,7 +669,7 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 	planReq := Request{
 		Messages: []Message{
 			{Role: "system", Content: "You are a planning assistant. Generate a detailed plan to address the user's request."},
-			{Role: "user", Content: messagesContent(req.Messages)},
+			{Role: "user", Content: MessagesContent(req.Messages)},
 		},
 	}
 	var planDec Decision
@@ -695,7 +696,7 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 		}
 	}
 
-	plan := extractContent(planResp)
+	plan := ExtractContent(planResp)
 
 	var critique, refinedPlan string
 	var lastDec Decision
@@ -705,7 +706,7 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 		critiqueReq := Request{
 			Messages: []Message{
 				{Role: "system", Content: "You are a critical reviewer. Analyze the plan below and provide constructive criticism."},
-				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nProposed plan:\n%s\n\nProvide your critique:", messagesContent(req.Messages), plan)},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nProposed plan:\n%s\n\nProvide your critique:", MessagesContent(req.Messages), plan)},
 			},
 		}
 		var critiqueResp ProviderResponse
@@ -729,13 +730,13 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 				return Decision{}, nil, fmt.Errorf("adversarial critique phase: %w", critiqueErr)
 			}
 		}
-		critique = extractContent(critiqueResp)
+		critique = ExtractContent(critiqueResp)
 
 		// Phase 3: Model A refines based on critique.
 		refineReq := Request{
 			Messages: []Message{
 				{Role: "system", Content: "You are a planning assistant. Refine your plan based on the critique provided."},
-				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nYour plan:\n%s\n\nCritique:\n%s\n\nProvide a refined plan:", messagesContent(req.Messages), plan, critique)},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nYour plan:\n%s\n\nCritique:\n%s\n\nProvide a refined plan:", MessagesContent(req.Messages), plan, critique)},
 			},
 		}
 		var dec Decision
@@ -760,14 +761,14 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 				return Decision{}, nil, fmt.Errorf("adversarial refine phase: %w", refineErr)
 			}
 		}
-		refinedPlan = extractContent(refineResp)
+		refinedPlan = ExtractContent(refineResp)
 		plan = refinedPlan // use refined plan for next iteration
 		lastDec = dec
 	}
 
 	// Build composite response.
 	result := map[string]any{
-		"initial_plan": extractContent(planResp),
+		"initial_plan": ExtractContent(planResp),
 		"critique":     critique,
 		"refined_plan": refinedPlan,
 	}
@@ -790,7 +791,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 	}
 
 	e.mu.RLock()
-	tokensNeeded := estimateTokens(req)
+	tokensNeeded := EstimateTokens(req)
 	voterPolicy := Policy{
 		Mode:      "normal",
 		MinWeight: d.PrimaryMinWeight,
@@ -843,7 +844,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 			if err != nil {
 				return
 			}
-			content := extractContent(resp)
+			content := ExtractContent(resp)
 			resultsCh <- voteResult{
 				modelID:    m.ID,
 				providerID: m.ProviderID,
@@ -895,7 +896,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 	judgeReq := Request{
 		Messages: []Message{
 			{Role: "system", Content: "You are a judge. Given multiple AI responses to the same prompt, select the best one. Reply with ONLY the number (1-based) of the best response."},
-			{Role: "user", Content: fmt.Sprintf("Original prompt: %s\n\nResponses:%s\n\nWhich response number is best?", messagesContent(req.Messages), responseSummary)},
+			{Role: "user", Content: fmt.Sprintf("Original prompt: %s\n\nResponses:%s\n\nWhich response number is best?", MessagesContent(req.Messages), responseSummary)},
 		},
 	}
 	var judgeDec Decision
@@ -923,7 +924,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 	// Parse the judge's selection.
 	selectedIdx := 0 // default to first
 	if err == nil {
-		judgeContent := extractContent(judgeResp)
+		judgeContent := ExtractContent(judgeResp)
 		for i := len(results); i >= 1; i-- {
 			if strings.Contains(judgeContent, fmt.Sprintf("%d", i)) {
 				selectedIdx = i - 1
@@ -992,7 +993,7 @@ func (e *Engine) refine(ctx context.Context, req Request, d OrchestrationDirecti
 		}
 	}
 
-	currentContent := extractContent(initialResp)
+	currentContent := ExtractContent(initialResp)
 	lastDec := initialDec
 	totalCost := initialDec.EstimatedCostUSD
 
@@ -1004,7 +1005,7 @@ func (e *Engine) refine(ctx context.Context, req Request, d OrchestrationDirecti
 		refineReq := Request{
 			Messages: []Message{
 				{Role: "system", Content: "Review and improve the following response. Fix any errors, add missing details, and improve clarity."},
-				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nCurrent response:\n%s\n\nProvide an improved version:", messagesContent(req.Messages), currentContent)},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nCurrent response:\n%s\n\nProvide an improved version:", MessagesContent(req.Messages), currentContent)},
 			},
 		}
 
@@ -1023,7 +1024,7 @@ func (e *Engine) refine(ctx context.Context, req Request, d OrchestrationDirecti
 			break
 		}
 
-		currentContent = extractContent(refineResp)
+		currentContent = ExtractContent(refineResp)
 		lastDec = dec
 		totalCost += dec.EstimatedCostUSD
 	}
@@ -1044,8 +1045,8 @@ func (e *Engine) refine(ctx context.Context, req Request, d OrchestrationDirecti
 	}, ProviderResponse(resultJSON), nil
 }
 
-// messagesContent concatenates all user message content.
-func messagesContent(msgs []Message) string {
+// MessagesContent concatenates all user message content into a single string.
+func MessagesContent(msgs []Message) string {
 	var s string
 	for _, m := range msgs {
 		if m.Role == "user" {
@@ -1058,8 +1059,9 @@ func messagesContent(msgs []Message) string {
 	return s
 }
 
-// extractContent tries to pull the text content from a provider response JSON.
-func extractContent(resp ProviderResponse) string {
+// ExtractContent tries to pull the text content from a provider response JSON.
+// It supports OpenAI and Anthropic response formats, falling back to raw string.
+func ExtractContent(resp ProviderResponse) string {
 	// Try OpenAI format.
 	var oai struct {
 		Choices []struct {

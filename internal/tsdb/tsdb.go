@@ -94,7 +94,9 @@ func (s *Store) periodicFlush() {
 
 // SetRetention sets the data retention period.
 func (s *Store) SetRetention(d time.Duration) {
+	s.mu.Lock()
 	s.retention = d
+	s.mu.Unlock()
 }
 
 func (s *Store) migrate() error {
@@ -109,6 +111,7 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tsdb_ts ON tsdb_points(ts)`,
 		`CREATE INDEX IF NOT EXISTS idx_tsdb_metric ON tsdb_points(metric, ts)`,
+		`CREATE INDEX IF NOT EXISTS idx_points_query ON tsdb_points(metric, model_id, provider_id, ts)`,
 	}
 	for _, q := range queries {
 		if _, err := s.db.Exec(q); err != nil {
@@ -165,9 +168,9 @@ func (s *Store) flush(points []Point) {
 }
 
 // Query returns time-series data matching the given parameters.
+// Callers that need buffered data visible should call Flush() explicitly;
+// the periodic 30-second flush goroutine handles normal operation.
 func (s *Store) Query(ctx context.Context, q QueryParams) ([]Series, error) {
-	s.Flush() // ensure buffered data is visible
-
 	where := "WHERE metric = ?"
 	args := []any{q.Metric}
 
@@ -245,8 +248,10 @@ func (s *Store) Query(ctx context.Context, q QueryParams) ([]Series, error) {
 
 // Prune removes data points older than the retention period.
 func (s *Store) Prune(ctx context.Context) (int64, error) {
-	s.Flush() // ensure buffered data is visible
-	cutoff := time.Now().Add(-s.retention).UnixMilli()
+	s.mu.Lock()
+	retention := s.retention
+	s.mu.Unlock()
+	cutoff := time.Now().Add(-retention).UnixMilli()
 	result, err := s.db.ExecContext(ctx, `DELETE FROM tsdb_points WHERE ts < ?`, cutoff)
 	if err != nil {
 		return 0, err
@@ -256,7 +261,6 @@ func (s *Store) Prune(ctx context.Context) (int64, error) {
 
 // Metrics returns the list of distinct metric names.
 func (s *Store) Metrics(ctx context.Context) ([]string, error) {
-	s.Flush() // ensure buffered data is visible
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT metric FROM tsdb_points ORDER BY metric`)
 	if err != nil {
 		return nil, err

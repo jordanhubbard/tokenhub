@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -293,6 +294,12 @@ func (v *Vault) RotatePassword(oldPassword, newPassword []byte) error {
 
 	if v.locked {
 		return errors.New("vault is locked")
+	}
+
+	// Verify the old password matches the current key.
+	derivedKey := argon2.IDKey(oldPassword, v.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	if subtle.ConstantTimeCompare(derivedKey, v.key) != 1 {
+		return errors.New("old password does not match")
 	}
 
 	// Step 1: Decrypt all values with the current key.

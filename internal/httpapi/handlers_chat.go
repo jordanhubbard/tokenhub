@@ -31,6 +31,7 @@ func warnOnErr(op string, err error) {
 	}
 }
 
+// ChatRequest is the JSON body for the /v1/chat endpoint.
 type ChatRequest struct {
 	// Side-channel negotiation
 	Capabilities map[string]any `json:"capabilities,omitempty"`
@@ -43,6 +44,7 @@ type ChatRequest struct {
 	Request router.Request `json:"request"`
 }
 
+// PolicyHint carries optional client-supplied routing preferences.
 type PolicyHint struct {
 	Mode         string  `json:"mode,omitempty"`
 	MaxBudgetUSD float64 `json:"max_budget_usd,omitempty"`
@@ -50,6 +52,7 @@ type PolicyHint struct {
 	MinWeight    int     `json:"min_weight,omitempty"`
 }
 
+// ChatResponse is the JSON body returned by the /v1/chat endpoint.
 type ChatResponse struct {
 	NegotiatedModel  string          `json:"negotiated_model"`
 	EstimatedCostUSD float64         `json:"estimated_cost_usd"`
@@ -209,8 +212,10 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					BytesStreamed: totalBytes,
 				}
 				wfID := fmt.Sprintf("stream-log-%s", reqID)
+				logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer logCancel()
 				_, err := d.TemporalClient.ExecuteWorkflow(
-					context.Background(),
+					logCtx,
 					client.StartWorkflowOptions{
 						ID:        wfID,
 						TaskQueue: d.TemporalTaskQueue,

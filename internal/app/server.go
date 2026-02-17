@@ -51,6 +51,7 @@ type Server struct {
 	tsdb             *tsdb.Store               // nil when TSDB failed to init
 
 	stopPrune    chan struct{} // signals TSDB prune goroutine to stop
+	stopLogPrune chan struct{} // signals log prune goroutine to stop
 	stopRotation chan struct{} // signals key rotation enforcement goroutine to stop
 	apiKeyMgr    *apikey.Manager
 	eventBus     *events.Bus
@@ -97,10 +98,9 @@ func NewServer(cfg Config) (*Server, error) {
 
 	m := metrics.New()
 
-	// Per-IP rate limiting.
+	// Per-IP rate limiting (applied only to /v1 routes, not healthz/metrics/admin).
 	rl := ratelimit.New(cfg.RateLimitRPS, cfg.RateLimitBurst, time.Second,
 		ratelimit.WithCounter(m.RateLimitedTotal))
-	r.Use(rl.Middleware)
 
 	v, err := vault.New(cfg.VaultEnabled)
 	if err != nil {
@@ -239,6 +239,7 @@ func NewServer(cfg Config) (*Server, error) {
 		stopBandit:       stopBandit,
 		tsdb:             ts,
 		stopPrune:        make(chan struct{}),
+		stopLogPrune:     make(chan struct{}),
 		stopRotation:     make(chan struct{}),
 		apiKeyMgr:        keyMgr,
 		eventBus:         bus,
@@ -248,6 +249,9 @@ func NewServer(cfg Config) (*Server, error) {
 	if ts != nil {
 		go s.tsdbPruneLoop(ts)
 	}
+
+	// Start log retention prune goroutine (every 6h, 90-day retention).
+	go s.logPruneLoop()
 
 	// Start API key rotation enforcement goroutine.
 	go s.rotationEnforceLoop()
@@ -287,6 +291,7 @@ func NewServer(cfg Config) (*Server, error) {
 		AdminToken:       cfg.AdminToken,
 		IdempotencyCache: idemCache,
 		CircuitBreaker:   cb,
+		RateLimiter:      rl,
 	}
 
 	// Initialize Temporal workflow engine if enabled.
@@ -353,6 +358,7 @@ func (s *Server) Reload(cfg Config) {
 
 func (s *Server) Close() error {
 	close(s.stopPrune)
+	close(s.stopLogPrune)
 	close(s.stopRotation)
 	if s.stopBandit != nil {
 		s.stopBandit()
@@ -400,6 +406,29 @@ func (s *Server) tsdbPruneLoop(ts *tsdb.Store) {
 				s.logger.Info("TSDB pruned", slog.Int64("deleted", deleted))
 			}
 		case <-s.stopPrune:
+			return
+		}
+	}
+}
+
+// logPruneLoop periodically deletes old rows from request_logs, audit_logs,
+// and reward_logs. Runs every 6 hours with a 90-day retention window.
+func (s *Server) logPruneLoop() {
+	const retention = 90 * 24 * time.Hour
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			deleted, err := s.store.PruneOldLogs(ctx, retention)
+			cancel()
+			if err != nil {
+				s.logger.Warn("log prune failed", slog.String("error", err.Error()))
+			} else if deleted > 0 {
+				s.logger.Info("old logs pruned", slog.Int64("deleted", deleted))
+			}
+		case <-s.stopLogPrune:
 			return
 		}
 	}
@@ -497,10 +526,10 @@ func loadRoutingConfig(eng *router.Engine, db store.Store, logger *slog.Logger) 
 
 func registerDefaultModels(eng *router.Engine) {
 	defaults := []router.Model{
-		{ID: "gpt-4", ProviderID: "openai", Weight: 8, MaxContextTokens: 128000, InputPer1K: 0.01, OutputPer1K: 0.03, Enabled: true},
-		{ID: "gpt-3.5-turbo", ProviderID: "openai", Weight: 3, MaxContextTokens: 16385, InputPer1K: 0.0005, OutputPer1K: 0.0015, Enabled: true},
-		{ID: "claude-opus", ProviderID: "anthropic", Weight: 10, MaxContextTokens: 200000, InputPer1K: 0.015, OutputPer1K: 0.075, Enabled: true},
-		{ID: "claude-sonnet", ProviderID: "anthropic", Weight: 7, MaxContextTokens: 200000, InputPer1K: 0.003, OutputPer1K: 0.015, Enabled: true},
+		{ID: "gpt-4o", ProviderID: "openai", Weight: 8, MaxContextTokens: 128000, InputPer1K: 0.0025, OutputPer1K: 0.01, Enabled: true},
+		{ID: "gpt-4o-mini", ProviderID: "openai", Weight: 3, MaxContextTokens: 128000, InputPer1K: 0.00015, OutputPer1K: 0.0006, Enabled: true},
+		{ID: "claude-opus-4-0520", ProviderID: "anthropic", Weight: 10, MaxContextTokens: 200000, InputPer1K: 0.015, OutputPer1K: 0.075, Enabled: true},
+		{ID: "claude-sonnet-4-5-20250929", ProviderID: "anthropic", Weight: 7, MaxContextTokens: 200000, InputPer1K: 0.003, OutputPer1K: 0.015, Enabled: true},
 	}
 	for _, m := range defaults {
 		eng.RegisterModel(m)

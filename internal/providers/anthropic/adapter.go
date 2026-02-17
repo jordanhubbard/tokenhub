@@ -12,21 +12,29 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/router"
 )
 
+// KeyFunc returns the current API key. It is called on every request so that
+// a vault or secret-manager can rotate keys without restarting the process.
+// Returning an empty string signals that the key is unavailable (e.g. vault locked).
+type KeyFunc func() string
+
 // Adapter implements router.Sender for Anthropic.
 type Adapter struct {
-	id      string
-	apiKey  string
-	baseURL string
-	client  *http.Client
+	id         string
+	keyFunc    KeyFunc
+	baseURL    string
+	apiVersion string
+	client     *http.Client
 }
 
 // New creates a new Anthropic adapter. A zero timeout defaults to 30s.
+// The static apiKey is wrapped in a closure; use WithKeyFunc for dynamic keys.
 func New(id, apiKey, baseURL string, opts ...Option) *Adapter {
 	a := &Adapter{
-		id:      id,
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		id:         id,
+		keyFunc:    func() string { return apiKey },
+		baseURL:    baseURL,
+		apiVersion: "2023-06-01",
+		client:     &http.Client{Timeout: 30 * time.Second},
 	}
 	for _, o := range opts {
 		o(a)
@@ -41,6 +49,22 @@ type Option func(*Adapter)
 func WithTimeout(d time.Duration) Option {
 	return func(a *Adapter) {
 		a.client.Timeout = d
+	}
+}
+
+// WithKeyFunc sets a dynamic key resolver, overriding any static key
+// passed to New. This allows the vault to provide a live key-fetching
+// function that returns an empty string when locked.
+func WithKeyFunc(fn KeyFunc) Option {
+	return func(a *Adapter) {
+		a.keyFunc = fn
+	}
+}
+
+// WithAPIVersion overrides the default Anthropic API version header.
+func WithAPIVersion(v string) Option {
+	return func(a *Adapter) {
+		a.apiVersion = v
 	}
 }
 
@@ -127,8 +151,8 @@ func (a *Adapter) SendStream(ctx context.Context, model string, req router.Reque
 
 func (a *Adapter) authHeaders() map[string]string {
 	return map[string]string{
-		"x-api-key":         a.apiKey,
-		"anthropic-version": "2023-06-01",
+		"x-api-key":         a.keyFunc(),
+		"anthropic-version": a.apiVersion,
 	}
 }
 

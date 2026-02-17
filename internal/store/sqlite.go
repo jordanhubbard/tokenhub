@@ -26,10 +26,11 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite pragmas: %w", err)
 	}
-	// SQLite only supports one writer at a time. Limit connections to avoid
-	// contention and keep a small idle pool for read concurrency.
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
+	// SQLite is single-writer; keeping connections low (2) reduces BUSY
+	// contention and lock timeouts while still allowing one reader alongside
+	// the writer.
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(time.Hour)
 	return &SQLiteStore{db: db}, nil
 }
@@ -641,6 +642,24 @@ func (s *SQLiteStore) ListRewards(ctx context.Context, limit int, offset int) ([
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()
+}
+
+// PruneOldLogs deletes rows from request_logs, audit_logs, and reward_logs
+// where the timestamp is older than the retention duration. Returns the total
+// number of deleted rows across all three tables.
+func (s *SQLiteStore) PruneOldLogs(ctx context.Context, retention time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retention).Format(time.RFC3339)
+	var total int64
+	for _, table := range []string{"request_logs", "audit_logs", "reward_logs"} {
+		result, err := s.db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, table), cutoff)
+		if err != nil {
+			return total, fmt.Errorf("prune %s: %w", table, err)
+		}
+		n, _ := result.RowsAffected()
+		total += n
+	}
+	return total, nil
 }
 
 func (s *SQLiteStore) GetRewardSummary(ctx context.Context) ([]RewardSummary, error) {

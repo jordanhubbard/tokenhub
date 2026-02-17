@@ -272,6 +272,113 @@ func TestMiddleware_ResponseBodyAndStatusPreserved(t *testing.T) {
 	}
 }
 
+// TestMiddleware_ServerErrorNotCached verifies that a 5xx response is NOT
+// cached. A retry with the same idempotency key should invoke the handler
+// again so the request can succeed on a subsequent attempt.
+func TestMiddleware_ServerErrorNotCached(t *testing.T) {
+	c := New(time.Minute, 100)
+	defer c.Stop()
+
+	var callCount int
+	handler := Middleware(c)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			// First call: simulate a transient server error.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"upstream unavailable"}`))
+			return
+		}
+		// Second call: succeed.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+
+	// First request -- returns 502.
+	req1 := httptest.NewRequest(http.MethodPost, "/v1/tokens", nil)
+	req1.Header.Set("Idempotency-Key", "err-key-001")
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	if callCount != 1 {
+		t.Fatalf("expected handler called once, got %d", callCount)
+	}
+	if rec1.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d", rec1.Code)
+	}
+
+	// The 502 response must NOT be cached.
+	if _, ok := c.Get("err-key-001"); ok {
+		t.Fatal("5xx response should not be cached")
+	}
+
+	// Retry with the same key -- handler must be invoked again.
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/tokens", nil)
+	req2.Header.Set("Idempotency-Key", "err-key-001")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	if callCount != 2 {
+		t.Fatalf("expected handler called again on retry, got %d calls", callCount)
+	}
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 on retry, got %d", rec2.Code)
+	}
+	body2, _ := io.ReadAll(rec2.Result().Body)
+	if string(body2) != `{"status":"ok"}` {
+		t.Fatalf("unexpected body on retry: %s", body2)
+	}
+	if rec2.Header().Get("Idempotency-Replay") != "" {
+		t.Fatal("retry should not have Idempotency-Replay header (not a cache hit)")
+	}
+}
+
+// TestMiddleware_ClientErrorIsCached verifies that a 4xx response IS cached.
+// Client errors are deterministic -- retrying the same bad request will
+// produce the same error, so caching is correct.
+func TestMiddleware_ClientErrorIsCached(t *testing.T) {
+	c := New(time.Minute, 100)
+	defer c.Stop()
+
+	var callCount int
+	handler := Middleware(c)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid input"}`))
+	}))
+
+	// First request -- returns 400.
+	req1 := httptest.NewRequest(http.MethodPost, "/v1/tokens", nil)
+	req1.Header.Set("Idempotency-Key", "client-err-001")
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	if callCount != 1 {
+		t.Fatalf("expected handler called once, got %d", callCount)
+	}
+	if rec1.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec1.Code)
+	}
+
+	// Second request with same key -- should return cached 400.
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/tokens", nil)
+	req2.Header.Set("Idempotency-Key", "client-err-001")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	if callCount != 1 {
+		t.Fatalf("expected handler NOT called again for cached 4xx, got %d", callCount)
+	}
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("expected cached 400, got %d", rec2.Code)
+	}
+	if rec2.Header().Get("Idempotency-Replay") != "true" {
+		t.Fatal("replayed 4xx response should have Idempotency-Replay: true")
+	}
+}
+
 // TestMiddleware_ConcurrentRequestsSameKey verifies that concurrent requests
 // sharing the same idempotency key do not race and that subsequent replays
 // return the cached response. Run with -race to detect data races.

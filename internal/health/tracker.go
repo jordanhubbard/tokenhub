@@ -3,6 +3,8 @@ package health
 import (
 	"sync"
 	"time"
+
+	"github.com/jordanhubbard/tokenhub/internal/events"
 )
 
 // State represents the health state of a provider.
@@ -49,26 +51,43 @@ func DefaultConfig() TrackerConfig {
 
 // Tracker tracks runtime health of all providers.
 type Tracker struct {
-	cfg TrackerConfig
+	cfg      TrackerConfig
+	EventBus *events.Bus
 
 	mu    sync.RWMutex
 	stats map[string]*Stats
 }
 
+// TrackerOption configures optional Tracker behaviour.
+type TrackerOption func(*Tracker)
+
+// WithEventBus attaches an event bus to the tracker so that health state
+// transitions are published as EventHealthChange events.
+func WithEventBus(bus *events.Bus) TrackerOption {
+	return func(t *Tracker) {
+		t.EventBus = bus
+	}
+}
+
 // NewTracker creates a health tracker with the given config.
-func NewTracker(cfg TrackerConfig) *Tracker {
-	return &Tracker{
+func NewTracker(cfg TrackerConfig, opts ...TrackerOption) *Tracker {
+	t := &Tracker{
 		cfg:   cfg,
 		stats: make(map[string]*Stats),
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 // RecordSuccess records a successful request to a provider.
 func (t *Tracker) RecordSuccess(providerID string, latencyMs float64) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	s := t.getOrCreate(providerID)
+	oldState := s.State
+
 	s.TotalRequests++
 	s.ConsecErrors = 0
 	s.LastSuccessAt = time.Now()
@@ -81,14 +100,28 @@ func (t *Tracker) RecordSuccess(providerID string, latencyMs float64) {
 	} else {
 		s.AvgLatencyMs = s.AvgLatencyMs*0.9 + latencyMs*0.1
 	}
+
+	newState := s.State
+	t.mu.Unlock()
+
+	if oldState != newState && t.EventBus != nil {
+		t.EventBus.Publish(events.Event{
+			Type:       events.EventHealthChange,
+			ProviderID: providerID,
+			OldState:   string(oldState),
+			NewState:   string(newState),
+			Reason:     "success recorded",
+		})
+	}
 }
 
 // RecordError records a failed request to a provider.
 func (t *Tracker) RecordError(providerID string, errMsg string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	s := t.getOrCreate(providerID)
+	oldState := s.State
+
 	s.TotalRequests++
 	s.TotalErrors++
 	s.ConsecErrors++
@@ -100,6 +133,19 @@ func (t *Tracker) RecordError(providerID string, errMsg string) {
 		s.CooldownUntil = time.Now().Add(t.cfg.CooldownDuration)
 	} else if s.ConsecErrors >= t.cfg.ConsecErrorsForDegraded {
 		s.State = StateDegraded
+	}
+
+	newState := s.State
+	t.mu.Unlock()
+
+	if oldState != newState && t.EventBus != nil {
+		t.EventBus.Publish(events.Event{
+			Type:       events.EventHealthChange,
+			ProviderID: providerID,
+			OldState:   string(oldState),
+			NewState:   string(newState),
+			Reason:     errMsg,
+		})
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/idempotency"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
+	"github.com/jordanhubbard/tokenhub/internal/ratelimit"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
@@ -53,6 +54,25 @@ type Dependencies struct {
 
 	// Circuit breaker for Temporal dispatch (nil when Temporal is disabled).
 	CircuitBreaker *circuitbreaker.Breaker
+
+	// Rate limiter for expensive API endpoints (nil = no rate limiting).
+	RateLimiter *ratelimit.Limiter
+}
+
+// maxRequestBodySize is the maximum allowed request body for POST/PUT/PATCH endpoints (10 MB).
+const maxRequestBodySize = 10 << 20
+
+// bodySizeLimit is a middleware that wraps the request body with
+// http.MaxBytesReader to enforce a maximum request body size.
+func bodySizeLimit(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {
@@ -107,6 +127,11 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Route("/v1", func(r chi.Router) {
+		r.Use(bodySizeLimit(maxRequestBodySize))
+		// Apply rate limiting only to expensive API endpoints, not healthz/metrics/admin.
+		if d.RateLimiter != nil {
+			r.Use(d.RateLimiter.Middleware)
+		}
 		// Apply idempotency middleware before auth so cached responses are replayed early.
 		if d.IdempotencyCache != nil {
 			r.Use(idempotency.Middleware(d.IdempotencyCache))
@@ -120,6 +145,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Route("/admin/v1", func(r chi.Router) {
+		r.Use(bodySizeLimit(maxRequestBodySize))
 		// Protect admin endpoints when an admin token is configured.
 		if d.AdminToken != "" {
 			r.Use(adminAuthMiddleware(d.AdminToken))

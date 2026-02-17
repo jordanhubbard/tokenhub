@@ -57,6 +57,7 @@ func main() {
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Router(),
+		ReadTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		WriteTimeout:      300 * time.Second, // allow long LLM streaming responses

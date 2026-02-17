@@ -64,6 +64,9 @@ type Store interface {
 	UpdateAPIKey(ctx context.Context, key APIKeyRecord) error
 	DeleteAPIKey(ctx context.Context, id string) error
 
+	// Log retention
+	PruneOldLogs(ctx context.Context, retention time.Duration) (int64, error)
+
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
 	Close() error

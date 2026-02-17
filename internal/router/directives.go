@@ -1,9 +1,22 @@
 package router
 
 import (
+	"log/slog"
 	"strconv"
 	"strings"
 )
+
+// validModes is the set of recognized orchestration modes for directive validation.
+var validModes = map[string]bool{
+	"cheap":           true,
+	"normal":          true,
+	"high_confidence": true,
+	"planning":        true,
+	"adversarial":     true,
+	"vote":            true,
+	"refine":          true,
+	"thompson":        true,
+}
 
 // maxDirectiveScan limits how far into a message we scan for directives.
 const maxDirectiveScan = 2048
@@ -85,6 +98,7 @@ func ParseDirectives(messages []Message) *Policy {
 }
 
 // applyDirectiveKV parses a single key=value token and applies it to the policy.
+// Invalid values are silently ignored (with a warning log).
 func applyDirectiveKV(p *Policy, token string) {
 	kv := strings.SplitN(token, "=", 2)
 	if len(kv) != 2 {
@@ -93,19 +107,41 @@ func applyDirectiveKV(p *Policy, token string) {
 	key, val := kv[0], kv[1]
 	switch key {
 	case "mode":
+		if !validModes[val] {
+			slog.Warn("directive: invalid mode ignored", slog.String("value", val))
+			return
+		}
 		p.Mode = val
 	case "budget":
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			p.MaxBudgetUSD = f
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return
 		}
+		if f <= 0 || f > 100.0 {
+			slog.Warn("directive: budget out of range (must be > 0 and <= 100.0)", slog.Float64("value", f))
+			return
+		}
+		p.MaxBudgetUSD = f
 	case "latency":
-		if i, err := strconv.Atoi(val); err == nil {
-			p.MaxLatencyMs = i
+		i, err := strconv.Atoi(val)
+		if err != nil {
+			return
 		}
+		if i <= 0 || i > 300000 {
+			slog.Warn("directive: latency out of range (must be > 0 and <= 300000)", slog.Int("value", i))
+			return
+		}
+		p.MaxLatencyMs = i
 	case "min_weight":
-		if i, err := strconv.Atoi(val); err == nil {
-			p.MinWeight = i
+		i, err := strconv.Atoi(val)
+		if err != nil {
+			return
 		}
+		if i < 0 || i > 1000 {
+			slog.Warn("directive: min_weight out of range (must be >= 0 and <= 1000)", slog.Int("value", i))
+			return
+		}
+		p.MinWeight = i
 	case "output_schema":
 		p.OutputSchema = val
 	}

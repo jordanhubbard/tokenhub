@@ -100,7 +100,7 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 		}, nil
 	}
 
-	tokens := EstimateTokens(input.Request)
+	tokens := router.EstimateTokens(input.Request)
 	estCost := (float64(tokens)/1000.0)*m.InputPer1K + (512.0/1000.0)*m.OutputPer1K
 
 	if a.EventBus != nil {

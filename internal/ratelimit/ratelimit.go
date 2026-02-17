@@ -3,6 +3,7 @@
 package ratelimit
 
 import (
+	"container/list"
 	"net/http"
 	"sync"
 	"time"
@@ -13,13 +14,20 @@ import (
 // Limiter is a per-IP token bucket rate limiter.
 type Limiter struct {
 	mu       sync.Mutex
-	buckets  map[string]*bucket
-	rate     int           // tokens added per interval
-	burst    int           // max tokens (bucket capacity)
-	interval time.Duration // refill interval
-	maxKeys  int           // max entries before evicting oldest
+	buckets  map[string]*list.Element // key -> list element (whose Value is *entry)
+	lru      *list.List               // front = most recently used, back = least recently used
+	rate     int                      // tokens added per interval
+	burst    int                      // max tokens (bucket capacity)
+	interval time.Duration            // refill interval
+	maxKeys  int                      // max entries before evicting LRU
 	stop     chan struct{}
 	counter  prometheus.Counter // optional: incremented on each 429
+}
+
+// entry is stored in each list element, pairing the key with its bucket.
+type entry struct {
+	key string
+	b   bucket
 }
 
 type bucket struct {
@@ -32,7 +40,8 @@ type bucket struct {
 // rejected request (pass nil to disable).
 func New(rate, burst int, interval time.Duration, opts ...Option) *Limiter {
 	l := &Limiter{
-		buckets:  make(map[string]*bucket),
+		buckets:  make(map[string]*list.Element),
+		lru:      list.New(),
 		rate:     rate,
 		burst:    burst,
 		interval: interval,
@@ -54,6 +63,13 @@ type Option func(*Limiter)
 func WithCounter(c prometheus.Counter) Option {
 	return func(l *Limiter) {
 		l.counter = c
+	}
+}
+
+// WithMaxKeys sets the maximum number of tracked keys before LRU eviction.
+func WithMaxKeys(n int) Option {
+	return func(l *Limiter) {
+		l.maxKeys = n
 	}
 }
 
@@ -81,15 +97,24 @@ func (l *Limiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	b, ok := l.buckets[key]
+	elem, ok := l.buckets[key]
 	if !ok {
-		// Evict oldest entry if at capacity.
+		// Evict LRU entry if at capacity.
 		if len(l.buckets) >= l.maxKeys {
 			l.evictOldest()
 		}
-		b = &bucket{tokens: l.burst, lastFill: time.Now()}
-		l.buckets[key] = b
+		e := &entry{
+			key: key,
+			b:   bucket{tokens: l.burst, lastFill: time.Now()},
+		}
+		elem = l.lru.PushFront(e)
+		l.buckets[key] = elem
+	} else {
+		// Move to front on access (most recently used).
+		l.lru.MoveToFront(elem)
 	}
+
+	b := &elem.Value.(*entry).b
 
 	// Refill tokens based on elapsed time.
 	elapsed := time.Since(b.lastFill)
@@ -109,22 +134,16 @@ func (l *Limiter) allow(key string) bool {
 	return true
 }
 
-// evictOldest removes the bucket with the oldest lastFill time.
+// evictOldest removes the least recently used bucket (back of the list).
 // Must be called with l.mu held.
 func (l *Limiter) evictOldest() {
-	var oldestKey string
-	var oldestTime time.Time
-	first := true
-	for k, b := range l.buckets {
-		if first || b.lastFill.Before(oldestTime) {
-			oldestKey = k
-			oldestTime = b.lastFill
-			first = false
-		}
+	back := l.lru.Back()
+	if back == nil {
+		return
 	}
-	if !first {
-		delete(l.buckets, oldestKey)
-	}
+	e := back.Value.(*entry)
+	delete(l.buckets, e.key)
+	l.lru.Remove(back)
 }
 
 // UpdateLimits changes the rate and burst parameters at runtime.
@@ -150,10 +169,15 @@ func (l *Limiter) cleanup() {
 		case <-ticker.C:
 			l.mu.Lock()
 			cutoff := time.Now().Add(-10 * time.Minute)
-			for k, b := range l.buckets {
-				if b.lastFill.Before(cutoff) {
-					delete(l.buckets, k)
+			// Walk from back (oldest) and remove stale entries.
+			for elem := l.lru.Back(); elem != nil; {
+				e := elem.Value.(*entry)
+				prev := elem.Prev()
+				if e.b.lastFill.Before(cutoff) {
+					delete(l.buckets, e.key)
+					l.lru.Remove(elem)
 				}
+				elem = prev
 			}
 			l.mu.Unlock()
 		case <-l.stop:

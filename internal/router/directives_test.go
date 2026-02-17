@@ -233,6 +233,145 @@ func TestParseDirectivesBlockOutputSchema(t *testing.T) {
 	}
 }
 
+// --- Directive validation tests ---
+
+func TestDirectiveValidModesApplied(t *testing.T) {
+	validModes := []string{"cheap", "normal", "high_confidence", "planning", "adversarial", "vote", "refine", "thompson"}
+	for _, mode := range validModes {
+		msgs := []Message{
+			{Role: "user", Content: "@@tokenhub mode=" + mode + "\nHello"},
+		}
+		p := ParseDirectives(msgs)
+		if p == nil {
+			t.Fatalf("expected policy for valid mode %q", mode)
+		}
+		if p.Mode != mode {
+			t.Errorf("expected mode=%s, got %s", mode, p.Mode)
+		}
+	}
+}
+
+func TestDirectiveInvalidModeRejected(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub mode=hacker_mode budget=0.01\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy (budget is still valid)")
+	}
+	if p.Mode != "" {
+		t.Errorf("expected mode to be empty (rejected), got %q", p.Mode)
+	}
+	if p.MaxBudgetUSD != 0.01 {
+		t.Errorf("expected budget=0.01 to still be applied, got %f", p.MaxBudgetUSD)
+	}
+}
+
+func TestDirectiveBudgetOutOfRange(t *testing.T) {
+	// Budget too high (> 100.0).
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub budget=999999 mode=normal\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy (mode is still valid)")
+	}
+	if p.MaxBudgetUSD != 0 {
+		t.Errorf("expected budget to be rejected (0), got %f", p.MaxBudgetUSD)
+	}
+	if p.Mode != "normal" {
+		t.Errorf("expected mode=normal to still be applied, got %s", p.Mode)
+	}
+}
+
+func TestDirectiveBudgetZeroRejected(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub budget=0\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy")
+	}
+	if p.MaxBudgetUSD != 0 {
+		t.Errorf("expected budget=0 to be rejected, got %f", p.MaxBudgetUSD)
+	}
+}
+
+func TestDirectiveBudgetNegativeRejected(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub budget=-5.0\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy")
+	}
+	if p.MaxBudgetUSD != 0 {
+		t.Errorf("expected negative budget to be rejected, got %f", p.MaxBudgetUSD)
+	}
+}
+
+func TestDirectiveLatencyOutOfRange(t *testing.T) {
+	// Latency too high (> 300000).
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub latency=999999\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy")
+	}
+	if p.MaxLatencyMs != 0 {
+		t.Errorf("expected latency to be rejected (0), got %d", p.MaxLatencyMs)
+	}
+}
+
+func TestDirectiveLatencyZeroRejected(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub latency=0\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy")
+	}
+	if p.MaxLatencyMs != 0 {
+		t.Errorf("expected latency=0 to be rejected, got %d", p.MaxLatencyMs)
+	}
+}
+
+func TestDirectiveMinWeightNegativeRejected(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub min_weight=-1\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy")
+	}
+	if p.MinWeight != 0 {
+		t.Errorf("expected negative min_weight to be rejected, got %d", p.MinWeight)
+	}
+}
+
+func TestDirectiveValidValuesApplied(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "@@tokenhub mode=normal budget=50.0 latency=60000 min_weight=7\nHello"},
+	}
+	p := ParseDirectives(msgs)
+	if p == nil {
+		t.Fatal("expected non-nil policy")
+	}
+	if p.Mode != "normal" {
+		t.Errorf("expected mode=normal, got %s", p.Mode)
+	}
+	if p.MaxBudgetUSD != 50.0 {
+		t.Errorf("expected budget=50.0, got %f", p.MaxBudgetUSD)
+	}
+	if p.MaxLatencyMs != 60000 {
+		t.Errorf("expected latency=60000, got %d", p.MaxLatencyMs)
+	}
+	if p.MinWeight != 7 {
+		t.Errorf("expected min_weight=7, got %d", p.MinWeight)
+	}
+}
+
 func TestSingleLineStillWorksAfterBlockSupport(t *testing.T) {
 	// Verify that existing single-line behavior is fully preserved.
 	msgs := []Message{

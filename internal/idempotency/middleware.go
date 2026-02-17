@@ -38,6 +38,13 @@ func Middleware(cache *Cache) func(http.Handler) http.Handler {
 			}
 			next.ServeHTTP(rec, r)
 
+			// Only cache responses with status < 500. Server errors (5xx)
+			// are transient and should not be cached so the client can
+			// retry the same idempotency key successfully.
+			if rec.statusCode >= 500 {
+				return
+			}
+
 			// Cache the captured response.
 			hdrs := make(map[string]string)
 			for k, v := range rec.Header() {

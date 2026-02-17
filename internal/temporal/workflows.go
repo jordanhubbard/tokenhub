@@ -55,7 +55,7 @@ func ChatWorkflow(ctx workflow.Context, input ChatInput) (ChatOutput, error) {
 		}
 
 		// Step 3: Classify error and escalate.
-		tokens := EstimateTokens(input.Request)
+		tokens := router.EstimateTokens(input.Request)
 
 		var escOutput EscalateOutput
 		escInput := EscalateInput{
@@ -168,7 +168,7 @@ func adversarialWorkflow(ctx workflow.Context, input OrchestrationInput, start t
 	planReq := router.Request{
 		Messages: []router.Message{
 			{Role: "system", Content: "You are a planning assistant. Generate a detailed plan to address the user's request."},
-			{Role: "user", Content: messagesContent(input.Request.Messages)},
+			{Role: "user", Content: router.MessagesContent(input.Request.Messages)},
 		},
 	}
 	planInput := ChatInput{
@@ -185,7 +185,7 @@ func adversarialWorkflow(ctx workflow.Context, input OrchestrationInput, start t
 	if err != nil {
 		return ChatOutput{Error: "adversarial plan phase: " + err.Error()}, err
 	}
-	plan := extractContentFromRaw(planOutput.Response)
+	plan := router.ExtractContent(planOutput.Response)
 	totalCost := planOutput.Decision.EstimatedCostUSD
 
 	var critique, refinedPlan string
@@ -196,7 +196,7 @@ func adversarialWorkflow(ctx workflow.Context, input OrchestrationInput, start t
 		critiqueReq := router.Request{
 			Messages: []router.Message{
 				{Role: "system", Content: "You are a critical reviewer. Analyze the plan below and provide constructive criticism."},
-				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nProposed plan:\n%s\n\nProvide your critique:", messagesContent(input.Request.Messages), plan)},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nProposed plan:\n%s\n\nProvide your critique:", router.MessagesContent(input.Request.Messages), plan)},
 			},
 		}
 		critiqueInput := ChatInput{
@@ -213,14 +213,14 @@ func adversarialWorkflow(ctx workflow.Context, input OrchestrationInput, start t
 		if err != nil {
 			return ChatOutput{Error: "adversarial critique phase: " + err.Error()}, err
 		}
-		critique = extractContentFromRaw(critiqueOutput.Response)
+		critique = router.ExtractContent(critiqueOutput.Response)
 		totalCost += critiqueOutput.Decision.EstimatedCostUSD
 
 		// Phase 3: Refine.
 		refineReq := router.Request{
 			Messages: []router.Message{
 				{Role: "system", Content: "You are a planning assistant. Refine your plan based on the critique provided."},
-				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nYour plan:\n%s\n\nCritique:\n%s\n\nProvide a refined plan:", messagesContent(input.Request.Messages), plan, critique)},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nYour plan:\n%s\n\nCritique:\n%s\n\nProvide a refined plan:", router.MessagesContent(input.Request.Messages), plan, critique)},
 			},
 		}
 		refineInput := ChatInput{
@@ -237,14 +237,14 @@ func adversarialWorkflow(ctx workflow.Context, input OrchestrationInput, start t
 		if err != nil {
 			return ChatOutput{Error: "adversarial refine phase: " + err.Error()}, err
 		}
-		refinedPlan = extractContentFromRaw(refineOutput.Response)
+		refinedPlan = router.ExtractContent(refineOutput.Response)
 		plan = refinedPlan
 		lastDecision = refineOutput.Decision
 		totalCost += refineOutput.Decision.EstimatedCostUSD
 	}
 
 	result := map[string]any{
-		"initial_plan": extractContentFromRaw(planOutput.Response),
+		"initial_plan": router.ExtractContent(planOutput.Response),
 		"critique":     critique,
 		"refined_plan": refinedPlan,
 	}
@@ -298,7 +298,7 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 		results = append(results, voteResult{
 			modelID:    out.Decision.ModelID,
 			providerID: out.Decision.ProviderID,
-			content:    extractContentFromRaw(out.Response),
+			content:    router.ExtractContent(out.Response),
 			cost:       out.Decision.EstimatedCostUSD,
 		})
 		totalCost += out.Decision.EstimatedCostUSD
@@ -337,7 +337,7 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 	judgeReq := router.Request{
 		Messages: []router.Message{
 			{Role: "system", Content: "You are a judge. Given multiple AI responses to the same prompt, select the best one. Reply with ONLY the number (1-based) of the best response."},
-			{Role: "user", Content: fmt.Sprintf("Original prompt: %s\n\nResponses:%s\n\nWhich response number is best?", messagesContent(input.Request.Messages), responseSummary)},
+			{Role: "user", Content: fmt.Sprintf("Original prompt: %s\n\nResponses:%s\n\nWhich response number is best?", router.MessagesContent(input.Request.Messages), responseSummary)},
 		},
 	}
 	if input.Directive.ReviewModelID != "" {
@@ -372,7 +372,7 @@ func voteWorkflow(ctx workflow.Context, input OrchestrationInput, start time.Tim
 
 	// Parse judge selection.
 	selectedIdx := 0
-	judgeContent := extractContentFromRaw(judgeOutput.Response)
+	judgeContent := router.ExtractContent(judgeOutput.Response)
 	for i := len(results); i >= 1; i-- {
 		if containsDigit(judgeContent, i) {
 			selectedIdx = i - 1
@@ -428,7 +428,7 @@ func refineWorkflow(ctx workflow.Context, input OrchestrationInput, start time.T
 		return ChatOutput{Error: "refine initial phase: " + err.Error()}, err
 	}
 
-	currentContent := extractContentFromRaw(initialOutput.Response)
+	currentContent := router.ExtractContent(initialOutput.Response)
 	totalCost := initialOutput.Decision.EstimatedCostUSD
 	lastDecision := initialOutput.Decision
 
@@ -437,7 +437,7 @@ func refineWorkflow(ctx workflow.Context, input OrchestrationInput, start time.T
 		refineReq := router.Request{
 			Messages: []router.Message{
 				{Role: "system", Content: "Review and improve the following response. Fix any errors, add missing details, and improve clarity."},
-				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nCurrent response:\n%s\n\nProvide an improved version:", messagesContent(input.Request.Messages), currentContent)},
+				{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nCurrent response:\n%s\n\nProvide an improved version:", router.MessagesContent(input.Request.Messages), currentContent)},
 			},
 		}
 
@@ -454,7 +454,7 @@ func refineWorkflow(ctx workflow.Context, input OrchestrationInput, start time.T
 			break // return best so far
 		}
 
-		currentContent = extractContentFromRaw(refineOutput.Response)
+		currentContent = router.ExtractContent(refineOutput.Response)
 		lastDecision = refineOutput.Decision
 		totalCost += refineOutput.Decision.EstimatedCostUSD
 	}
@@ -476,43 +476,6 @@ func refineWorkflow(ctx workflow.Context, input OrchestrationInput, start time.T
 		Response:  resultJSON,
 		LatencyMs: workflow.Now(ctx).Sub(start).Milliseconds(),
 	}, nil
-}
-
-// Helper functions.
-
-func messagesContent(msgs []router.Message) string {
-	var s string
-	for _, m := range msgs {
-		if m.Role == "user" {
-			if s != "" {
-				s += "\n"
-			}
-			s += m.Content
-		}
-	}
-	return s
-}
-
-func extractContentFromRaw(raw json.RawMessage) string {
-	var oai struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if json.Unmarshal(raw, &oai) == nil && len(oai.Choices) > 0 {
-		return oai.Choices[0].Message.Content
-	}
-	var ant struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(raw, &ant) == nil && len(ant.Content) > 0 {
-		return ant.Content[0].Text
-	}
-	return string(raw)
 }
 
 func containsDigit(s string, n int) bool {

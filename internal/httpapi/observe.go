@@ -144,4 +144,12 @@ func recordObservability(d Dependencies, p observeParams) {
 		d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(p.LatencyMs)})
 		d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: p.CostUSD})
 	}
+
+	// --- Budget cache invalidation ---
+	// After logging costs, invalidate the budget cache for this API key so
+	// the next budget check reflects the updated spend immediately instead
+	// of relying on the 30-second TTL.
+	if d.BudgetChecker != nil && p.APIKeyID != "" {
+		d.BudgetChecker.InvalidateCache(p.APIKeyID)
+	}
 }

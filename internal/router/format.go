@@ -15,7 +15,7 @@ func ShapeOutput(resp ProviderResponse, fmt OutputFormat) ProviderResponse {
 		return resp // no shaping requested
 	}
 
-	content := extractContent(resp)
+	content := ExtractContent(resp)
 	if content == "" {
 		return resp
 	}

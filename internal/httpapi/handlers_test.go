@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -1205,14 +1206,19 @@ func TestProvidersListHandler(t *testing.T) {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 
-	var result json.RawMessage
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode: %v", err)
 	}
-	// Empty database returns either [] or null; both are valid.
-	s := string(result)
-	if s != "null" && s != "[]" {
-		t.Errorf("expected empty array or null, got %s", s)
+	items, ok := result["items"].([]any)
+	if !ok {
+		t.Fatal("expected items array in response")
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty items, got %d", len(items))
+	}
+	if result["total"] != float64(0) {
+		t.Errorf("expected total=0, got %v", result["total"])
 	}
 }
 
@@ -1271,14 +1277,19 @@ func TestModelsListHandler(t *testing.T) {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 
-	var result json.RawMessage
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode: %v", err)
 	}
-	// Empty database returns either [] or null; both are valid.
-	s := string(result)
-	if s != "null" && s != "[]" {
-		t.Errorf("expected empty array or null, got %s", s)
+	items, ok := result["items"].([]any)
+	if !ok {
+		t.Fatal("expected items array in response")
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty items, got %d", len(items))
+	}
+	if result["total"] != float64(0) {
+		t.Errorf("expected total=0, got %v", result["total"])
 	}
 }
 
@@ -1432,5 +1443,105 @@ func TestRewardsHandler(t *testing.T) {
 	}
 	if _, ok := result["rewards"]; !ok {
 		t.Error("expected 'rewards' key in rewards response")
+	}
+}
+
+func TestModelsListPagination(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
+	eng.RegisterAdapter(mock)
+
+	// Create 5 models via the admin API.
+	for i := range 5 {
+		model := router.Model{
+			ID: fmt.Sprintf("model-%d", i), ProviderID: "p1",
+			Weight: 5, MaxContextTokens: 4096, Enabled: true,
+		}
+		body, _ := json.Marshal(model)
+		resp, _ := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
+		_ = resp.Body.Close()
+	}
+
+	// Fetch with limit=2, offset=1.
+	resp, err := http.Get(ts.URL + "/admin/v1/models?limit=2&offset=1")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	items, ok := result["items"].([]any)
+	if !ok {
+		t.Fatal("expected items array")
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+	if result["total"] != float64(5) {
+		t.Errorf("expected total=5, got %v", result["total"])
+	}
+	if result["limit"] != float64(2) {
+		t.Errorf("expected limit=2, got %v", result["limit"])
+	}
+	if result["offset"] != float64(1) {
+		t.Errorf("expected offset=1, got %v", result["offset"])
+	}
+
+	// Without pagination params, should return all items.
+	resp2, err := http.Get(ts.URL + "/admin/v1/models")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+
+	var result2 map[string]any
+	_ = json.NewDecoder(resp2.Body).Decode(&result2)
+	items2, _ := result2["items"].([]any)
+	if len(items2) != 5 {
+		t.Errorf("expected all 5 items without pagination, got %d", len(items2))
+	}
+}
+
+func TestAPIKeysListPagination(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// The test setup already creates 1 API key. Fetch with limit and offset.
+	resp, err := http.Get(ts.URL + "/admin/v1/apikeys?limit=10&offset=0")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	if _, ok := result["keys"]; !ok {
+		t.Fatal("expected keys in response")
+	}
+	if _, ok := result["total"]; !ok {
+		t.Fatal("expected total in response")
+	}
+	if _, ok := result["limit"]; !ok {
+		t.Fatal("expected limit in response")
+	}
+	if _, ok := result["offset"]; !ok {
+		t.Fatal("expected offset in response")
 	}
 }

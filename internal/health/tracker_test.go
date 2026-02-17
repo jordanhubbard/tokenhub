@@ -3,6 +3,8 @@ package health
 import (
 	"testing"
 	"time"
+
+	"github.com/jordanhubbard/tokenhub/internal/events"
 )
 
 func TestRecordSuccess(t *testing.T) {
@@ -132,5 +134,73 @@ func TestErrorCountTracking(t *testing.T) {
 	}
 	if s.TotalErrors != 2 {
 		t.Errorf("expected 2 total errors, got %d", s.TotalErrors)
+	}
+}
+
+func TestHealthChangeEventsPublished(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(16)
+	defer bus.Unsubscribe(sub)
+
+	cfg := TrackerConfig{
+		ConsecErrorsForDegraded: 2,
+		ConsecErrorsForDown:     4,
+		CooldownDuration:        10 * time.Millisecond,
+	}
+	tr := NewTracker(cfg, WithEventBus(bus))
+
+	// First error: still healthy (1 < 2), no transition event.
+	tr.RecordError("p1", "err1")
+	select {
+	case e := <-sub.C:
+		t.Fatalf("unexpected event after first error: %+v", e)
+	default:
+	}
+
+	// Second error: healthy -> degraded, expect event.
+	tr.RecordError("p1", "err2")
+	select {
+	case e := <-sub.C:
+		if e.Type != events.EventHealthChange {
+			t.Errorf("expected EventHealthChange, got %s", e.Type)
+		}
+		if e.OldState != string(StateHealthy) {
+			t.Errorf("expected old state healthy, got %s", e.OldState)
+		}
+		if e.NewState != string(StateDegraded) {
+			t.Errorf("expected new state degraded, got %s", e.NewState)
+		}
+		if e.ProviderID != "p1" {
+			t.Errorf("expected provider p1, got %s", e.ProviderID)
+		}
+	default:
+		t.Fatal("expected health_change event on degraded transition")
+	}
+
+	// Third + fourth errors: degraded -> down, expect event.
+	tr.RecordError("p1", "err3")
+	tr.RecordError("p1", "err4")
+	select {
+	case e := <-sub.C:
+		if e.NewState != string(StateDown) {
+			t.Errorf("expected new state down, got %s", e.NewState)
+		}
+	default:
+		t.Fatal("expected health_change event on down transition")
+	}
+
+	// Wait for cooldown, then success: down -> healthy.
+	time.Sleep(15 * time.Millisecond)
+	tr.RecordSuccess("p1", 50)
+	select {
+	case e := <-sub.C:
+		if e.OldState != string(StateDown) {
+			t.Errorf("expected old state down, got %s", e.OldState)
+		}
+		if e.NewState != string(StateHealthy) {
+			t.Errorf("expected new state healthy, got %s", e.NewState)
+		}
+	default:
+		t.Fatal("expected health_change event on recovery transition")
 	}
 }

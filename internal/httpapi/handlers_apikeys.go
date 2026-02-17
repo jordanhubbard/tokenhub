@@ -104,8 +104,19 @@ func APIKeysListHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if keys == nil {
+			keys = []store.APIKeyRecord{}
+		}
 		// KeyHash is already excluded via json:"-" tag.
-		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+		total := len(keys)
+		limit, offset := parsePagination(r)
+		keys = paginateSlice(keys, offset, limit)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"keys":   keys,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
 	}
 }
 

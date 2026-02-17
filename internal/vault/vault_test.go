@@ -303,6 +303,35 @@ func TestRotatePassword(t *testing.T) {
 	}
 }
 
+func TestRotatePasswordWrongOldPassword(t *testing.T) {
+	v := unlocked(t)
+
+	// Store a value so rotation has work to do.
+	if err := v.Set("key1", "value1"); err != nil {
+		t.Fatalf("Set key1: %v", err)
+	}
+
+	wrongOldPassword := []byte("wrong-password-definitely!!")
+	newPassword := []byte("new-strong-password!!")
+
+	err := v.RotatePassword(wrongOldPassword, newPassword)
+	if err == nil {
+		t.Fatal("expected error when old password is wrong")
+	}
+	if err.Error() != "old password does not match" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	// Verify the vault is still usable with the original key (rotation was rejected).
+	val, err := v.Get("key1")
+	if err != nil {
+		t.Fatalf("Get key1 after failed rotation: %v", err)
+	}
+	if val != "value1" {
+		t.Errorf("key1 = %q, want %q", val, "value1")
+	}
+}
+
 func TestRotatePasswordTooShort(t *testing.T) {
 	v := unlocked(t)
 

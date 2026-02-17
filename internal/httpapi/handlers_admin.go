@@ -179,7 +179,18 @@ func ProvidersListHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(providers)
+		if providers == nil {
+			providers = []store.ProviderRecord{}
+		}
+		total := len(providers)
+		limit, offset := parsePagination(r)
+		providers = paginateSlice(providers, offset, limit)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items":  providers,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
 	}
 }
 
@@ -275,7 +286,18 @@ func ModelsListHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(models)
+		if models == nil {
+			models = []store.ModelRecord{}
+		}
+		total := len(models)
+		limit, offset := parsePagination(r)
+		models = paginateSlice(models, offset, limit)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items":  models,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
 	}
 }
 
@@ -502,8 +524,14 @@ func RequestLogsHandler(d Dependencies) http.HandlerFunc {
 func EngineModelsHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		models := d.Engine.ListModels()
+		total := len(models)
+		limit, offset := parsePagination(r)
+		models = paginateSlice(models, offset, limit)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"models":   models,
+			"total":    total,
+			"limit":    limit,
+			"offset":   offset,
 			"adapters": d.Engine.ListAdapterIDs(),
 		})
 	}
@@ -513,6 +541,39 @@ func parseIntParam(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+// parsePagination extracts limit and offset from query parameters.
+// Defaults: limit=10000 (effectively all), offset=0. Max limit=1000 if explicitly set.
+func parsePagination(r *http.Request) (limit, offset int) {
+	limit = 10000
+	offset = 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := parseIntParam(v); err == nil && n > 0 {
+			limit = n
+			if limit > 1000 {
+				limit = 1000
+			}
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := parseIntParam(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	return limit, offset
+}
+
+// paginateSlice applies offset and limit to a slice.
+func paginateSlice[T any](items []T, offset, limit int) []T {
+	if offset >= len(items) {
+		return []T{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
 }
 
 // AuditLogsHandler handles GET /admin/v1/audit?limit=N&offset=N

@@ -6,18 +6,6 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/router"
 )
 
-// EstimateTokens returns a rough token count for a request.
-func EstimateTokens(req router.Request) int {
-	if req.EstimatedInputTokens > 0 {
-		return req.EstimatedInputTokens
-	}
-	tokens := 0
-	for _, msg := range req.Messages {
-		tokens += len(msg.Content) / 4
-	}
-	return tokens
-}
-
 // ChatInput is the input for the ChatWorkflow.
 type ChatInput struct {
 	RequestID string         `json:"request_id"`

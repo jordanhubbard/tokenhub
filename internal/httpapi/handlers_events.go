@@ -19,7 +19,6 @@ func SSEHandler(bus *events.Bus) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 
 		sub := bus.Subscribe(64)
 		defer bus.Unsubscribe(sub)

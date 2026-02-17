@@ -31,11 +31,13 @@ type Request struct {
 	Stream bool `json:"stream,omitempty"`
 }
 
+// Message represents a single chat message with a role and content.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
+// Policy specifies routing constraints such as mode, budget, latency, and quality.
 type Policy struct {
 	Mode         string
 	MaxBudgetUSD float64
@@ -44,6 +46,7 @@ type Policy struct {
 	OutputSchema string
 }
 
+// Decision captures the routing outcome: which model and provider were selected.
 type Decision struct {
 	ModelID           string
 	ProviderID        string
@@ -51,6 +54,7 @@ type Decision struct {
 	Reason            string
 }
 
+// Model describes a registered LLM with its provider, pricing, and capabilities.
 type Model struct {
 	ID              string  `json:"id"`
 	ProviderID       string  `json:"provider_id"`
@@ -61,6 +65,7 @@ type Model struct {
 	Enabled          bool    `json:"enabled"`
 }
 
+// OrchestrationDirective configures multi-model orchestration (adversarial, vote, refine).
 type OrchestrationDirective struct {
 	Mode string `json:"mode"` // planning|adversarial|vote|refine
 

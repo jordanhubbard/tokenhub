@@ -3,7 +3,9 @@ kind: Deployment
 metadata:
   name: tokenhub
 spec:
-  replicas: 2
+  # SQLite is single-writer; only one replica is supported.
+  # For horizontal scaling, switch to a proper database backend (e.g. PostgreSQL).
+  replicas: 1
   selector:
     matchLabels:
       app: tokenhub

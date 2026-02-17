@@ -31,6 +31,7 @@ func TestWriteAndQuery(t *testing.T) {
 	s.Write(Point{Timestamp: now.Add(-2 * time.Minute), Metric: "latency", ModelID: "m1", Value: 100})
 	s.Write(Point{Timestamp: now.Add(-1 * time.Minute), Metric: "latency", ModelID: "m1", Value: 150})
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m1", Value: 200})
+	s.Flush()
 
 	series, err := s.Query(context.Background(), QueryParams{Metric: "latency"})
 	if err != nil {
@@ -59,6 +60,7 @@ func TestQueryWithTimeRange(t *testing.T) {
 	s.Write(Point{Timestamp: now.Add(-10 * time.Minute), Metric: "cost", Value: 0.01})
 	s.Write(Point{Timestamp: now.Add(-5 * time.Minute), Metric: "cost", Value: 0.02})
 	s.Write(Point{Timestamp: now, Metric: "cost", Value: 0.03})
+	s.Flush()
 
 	series, err := s.Query(context.Background(), QueryParams{
 		Metric: "cost",
@@ -86,6 +88,7 @@ func TestQueryGroupsByModelAndProvider(t *testing.T) {
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m1", ProviderID: "p1", Value: 100})
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m2", ProviderID: "p2", Value: 200})
+	s.Flush()
 
 	series, err := s.Query(context.Background(), QueryParams{Metric: "latency"})
 	if err != nil {
@@ -107,6 +110,7 @@ func TestQueryFilterByModel(t *testing.T) {
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m1", Value: 100})
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m2", Value: 200})
+	s.Flush()
 
 	series, err := s.Query(context.Background(), QueryParams{Metric: "latency", ModelID: "m1"})
 	if err != nil {
@@ -138,6 +142,7 @@ func TestDownsample(t *testing.T) {
 			Value:     float64(100 + i*10),
 		})
 	}
+	s.Flush()
 
 	series, err := s.Query(context.Background(), QueryParams{
 		Metric: "latency",
@@ -171,6 +176,7 @@ func TestPrune(t *testing.T) {
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now.Add(-2 * time.Hour), Metric: "old", Value: 1})
 	s.Write(Point{Timestamp: now, Metric: "new", Value: 2})
+	s.Flush()
 
 	deleted, err := s.Prune(context.Background())
 	if err != nil {
@@ -201,6 +207,7 @@ func TestMetrics(t *testing.T) {
 	s.Write(Point{Timestamp: now, Metric: "latency", Value: 100})
 	s.Write(Point{Timestamp: now, Metric: "cost", Value: 0.01})
 	s.Write(Point{Timestamp: now, Metric: "latency", Value: 200})
+	s.Flush()
 
 	metrics, err := s.Metrics(context.Background())
 	if err != nil {
@@ -223,12 +230,14 @@ func TestBufferFlush(t *testing.T) {
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now, Metric: "test", Value: 1})
 	s.Write(Point{Timestamp: now, Metric: "test", Value: 2})
-	// Buffer not yet flushed - query forces flush.
+
+	// Buffer not yet auto-flushed (under bufMax); explicit Flush() required.
+	s.Flush()
 	series, err := s.Query(context.Background(), QueryParams{Metric: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(series) == 0 || len(series[0].Points) != 2 {
-		t.Error("expected 2 points after query-triggered flush")
+		t.Error("expected 2 points after explicit flush")
 	}
 }

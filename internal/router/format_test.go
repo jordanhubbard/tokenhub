@@ -18,7 +18,7 @@ func TestShapeOutputStripThink(t *testing.T) {
 	resp := ProviderResponse(`{"choices":[{"message":{"content":"<think>internal reasoning</think>\nFinal answer"}}]}`)
 	result := ShapeOutput(resp, OutputFormat{StripThink: true})
 
-	content := extractContent(result)
+	content := ExtractContent(result)
 	if strings.Contains(content, "<think>") {
 		t.Error("think block should be stripped")
 	}
@@ -36,7 +36,7 @@ func TestShapeOutputMaxTokens(t *testing.T) {
 	})
 	result := ShapeOutput(resp, OutputFormat{MaxTokens: 100}) // ~400 chars
 
-	content := extractContent(result)
+	content := ExtractContent(result)
 	if len(content) > 410 { // 400 chars + "..."
 		t.Errorf("expected truncated content, got %d chars", len(content))
 	}
@@ -49,7 +49,7 @@ func TestShapeOutputJSON(t *testing.T) {
 	resp := ProviderResponse(`{"choices":[{"message":{"content":"Here is the result:\n` + "```json\n{\"key\":\"value\"}\n```" + `"}}]}`)
 	result := ShapeOutput(resp, OutputFormat{Type: "json"})
 
-	content := extractContent(result)
+	content := ExtractContent(result)
 	var parsed map[string]string
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		t.Errorf("expected valid JSON, got error: %v, content: %s", err, content)
@@ -63,7 +63,7 @@ func TestShapeOutputText(t *testing.T) {
 	resp := ProviderResponse(`{"choices":[{"message":{"content":"# Hello\n\n**bold** and *italic*"}}]}`)
 	result := ShapeOutput(resp, OutputFormat{Type: "text"})
 
-	content := extractContent(result)
+	content := ExtractContent(result)
 	if strings.Contains(content, "#") {
 		t.Error("markdown headers should be stripped")
 	}
