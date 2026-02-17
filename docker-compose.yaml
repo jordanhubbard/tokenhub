@@ -67,7 +67,10 @@ services:
           memory: 128M
           cpus: "0.5"
 
-  # Minimal vLLM placeholders (replace with your actual vLLM deployments)
+  # PLACEHOLDER: vLLM service for development only
+  # This uses nginx:alpine as a mock service for local development.
+  # In production, replace this with an actual vLLM instance running a real language model.
+  # For example: image: vllm/vllm-openai:latest
   vllm-1:
     image: nginx:alpine
     ports:

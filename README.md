@@ -1,171 +1,367 @@
 # TokenHub
 
-TokenHub is a containerized **LLM routing proxy** that routes, arbitrates, and orchestrates requests across multiple providers (OpenAI, Anthropic, vLLM) to optimize cost, latency, reliability, and model quality.
+An LLM routing proxy that routes, arbitrates, and orchestrates requests across multiple providers to optimize cost, latency, reliability, and model quality.
 
-## Features
+## Feature Highlights
 
-**Routing Engine**
-- Weighted model selection with budget, latency, and quality constraints
-- Automatic escalation and failover across providers
-- Thompson Sampling bandit policy for RL-based model selection
-- In-band directive parsing (`@@tokenhub` annotations in messages)
+- **Multi-objective routing engine** -- weighted model selection balancing cost, latency, failure rate, and model quality across OpenAI, Anthropic, and vLLM providers
+- **Thompson Sampling** -- contextual bandit (Beta-distributed) policy for reinforcement-learning-based model selection, with automatic parameter refresh from reward logs
+- **Orchestration modes** -- adversarial (plan/critique/refine), vote (fan-out to N models with judge), and refine (iterative self-improvement)
+- **Encrypted credential vault** -- AES-256-GCM with Argon2id key derivation, auto-lock on inactivity, and password rotation
+- **API key management** -- generate, rotate, revoke, scope-based access control (`chat`, `plan`), per-key monthly budget enforcement
+- **Temporal workflow engine** -- optional durable execution with circuit breaker fallback to direct engine calls
+- **SSE streaming** -- native server-sent event streaming through all provider adapters
+- **Admin UI** -- single-page dashboard with real-time flow graph (Cytoscape.js), cost/latency charts (D3.js), model leaderboard, and management panels
+- **In-band directives** -- `@@tokenhub` annotations in messages to override routing policy per-request
+- **Output shaping** -- response format control (json/markdown/text), `<think>` block stripping, token truncation, and JSON schema validation
+- **Observability** -- Prometheus metrics, embedded TSDB, structured logging, health tracking, SSE event bus, audit logs, and request logs
+- **Idempotency** -- automatic request deduplication via `Idempotency-Key` header
+- **Hot reload** -- send SIGHUP to reload configuration without restarting
 
-**Orchestration**
-- Adversarial mode: plan, critique, refine loops
-- Vote mode: fan-out to N models, judge selects best
-- Refine mode: iterative improvement pipeline
-- Configurable iterations and model hints
+## Architecture Overview
 
-**Provider Adapters**
-- OpenAI, Anthropic, and vLLM with streaming support
-- HTTP timeouts, retry with exponential backoff
-- Request parameter forwarding (temperature, top_p, max_tokens, etc.)
+TokenHub sits between clients and LLM providers as a reverse proxy. Its core components are:
 
-**Security**
-- AES-256-GCM encrypted credential vault with Argon2id key derivation and auto-lock
-- API key management: issue, rotate, revoke, scope-based access control
-- Admin endpoint authentication via Bearer token
-- Per-IP rate limiting (token bucket)
-- Configurable CORS origins
+**Routing Engine** -- The central decision-maker. For each incoming request, it estimates token count, filters eligible models by budget/latency/context-window/health constraints, then scores them using a multi-objective function with mode-specific weight profiles (`cheap`, `normal`, `high_confidence`, `planning`, `adversarial`). When Thompson Sampling is enabled, it replaces the deterministic scorer with probabilistic Beta distribution sampling.
 
-**Observability**
-- Prometheus metrics (`/metrics`)
-- Embedded time-series database with retention management
-- Structured JSON logging with request tracing
-- Proactive health checking of provider endpoints
-- SSE real-time event stream
-- Audit trail for all admin operations
+**Provider Adapters** -- Pluggable adapters for OpenAI, Anthropic, and vLLM translate the provider-agnostic request envelope into provider-specific API calls. Each adapter classifies errors (context overflow, rate limited, transient, fatal) to drive failover and escalation. The vLLM adapter supports round-robin across multiple endpoints.
 
-**Admin UI**
-- Real-time request flow graph (Cytoscape.js)
-- Cost and latency trend charts (D3.js)
-- Model leaderboard with weight adjustment sliders
-- Panels: vault, providers, routing, health, audit, request logs, API keys, workflows
+**Health Tracker** -- Monitors provider availability in real time. Tracks consecutive errors, transitions providers through healthy/degraded/down states, and enforces cooldown periods. Feeds latency and error-rate data back into the routing scorer.
 
-**Temporal Workflows** (optional)
-- Every request dispatched as a durable Temporal workflow
-- Parallel activity execution for orchestration modes
-- Workflow visibility in admin UI
-- Graceful fallback to direct engine calls when Temporal is unavailable
+**Temporal Workflows** (optional) -- When enabled, every chat and orchestration request is dispatched as a durable Temporal workflow. Activities handle model selection, provider calls, error escalation, and result logging. A circuit breaker automatically falls back to direct engine calls if Temporal becomes unavailable.
 
-**Infrastructure**
-- SQLite with WAL mode for concurrent access
-- Docker with multi-stage build (28 MB image) and HEALTHCHECK
-- Docker Compose with health checks, resource limits, restart policies
-- CI/CD via GitHub Actions (build, lint, test, Docker)
-- Comprehensive mdbook documentation served at `/docs/`
+**Vault** -- Encrypted at-rest storage for provider API keys. Uses AES-256-GCM with Argon2id-derived keys. The vault starts locked and must be unlocked via the admin UI or API. It auto-locks after 30 minutes of inactivity.
+
+**Event Bus** -- In-memory pub/sub system that broadcasts routing events (success, error, escalation, health changes, workflow lifecycle) to SSE subscribers and the admin UI in real time.
+
+**Admin UI** -- Embedded single-page application served at `/admin` with panels for vault management, provider configuration, model registry, routing policy, health status, request/audit logs, API key management, reward data, and Temporal workflow visibility.
+
+**TSDB** -- Lightweight embedded time-series database for latency, cost, and throughput metrics with configurable retention and pruning.
+
+```
+Client --> /v1/chat or /v1/plan
+              |
+        [Rate Limiter] --> [Idempotency Cache] --> [API Key Auth + Budget Check]
+              |
+        [Directive Parser] --> [Routing Engine]
+              |                       |
+        [Temporal Workflow]    [Direct Engine]
+              |                       |
+        +----------+----------+----------+
+        |          |          |          |
+     OpenAI   Anthropic    vLLM      (more)
+        |          |          |
+   [Health Tracker + Metrics + TSDB + Event Bus + Audit]
+```
 
 ## Quick Start
+
+### Prerequisites
+
+Only **Docker** and **Make** are required on the host. All build tools (Go 1.24, golangci-lint, mdbook) run inside containers.
 
 ### Docker Compose
 
 ```bash
 cp .env.example .env
-# Edit .env with your provider API keys
+# Edit .env with your provider API keys and an admin token
 docker compose up --build
 ```
 
-### Prerequisites
+TokenHub will be available at `http://localhost:8080`. The admin UI is at `http://localhost:8080/admin`.
 
-Only **Linux**, **Docker**, and **Make** are required on the host. All build tools (Go, golangci-lint, mdbook) run inside containers.
+If Temporal is enabled, the Temporal UI is available at `http://localhost:8233`.
 
-### Endpoints
+### Unlock the Vault
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /v1/chat` | Route a chat request |
-| `POST /v1/plan` | Orchestrated multi-model request |
-| `GET /healthz` | Health check |
-| `GET /admin` | Admin dashboard |
-| `GET /admin/v1/*` | Admin API (see [docs](/docs/)) |
-| `GET /metrics` | Prometheus metrics |
-| `GET /docs/` | Documentation |
+On first start with `TOKENHUB_VAULT_ENABLED=true`, the vault is locked. Unlock it via the admin UI or:
 
-## Configuration
+```bash
+curl -X POST http://localhost:8080/admin/v1/vault/unlock \
+  -H "Authorization: Bearer $TOKENHUB_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"password": "your-vault-password"}'
+```
 
-TokenHub is configured via environment variables. See [`.env.example`](.env.example) for the full list.
+### Send a Request
 
-Key variables:
+```bash
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hello, world!"}]
+  }'
+```
+
+## Configuration Reference
+
+TokenHub is configured entirely via environment variables. See `.env.example` for the full list.
+
+### Core
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `TOKENHUB_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `TOKENHUB_DB_DSN` | `file:/data/tokenhub.sqlite` | SQLite DSN (WAL mode recommended) |
+
+### Vault
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
+| `TOKENHUB_VAULT_KEY_DERIVATION` | `argon2id` | Key derivation function |
+
+### Provider Keys
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOKENHUB_OPENAI_API_KEY` | | OpenAI API key |
 | `TOKENHUB_ANTHROPIC_API_KEY` | | Anthropic API key |
-| `TOKENHUB_VLLM_ENDPOINTS` | | Comma-separated vLLM URLs |
-| `TOKENHUB_ADMIN_TOKEN` | | Bearer token for admin endpoints |
-| `TOKENHUB_CORS_ORIGINS` | `*` | Allowed CORS origins |
-| `TOKENHUB_RATE_LIMIT_RPS` | `60` | Rate limit per IP per second |
+| `TOKENHUB_VLLM_ENDPOINTS` | | Comma-separated vLLM endpoint URLs |
+
+### Routing Defaults
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_DEFAULT_MODE` | `normal` | Default routing mode (cheap, normal, high_confidence, planning, adversarial, thompson) |
+| `TOKENHUB_DEFAULT_MAX_BUDGET_USD` | `0.05` | Max estimated cost per request (USD) |
+| `TOKENHUB_DEFAULT_MAX_LATENCY_MS` | `20000` | Max latency budget per request (ms) |
+
+### Security and Hardening
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_ADMIN_TOKEN` | | Bearer token for `/admin/v1/*` endpoints (required in production) |
+| `TOKENHUB_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins |
+| `TOKENHUB_RATE_LIMIT_RPS` | `60` | Requests per second per IP |
+| `TOKENHUB_RATE_LIMIT_BURST` | `120` | Burst capacity per IP |
+| `TOKENHUB_PROVIDER_TIMEOUT_SECS` | `30` | HTTP timeout for provider calls |
+
+### Temporal Workflows
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `TOKENHUB_TEMPORAL_ENABLED` | `false` | Enable Temporal workflow dispatch |
+| `TOKENHUB_TEMPORAL_HOST` | `localhost:7233` | Temporal server address |
+| `TOKENHUB_TEMPORAL_NAMESPACE` | `tokenhub` | Temporal namespace |
+| `TOKENHUB_TEMPORAL_TASK_QUEUE` | `tokenhub-tasks` | Temporal task queue name |
 
-## Documentation
+### OpenTelemetry (opt-in)
 
-Build and serve the full documentation:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `TOKENHUB_OTEL_ENDPOINT` | `localhost:4318` | OTLP endpoint |
+| `TOKENHUB_OTEL_SERVICE_NAME` | `tokenhub` | Service name for traces |
 
-```bash
-make docs          # Build HTML docs
-make docs-serve    # Live-reload dev server
+## API Endpoints
+
+### Public Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat` | Route a chat completion request to the best-fit model. Supports `stream: true` for SSE. |
+| `POST` | `/v1/plan` | Orchestrated multi-model request (adversarial, vote, or refine mode). |
+| `GET` | `/healthz` | Health check. Returns adapter and model counts. |
+| `GET` | `/metrics` | Prometheus metrics endpoint. |
+| `GET` | `/admin` | Admin UI (single-page application). |
+| `GET` | `/docs/` | Rendered mdbook documentation (if built). |
+
+The `/v1/chat` and `/v1/plan` endpoints accept an OpenAI-compatible message format:
+
+```json
+{
+  "messages": [{"role": "user", "content": "..."}],
+  "model_hint": "gpt-4o",
+  "stream": false,
+  "output_schema": {"type": "object", "required": ["answer"]},
+  "parameters": {"temperature": 0.7, "max_tokens": 1024}
+}
 ```
 
-When running, documentation is served at [`/docs/`](http://localhost:8080/docs/).
+### Admin API Endpoints
 
-## Development
+All `/admin/v1/*` endpoints require `Authorization: Bearer <TOKENHUB_ADMIN_TOKEN>`.
 
-All operations run inside Docker containers via Make. No host Go installation needed.
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/admin/v1/vault/unlock` | Unlock the credential vault |
+| `POST` | `/admin/v1/vault/lock` | Lock the credential vault |
+| `POST` | `/admin/v1/vault/rotate` | Rotate the vault password |
+| `POST` | `/admin/v1/providers` | Create or update a provider |
+| `GET` | `/admin/v1/providers` | List all providers |
+| `DELETE` | `/admin/v1/providers/{id}` | Delete a provider |
+| `POST` | `/admin/v1/models` | Create or update a model |
+| `GET` | `/admin/v1/models` | List all models |
+| `PATCH` | `/admin/v1/models/{id}` | Update a model (e.g., weight, enabled) |
+| `DELETE` | `/admin/v1/models/{id}` | Delete a model |
+| `GET` | `/admin/v1/routing-config` | Get current routing policy defaults |
+| `PUT` | `/admin/v1/routing-config` | Update routing policy defaults |
+| `POST` | `/admin/v1/apikeys` | Create a new API key |
+| `GET` | `/admin/v1/apikeys` | List all API keys |
+| `POST` | `/admin/v1/apikeys/{id}/rotate` | Rotate an API key |
+| `PATCH` | `/admin/v1/apikeys/{id}` | Update an API key (enable/disable, budget) |
+| `DELETE` | `/admin/v1/apikeys/{id}` | Delete an API key |
+| `GET` | `/admin/v1/workflows` | List Temporal workflows |
+| `GET` | `/admin/v1/workflows/{id}` | Describe a workflow |
+| `GET` | `/admin/v1/workflows/{id}/history` | Get workflow event history |
+| `GET` | `/admin/v1/health` | Provider health stats |
+| `GET` | `/admin/v1/stats` | Aggregated request stats |
+| `GET` | `/admin/v1/logs` | Request logs |
+| `GET` | `/admin/v1/audit` | Audit trail |
+| `GET` | `/admin/v1/rewards` | Contextual bandit reward logs |
+| `GET` | `/admin/v1/engine/models` | Models as seen by the routing engine |
+| `GET` | `/admin/v1/tsdb/query` | Query the embedded time-series database |
+| `GET` | `/admin/v1/tsdb/metrics` | List available TSDB metrics |
+| `POST` | `/admin/v1/tsdb/prune` | Prune old TSDB data |
+| `PUT` | `/admin/v1/tsdb/retention` | Set TSDB retention policy |
+| `GET` | `/admin/v1/events` | SSE stream of real-time routing events |
+
+### In-Band Directives
+
+Clients can override routing policy by embedding `@@tokenhub` directives in message content. These are stripped before forwarding to providers.
+
+Single-line format:
+```
+@@tokenhub mode=cheap budget=0.01 latency=5000
+```
+
+Block format:
+```
+@@tokenhub
+mode=high_confidence
+min_weight=80
+output_schema={"type":"object","required":["answer"]}
+@@end
+```
+
+Supported keys: `mode`, `budget`, `latency`, `min_weight`, `output_schema`.
+
+## Admin UI
+
+The admin dashboard is served at `/admin` as an embedded single-page application. It includes:
+
+- **Flow Graph** -- Real-time visualization of request routing through providers (Cytoscape.js)
+- **Cost and Latency Charts** -- Trend lines for cost and latency over time (D3.js)
+- **Model Leaderboard** -- Sortable table of models with weight adjustment sliders
+- **Vault Panel** -- Lock/unlock vault, rotate password
+- **Providers Panel** -- Add, edit, and remove provider configurations
+- **Routing Config Panel** -- Adjust default routing mode, budget, and latency caps
+- **Health Panel** -- Provider health states, latency, error rates, cooldown timers
+- **Request Logs** -- Searchable history of all routed requests
+- **Audit Logs** -- Trail of all admin operations
+- **API Keys Panel** -- Create, rotate, enable/disable, set budgets and scopes
+- **Rewards Panel** -- Contextual bandit reward data for Thompson Sampling analysis
+- **Workflows Panel** -- Temporal workflow list and detail views (when Temporal is enabled)
+
+## Build Targets
+
+All build operations run inside Docker containers via Make. No host Go installation is required.
+
+| Target | Description |
+|--------|-------------|
+| `make build` | Build binary to `bin/tokenhub` |
+| `make run` | Build Docker image and start via `docker compose up` |
+| `make test` | Run unit tests |
+| `make test-race` | Run tests with Go race detector |
+| `make test-coverage` | Run tests with coverage report (`coverage.out`) |
+| `make test-integration` | Run integration tests against Docker image |
+| `make test-e2e` | Run end-to-end Temporal workflow tests |
+| `make vet` | Run `go vet` |
+| `make lint` | Run golangci-lint |
+| `make docker` | Build production Docker image |
+| `make docs` | Build HTML documentation (mdbook) |
+| `make docs-serve` | Serve docs with live reload on port 3000 |
+| `make clean` | Remove `bin/`, `docs/book/`, and `coverage.out` |
+
+## Release Process
+
+Releases are managed via `scripts/release.sh`, which bumps the version tag and builds the Docker image.
 
 ```bash
-make build             # Build binary → bin/tokenhub
-make test              # Run unit tests
-make test-race         # Run tests with race detector
-make test-integration  # Run integration tests against Docker image
-make vet               # Go vet
-make lint              # golangci-lint
-make docker            # Build production Docker image
-make docs              # Build HTML documentation
-make docs-serve        # Live-reload docs server (port 3000)
-make release           # Build and tag Docker image
-make run               # Build image and start via docker compose
-make clean             # Remove build artifacts
+make release          # Bump patch version (x.y.Z)
+make release-minor    # Bump minor version (x.Y.0)
+make release-major    # Bump major version (X.0.0)
+```
+
+For non-interactive CI usage:
+
+```bash
+BATCH=yes make release
+```
+
+## Development Setup
+
+### Using Docker (recommended)
+
+No local Go installation is needed. All tools run in containers:
+
+```bash
+make build    # Compile the binary
+make test     # Run the test suite
+make lint     # Run linter
+```
+
+### Using a Local Go Toolchain
+
+Requires Go 1.24+.
+
+```bash
+go build -o bin/tokenhub ./cmd/tokenhub
+go test ./...
+go vet ./...
 ```
 
 ### Project Layout
 
 ```
-bin/              Output binaries
-cmd/              Application entry points
-config/           Configuration reference
-deploy/           Deployment artifacts (alerts, etc.)
-docs/             mdbook documentation source and output
-internal/         Go packages (with colocated unit tests)
-scripts/          Operational scripts (backup, etc.)
-tests/            Integration and end-to-end tests
-web/              Admin UI static assets
+cmd/tokenhub/      Application entry point
+internal/
+  app/             Server wiring and configuration
+  httpapi/         HTTP handlers and route mounting
+  router/          Routing engine, scoring, Thompson Sampling, directives, output shaping
+  providers/       Provider adapter interface and shared HTTP utilities
+    openai/        OpenAI adapter
+    anthropic/     Anthropic adapter
+    vllm/          vLLM adapter (round-robin)
+  vault/           Encrypted credential storage
+  apikey/          API key generation, validation, rotation, budget enforcement
+  temporal/        Temporal workflow and activity definitions
+  health/          Provider health tracking and probing
+  metrics/         Prometheus metric definitions
+  events/          In-memory pub/sub event bus
+  tsdb/            Embedded time-series database
+  stats/           Aggregated statistics collector
+  store/           SQLite persistence layer
+  circuitbreaker/  Circuit breaker for Temporal dispatch
+  idempotency/     Request deduplication cache and middleware
+web/               Admin UI static assets (HTML, JS, CSS)
+docs/              mdbook documentation source
+tests/             Integration and end-to-end test scripts
+scripts/           Operational scripts (release, backup)
+deploy/            Deployment artifacts (Prometheus alerts, etc.)
+```
+
+### Configuration Hot Reload
+
+Send SIGHUP to the running process to reload environment variables without restarting:
+
+```bash
+kill -HUP $(pidof tokenhub)
 ```
 
 ## Production Deployment
 
-See the [Production Checklist](docs/src/deployment/production.md) for a complete guide. Key steps:
+Key steps for production:
 
-1. Set `TOKENHUB_ADMIN_TOKEN` to protect admin endpoints
-2. Set `TOKENHUB_CORS_ORIGINS` to your domain(s)
-3. Place behind a TLS-terminating reverse proxy
-4. Mount a persistent volume for SQLite
+1. Set `TOKENHUB_ADMIN_TOKEN` to a strong, random value
+2. Set `TOKENHUB_CORS_ORIGINS` to your allowed domain(s)
+3. Place behind a TLS-terminating reverse proxy (nginx, Caddy, etc.)
+4. Mount a persistent volume for the SQLite database at `/data`
 5. Configure Prometheus to scrape `/metrics`
-6. Set up alerting with [`deploy/prometheus-alerts.yml`](deploy/prometheus-alerts.yml)
-7. Schedule backups with [`scripts/backup.sh`](scripts/backup.sh)
-
-## Architecture
-
-```
-Client --> /v1/chat --> [Rate Limiter] --> [API Key Auth] --> [Routing Engine]
-                                                                    |
-                                                    [Thompson Sampling Policy]
-                                                                    |
-                                          +------------+------------+------------+
-                                          |            |            |            |
-                                       OpenAI     Anthropic      vLLM       (more)
-                                          |            |            |
-                                     [Health Tracker + Metrics + TSDB + Audit]
-```
+6. Set up alerting with `deploy/prometheus-alerts.yml`
+7. Schedule database backups with `scripts/backup.sh`
 
 ## License
 

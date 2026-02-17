@@ -17,6 +17,13 @@ import (
 )
 
 type PlanRequest struct {
+	// Side-channel negotiation
+	Capabilities map[string]any `json:"capabilities,omitempty"`
+
+	// Output format shaping
+	OutputFormat *router.OutputFormat `json:"output_format,omitempty"`
+
+	// Main request payload
 	Request       router.Request                `json:"request"`
 	Orchestration router.OrchestrationDirective `json:"orchestration"`
 }
@@ -34,19 +41,19 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 
 		var req PlanRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 
 		// Validate messages.
 		if len(req.Request.Messages) == 0 {
-			http.Error(w, "messages required", http.StatusBadRequest)
+			jsonError(w, "messages required", http.StatusBadRequest)
 			return
 		}
 
 		// Validate orchestration iterations.
 		if req.Orchestration.Iterations < 0 || req.Orchestration.Iterations > 10 {
-			http.Error(w, "iterations must be between 0 and 10", http.StatusBadRequest)
+			jsonError(w, "iterations must be between 0 and 10", http.StatusBadRequest)
 			return
 		}
 
@@ -55,7 +62,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		case "", "planning", "adversarial", "vote", "refine":
 			// valid
 		default:
-			http.Error(w, "unknown orchestration mode", http.StatusBadRequest)
+			jsonError(w, "unknown orchestration mode", http.StatusBadRequest)
 			return
 		}
 
@@ -178,7 +185,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 					EstimatedTokens: estimatedTokens,
 				})
 			}
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
@@ -197,6 +204,11 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				APIKeyID:        apiKeyID,
 				EstimatedTokens: estimatedTokens,
 			})
+		}
+
+		// Apply output format shaping if requested.
+		if req.OutputFormat != nil {
+			resp = router.ShapeOutput(resp, *req.OutputFormat)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -37,11 +37,11 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req unlockReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 		if err := d.Vault.Unlock([]byte(req.AdminPassword)); err != nil {
-			http.Error(w, "unlock failed", http.StatusUnauthorized)
+			jsonError(w, "unlock failed", http.StatusUnauthorized)
 			return
 		}
 		// Persist vault salt and encrypted data to the store.
@@ -71,11 +71,11 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req rotateReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 		if req.OldPassword == "" || req.NewPassword == "" {
-			http.Error(w, "old_password and new_password required", http.StatusBadRequest)
+			jsonError(w, "old_password and new_password required", http.StatusBadRequest)
 			return
 		}
 
@@ -83,9 +83,9 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 			// Distinguish validation errors from internal errors.
 			switch err.Error() {
 			case "vault is locked", "vault is not enabled", "new password too short":
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				jsonError(w, err.Error(), http.StatusBadRequest)
 			default:
-				http.Error(w, "rotation failed: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "rotation failed: "+err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -96,7 +96,7 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 			data := d.Vault.Export()
 			if salt != nil {
 				if err := d.Store.SaveVaultBlob(r.Context(), salt, data); err != nil {
-					http.Error(w, "failed to persist vault: "+err.Error(), http.StatusInternalServerError)
+					jsonError(w, "failed to persist vault: "+err.Error(), http.StatusInternalServerError)
 					return
 				}
 			}
@@ -125,18 +125,18 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ProviderUpsertRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 		if req.ID == "" {
-			http.Error(w, "provider id required", http.StatusBadRequest)
+			jsonError(w, "provider id required", http.StatusBadRequest)
 			return
 		}
 
 		// Store API key in vault if provided.
 		if req.APIKey != "" && d.Vault != nil && !d.Vault.IsLocked() {
 			if err := d.Vault.Set("provider:"+req.ID+":api_key", req.APIKey); err != nil {
-				http.Error(w, "vault error: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 			req.CredStore = "vault"
@@ -152,7 +152,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 
 		if d.Store != nil {
 			if err := d.Store.UpsertProvider(r.Context(), req.ProviderRecord); err != nil {
-				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -176,7 +176,7 @@ func ProvidersListHandler(d Dependencies) http.HandlerFunc {
 		}
 		providers, err := d.Store.ListProviders(r.Context())
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(providers)
@@ -187,12 +187,12 @@ func ProvidersDeleteHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		if id == "" {
-			http.Error(w, "provider id required", http.StatusBadRequest)
+			jsonError(w, "provider id required", http.StatusBadRequest)
 			return
 		}
 		if d.Store != nil {
 			if err := d.Store.DeleteProvider(r.Context(), id); err != nil {
-				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -212,29 +212,29 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var m router.Model
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 
 		// Validate required fields.
 		if m.ID == "" {
-			http.Error(w, "model id required", http.StatusBadRequest)
+			jsonError(w, "model id required", http.StatusBadRequest)
 			return
 		}
 		if m.ProviderID == "" {
-			http.Error(w, "provider_id required", http.StatusBadRequest)
+			jsonError(w, "provider_id required", http.StatusBadRequest)
 			return
 		}
 		if m.Weight < 0 || m.Weight > 10 {
-			http.Error(w, "weight must be between 0 and 10", http.StatusBadRequest)
+			jsonError(w, "weight must be between 0 and 10", http.StatusBadRequest)
 			return
 		}
 		if m.InputPer1K < 0 {
-			http.Error(w, "input_per_1k must be >= 0", http.StatusBadRequest)
+			jsonError(w, "input_per_1k must be >= 0", http.StatusBadRequest)
 			return
 		}
 		if m.OutputPer1K < 0 {
-			http.Error(w, "output_per_1k must be >= 0", http.StatusBadRequest)
+			jsonError(w, "output_per_1k must be >= 0", http.StatusBadRequest)
 			return
 		}
 
@@ -272,7 +272,7 @@ func ModelsListHandler(d Dependencies) http.HandlerFunc {
 		}
 		models, err := d.Store.ListModels(r.Context())
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(models)
@@ -283,12 +283,12 @@ func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		if id == "" {
-			http.Error(w, "model id required", http.StatusBadRequest)
+			jsonError(w, "model id required", http.StatusBadRequest)
 			return
 		}
 		if d.Store != nil {
 			if err := d.Store.DeleteModel(r.Context(), id); err != nil {
-				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -309,28 +309,28 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		if id == "" {
-			http.Error(w, "model id required", http.StatusBadRequest)
+			jsonError(w, "model id required", http.StatusBadRequest)
 			return
 		}
 
 		var patch map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 
 		// Load the existing model from store.
 		if d.Store == nil {
-			http.Error(w, "no store configured", http.StatusInternalServerError)
+			jsonError(w, "no store configured", http.StatusInternalServerError)
 			return
 		}
 		existing, err := d.Store.GetModel(r.Context(), id)
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if existing == nil {
-			http.Error(w, "model not found", http.StatusNotFound)
+			jsonError(w, "model not found", http.StatusNotFound)
 			return
 		}
 
@@ -338,7 +338,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["weight"]; ok {
 			if f, ok := v.(float64); ok {
 				if f < 0 || f > 10 {
-					http.Error(w, "weight must be between 0 and 10", http.StatusBadRequest)
+					jsonError(w, "weight must be between 0 and 10", http.StatusBadRequest)
 					return
 				}
 			}
@@ -346,7 +346,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["input_per_1k"]; ok {
 			if f, ok := v.(float64); ok {
 				if f < 0 {
-					http.Error(w, "input_per_1k must be >= 0", http.StatusBadRequest)
+					jsonError(w, "input_per_1k must be >= 0", http.StatusBadRequest)
 					return
 				}
 			}
@@ -354,7 +354,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["output_per_1k"]; ok {
 			if f, ok := v.(float64); ok {
 				if f < 0 {
-					http.Error(w, "output_per_1k must be >= 0", http.StatusBadRequest)
+					jsonError(w, "output_per_1k must be >= 0", http.StatusBadRequest)
 					return
 				}
 			}
@@ -384,7 +384,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 
 		// Update store and engine.
 		if err := d.Store.UpsertModel(r.Context(), *existing); err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		d.Engine.RegisterModel(router.Model{
@@ -418,7 +418,7 @@ func RoutingConfigGetHandler(d Dependencies) http.HandlerFunc {
 		}
 		cfg, err := d.Store.LoadRoutingConfig(r.Context())
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(cfg)
@@ -430,7 +430,7 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var cfg store.RoutingConfig
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 
@@ -439,21 +439,21 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 		case "", "cheap", "normal", "high_confidence", "planning", "adversarial":
 			// valid
 		default:
-			http.Error(w, "unknown default_mode", http.StatusBadRequest)
+			jsonError(w, "unknown default_mode", http.StatusBadRequest)
 			return
 		}
 		if cfg.DefaultMaxBudgetUSD < 0 || cfg.DefaultMaxBudgetUSD > 100 {
-			http.Error(w, "default_max_budget_usd must be between 0 and 100", http.StatusBadRequest)
+			jsonError(w, "default_max_budget_usd must be between 0 and 100", http.StatusBadRequest)
 			return
 		}
 		if cfg.DefaultMaxLatencyMs < 0 || cfg.DefaultMaxLatencyMs > 300000 {
-			http.Error(w, "default_max_latency_ms must be between 0 and 300000", http.StatusBadRequest)
+			jsonError(w, "default_max_latency_ms must be between 0 and 300000", http.StatusBadRequest)
 			return
 		}
 
 		if d.Store != nil {
 			if err := d.Store.SaveRoutingConfig(r.Context(), cfg); err != nil {
-				http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -491,7 +491,7 @@ func RequestLogsHandler(d Dependencies) http.HandlerFunc {
 		}
 		logs, err := d.Store.ListRequestLogs(r.Context(), limit, offset)
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"logs": logs})
@@ -536,7 +536,7 @@ func AuditLogsHandler(d Dependencies) http.HandlerFunc {
 		}
 		logs, err := d.Store.ListAuditLogs(r.Context(), limit, offset)
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"logs": logs})
@@ -564,7 +564,7 @@ func RewardsHandler(d Dependencies) http.HandlerFunc {
 		}
 		rewards, err := d.Store.ListRewards(r.Context(), limit, offset)
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"rewards": rewards})

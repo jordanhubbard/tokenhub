@@ -20,7 +20,7 @@ func TSDBQueryHandler(ts *tsdb.Store) http.HandlerFunc {
 		q := r.URL.Query()
 		metric := q.Get("metric")
 		if metric == "" {
-			http.Error(w, "metric parameter required", http.StatusBadRequest)
+			jsonError(w, "metric parameter required", http.StatusBadRequest)
 			return
 		}
 
@@ -52,7 +52,7 @@ func TSDBQueryHandler(ts *tsdb.Store) http.HandlerFunc {
 
 		series, err := ts.Query(r.Context(), params)
 		if err != nil {
-			http.Error(w, "query error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "query error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -69,7 +69,7 @@ func TSDBPruneHandler(ts *tsdb.Store) http.HandlerFunc {
 		}
 		deleted, err := ts.Prune(r.Context())
 		if err != nil {
-			http.Error(w, "prune error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "prune error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": deleted})
@@ -83,16 +83,16 @@ func TSDBRetentionHandler(ts *tsdb.Store) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ts == nil {
-			http.Error(w, "tsdb not configured", http.StatusNotImplemented)
+			jsonError(w, "tsdb not configured", http.StatusNotImplemented)
 			return
 		}
 		var req retentionReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 		if req.Days < 1 {
-			http.Error(w, "days must be >= 1", http.StatusBadRequest)
+			jsonError(w, "days must be >= 1", http.StatusBadRequest)
 			return
 		}
 		ts.SetRetention(time.Duration(req.Days) * 24 * time.Hour)
@@ -110,7 +110,7 @@ func TSDBMetricsHandler(ts *tsdb.Store) http.HandlerFunc {
 
 		metrics, err := ts.Metrics(r.Context())
 		if err != nil {
-			http.Error(w, "error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"metrics": metrics})

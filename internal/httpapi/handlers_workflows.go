@@ -36,7 +36,7 @@ func WorkflowsListHandler(d Dependencies) http.HandlerFunc {
 			case "RUNNING", "COMPLETED", "FAILED", "CANCELED", "TERMINATED", "CONTINUED_AS_NEW", "TIMED_OUT":
 				query = "ExecutionStatus = '" + status + "'"
 			default:
-				http.Error(w, "invalid status filter", http.StatusBadRequest)
+				jsonError(w, "invalid status filter", http.StatusBadRequest)
 				return
 			}
 		}
@@ -46,7 +46,7 @@ func WorkflowsListHandler(d Dependencies) http.HandlerFunc {
 			Query:    query,
 		})
 		if err != nil {
-			http.Error(w, "temporal query error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "temporal query error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -83,13 +83,13 @@ func WorkflowDescribeHandler(d Dependencies) http.HandlerFunc {
 
 		workflowID := chi.URLParam(r, "id")
 		if workflowID == "" {
-			http.Error(w, "workflow id required", http.StatusBadRequest)
+			jsonError(w, "workflow id required", http.StatusBadRequest)
 			return
 		}
 
 		desc, err := d.TemporalClient.DescribeWorkflowExecution(r.Context(), workflowID, "")
 		if err != nil {
-			http.Error(w, "describe error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "describe error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -120,7 +120,7 @@ func WorkflowHistoryHandler(d Dependencies) http.HandlerFunc {
 
 		workflowID := chi.URLParam(r, "id")
 		if workflowID == "" {
-			http.Error(w, "workflow id required", http.StatusBadRequest)
+			jsonError(w, "workflow id required", http.StatusBadRequest)
 			return
 		}
 
@@ -131,7 +131,7 @@ func WorkflowHistoryHandler(d Dependencies) http.HandlerFunc {
 		for iter.HasNext() {
 			event, err := iter.Next()
 			if err != nil {
-				http.Error(w, "history error: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "history error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 			events = append(events, map[string]any{

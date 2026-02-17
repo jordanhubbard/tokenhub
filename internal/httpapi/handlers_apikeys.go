@@ -22,17 +22,17 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
-			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			jsonError(w, "api key management not configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		var req createReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 		if req.Name == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
+			jsonError(w, "name required", http.StatusBadRequest)
 			return
 		}
 		if req.Scopes == "" {
@@ -43,7 +43,7 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 		if req.ExpiresIn != nil && *req.ExpiresIn != "" {
 			dur, err := time.ParseDuration(*req.ExpiresIn)
 			if err != nil {
-				http.Error(w, "invalid expires_in duration", http.StatusBadRequest)
+				jsonError(w, "invalid expires_in duration", http.StatusBadRequest)
 				return
 			}
 			t := time.Now().UTC().Add(dur)
@@ -52,7 +52,7 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 
 		plaintext, rec, err := d.APIKeyMgr.Generate(r.Context(), req.Name, req.Scopes, req.RotationDays, expiresAt)
 		if err != nil {
-			http.Error(w, "failed to create key: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "failed to create key: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -60,7 +60,7 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 		if req.MonthlyBudgetUSD > 0 {
 			rec.MonthlyBudgetUSD = req.MonthlyBudgetUSD
 			if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {
-				http.Error(w, "failed to set budget: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "failed to set budget: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -90,18 +90,18 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 func APIKeysListHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
-			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			jsonError(w, "api key management not configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		if d.Store == nil {
-			http.Error(w, "store not configured", http.StatusServiceUnavailable)
+			jsonError(w, "store not configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		keys, err := d.Store.ListAPIKeys(r.Context())
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// KeyHash is already excluded via json:"-" tag.
@@ -113,19 +113,19 @@ func APIKeysListHandler(d Dependencies) http.HandlerFunc {
 func APIKeysRotateHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
-			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			jsonError(w, "api key management not configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		id := chi.URLParam(r, "id")
 		if id == "" {
-			http.Error(w, "key id required", http.StatusBadRequest)
+			jsonError(w, "key id required", http.StatusBadRequest)
 			return
 		}
 
 		plaintext, err := d.APIKeyMgr.Rotate(r.Context(), id)
 		if err != nil {
-			http.Error(w, "rotate failed: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "rotate failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -150,36 +150,36 @@ func APIKeysRotateHandler(d Dependencies) http.HandlerFunc {
 func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
-			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			jsonError(w, "api key management not configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		id := chi.URLParam(r, "id")
 		if id == "" {
-			http.Error(w, "key id required", http.StatusBadRequest)
+			jsonError(w, "key id required", http.StatusBadRequest)
 			return
 		}
 
 		var patch map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 
 		rec, err := d.Store.GetAPIKey(r.Context(), id)
 		if err != nil {
-			http.Error(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if rec == nil {
-			http.Error(w, "api key not found", http.StatusNotFound)
+			jsonError(w, "api key not found", http.StatusNotFound)
 			return
 		}
 
 		if v, ok := patch["name"]; ok {
 			s, ok := v.(string)
 			if !ok || s == "" {
-				http.Error(w, "name must be a non-empty string", http.StatusBadRequest)
+				jsonError(w, "name must be a non-empty string", http.StatusBadRequest)
 				return
 			}
 			rec.Name = s
@@ -187,12 +187,12 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["scopes"]; ok {
 			s, ok := v.(string)
 			if !ok {
-				http.Error(w, "scopes must be a JSON array string", http.StatusBadRequest)
+				jsonError(w, "scopes must be a JSON array string", http.StatusBadRequest)
 				return
 			}
 			var arr []string
 			if err := json.Unmarshal([]byte(s), &arr); err != nil {
-				http.Error(w, "scopes must be a valid JSON array", http.StatusBadRequest)
+				jsonError(w, "scopes must be a valid JSON array", http.StatusBadRequest)
 				return
 			}
 			rec.Scopes = s
@@ -200,7 +200,7 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["enabled"]; ok {
 			b, ok := v.(bool)
 			if !ok {
-				http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+				jsonError(w, "enabled must be a boolean", http.StatusBadRequest)
 				return
 			}
 			rec.Enabled = b
@@ -208,7 +208,7 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["rotation_days"]; ok {
 			f, ok := v.(float64)
 			if !ok || f < 0 {
-				http.Error(w, "rotation_days must be a non-negative number", http.StatusBadRequest)
+				jsonError(w, "rotation_days must be a non-negative number", http.StatusBadRequest)
 				return
 			}
 			rec.RotationDays = int(f)
@@ -216,14 +216,14 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["monthly_budget_usd"]; ok {
 			f, ok := v.(float64)
 			if !ok || f < 0 {
-				http.Error(w, "monthly_budget_usd must be a non-negative number", http.StatusBadRequest)
+				jsonError(w, "monthly_budget_usd must be a non-negative number", http.StatusBadRequest)
 				return
 			}
 			rec.MonthlyBudgetUSD = f
 		}
 
 		if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {
-			http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -244,18 +244,18 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 func APIKeysDeleteHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
-			http.Error(w, "api key management not configured", http.StatusServiceUnavailable)
+			jsonError(w, "api key management not configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		id := chi.URLParam(r, "id")
 		if id == "" {
-			http.Error(w, "key id required", http.StatusBadRequest)
+			jsonError(w, "key id required", http.StatusBadRequest)
 			return
 		}
 
 		if err := d.Store.DeleteAPIKey(r.Context(), id); err != nil {
-			http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+			jsonError(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 

@@ -63,28 +63,28 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 
 		var req ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			jsonError(w, "bad json", http.StatusBadRequest)
 			return
 		}
 
 		// Validate messages.
 		if len(req.Request.Messages) == 0 {
-			http.Error(w, "messages required", http.StatusBadRequest)
+			jsonError(w, "messages required", http.StatusBadRequest)
 			return
 		}
 
 		// Validate policy hints if provided.
 		if req.Policy != nil {
 			if req.Policy.MaxBudgetUSD < 0 || req.Policy.MaxBudgetUSD > 100.0 {
-				http.Error(w, "max_budget_usd must be between 0 and 100", http.StatusBadRequest)
+				jsonError(w, "max_budget_usd must be between 0 and 100", http.StatusBadRequest)
 				return
 			}
 			if req.Policy.MaxLatencyMs < 0 || req.Policy.MaxLatencyMs > 300000 {
-				http.Error(w, "max_latency_ms must be between 0 and 300000", http.StatusBadRequest)
+				jsonError(w, "max_latency_ms must be between 0 and 300000", http.StatusBadRequest)
 				return
 			}
 			if req.Policy.MinWeight < 0 || req.Policy.MinWeight > 10 {
-				http.Error(w, "min_weight must be between 0 and 10", http.StatusBadRequest)
+				jsonError(w, "min_weight must be between 0 and 10", http.StatusBadRequest)
 				return
 			}
 		}
@@ -140,7 +140,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 		if req.Request.Stream {
 			decision, body, serr := d.Engine.RouteAndStream(reqCtx, req.Request, policy)
 			if serr != nil {
-				http.Error(w, serr.Error(), http.StatusBadGateway)
+				jsonError(w, serr.Error(), http.StatusBadGateway)
 				return
 			}
 			defer func() { _ = body.Close() }()
@@ -348,7 +348,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					LatencyBudgetMs: latencyBudgetMs,
 				})
 			}
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 

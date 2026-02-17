@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -11,6 +12,14 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/store"
 	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 )
+
+// jsonError writes a JSON-encoded error response with the given status code.
+// Response body format: {"error": "<msg>"}
+func jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
 
 // observeParams captures all the fields required to log a request result
 // across the Store, Metrics, EventBus, Stats, and TSDB subsystems.
