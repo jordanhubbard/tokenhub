@@ -65,12 +65,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-### Run Locally
+### Prerequisites
 
-```bash
-export TOKENHUB_OPENAI_API_KEY="sk-..."
-make build && make run
-```
+Only **Linux**, **Docker**, and **Make** are required on the host. All build tools (Go, golangci-lint, mdbook) run inside containers.
 
 ### Endpoints
 
@@ -113,14 +110,35 @@ When running, documentation is served at [`/docs/`](http://localhost:8080/docs/)
 
 ## Development
 
+All operations run inside Docker containers via Make. No host Go installation needed.
+
 ```bash
-make build        # Build binary
-make test         # Run tests
-make test-race    # Run tests with race detector
-make vet          # Go vet
-make lint         # golangci-lint (if installed)
-make docker       # Build Docker image
-make clean        # Remove build artifacts
+make build             # Build binary → bin/tokenhub
+make test              # Run unit tests
+make test-race         # Run tests with race detector
+make test-integration  # Run integration tests against Docker image
+make vet               # Go vet
+make lint              # golangci-lint
+make docker            # Build production Docker image
+make docs              # Build HTML documentation
+make docs-serve        # Live-reload docs server (port 3000)
+make release           # Build and tag Docker image
+make run               # Build image and start via docker compose
+make clean             # Remove build artifacts
+```
+
+### Project Layout
+
+```
+bin/              Output binaries
+cmd/              Application entry points
+config/           Configuration reference
+deploy/           Deployment artifacts (alerts, etc.)
+docs/             mdbook documentation source and output
+internal/         Go packages (with colocated unit tests)
+scripts/          Operational scripts (backup, etc.)
+tests/            Integration and end-to-end tests
+web/              Admin UI static assets
 ```
 
 ## Production Deployment

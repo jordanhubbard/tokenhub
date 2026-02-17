@@ -87,7 +87,7 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	if err := db.Migrate(context.Background()); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	logger.Info("database initialized", slog.String("dsn", cfg.DBDSN))

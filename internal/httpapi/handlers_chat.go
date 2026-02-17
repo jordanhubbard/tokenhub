@@ -145,7 +145,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				http.Error(w, serr.Error(), http.StatusBadGateway)
 				return
 			}
-			defer body.Close()
+			defer func() { _ = body.Close() }()
 
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")

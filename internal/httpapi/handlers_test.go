@@ -69,7 +69,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *router.Engine, *vault.Vau
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	// Set up TSDB.
 	ts, err := tsdb.New(db.DB())
@@ -102,15 +102,6 @@ func authPost(url, contentType string, body *bytes.Reader) (*http.Response, erro
 	return http.DefaultClient.Do(req)
 }
 
-// authGet sends a GET with the test API key bearer token.
-func authGet(url string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+testAPIKey)
-	return http.DefaultClient.Do(req)
-}
 
 func TestHealthz(t *testing.T) {
 	ts, eng, _ := setupTestServer(t)
@@ -121,7 +112,7 @@ func TestHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("expected 503 with no adapters, got %d", resp.StatusCode)
 	}
@@ -137,7 +128,7 @@ func TestHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
 	if resp2.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 with adapters, got %d", resp2.StatusCode)
@@ -168,7 +159,7 @@ func TestChatSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -198,7 +189,7 @@ func TestChatBadJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
@@ -219,7 +210,7 @@ func TestChatNoEligibleModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("expected 502, got %d", resp.StatusCode)
@@ -248,7 +239,7 @@ func TestChatWithPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -277,7 +268,7 @@ func TestPlanSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -301,7 +292,7 @@ func TestVaultUnlockSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -325,7 +316,7 @@ func TestVaultUnlockShortPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", resp.StatusCode)
@@ -352,7 +343,7 @@ func TestModelsUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -368,7 +359,7 @@ func TestModelsUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chat request failed: %v", err)
 	}
-	defer chatResp.Body.Close()
+	defer func() { _ = chatResp.Body.Close() }()
 
 	if chatResp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for chat after model registration, got %d", chatResp.StatusCode)
@@ -383,7 +374,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -398,7 +389,7 @@ func TestHealthStatsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -422,14 +413,14 @@ func TestAdminEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 	ct := resp.Header.Get("Content-Type")
 	if ct != "" && ct != "text/html; charset=utf-8" && ct != "text/html" {
-		// Acceptable: either text/html or served as-is.
+		t.Errorf("unexpected Content-Type: %s", ct)
 	}
 }
 
@@ -441,7 +432,7 @@ func TestAdminAPIInfoEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -464,7 +455,7 @@ func TestStatsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -498,7 +489,7 @@ func TestSSEEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -526,7 +517,7 @@ func TestVaultLockUnlockCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unlock failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if v.IsLocked() {
 		t.Error("vault should be unlocked after unlock")
 	}
@@ -536,7 +527,7 @@ func TestVaultLockUnlockCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lock failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
@@ -549,7 +540,7 @@ func TestVaultLockUnlockCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second lock failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var result map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&result)
 	if result["already_locked"] != true {
@@ -581,7 +572,7 @@ func TestChatWithDirectives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -602,7 +593,7 @@ func TestRequestLogsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -627,7 +618,7 @@ func TestEngineModelsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -658,7 +649,7 @@ func TestProviderUpsertWithAPIKey(t *testing.T) {
 	// Unlock vault first.
 	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
 	resp, _ := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if v.IsLocked() {
 		t.Fatal("vault should be unlocked")
@@ -675,7 +666,7 @@ func TestProviderUpsertWithAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -706,7 +697,7 @@ func TestRoutingConfigEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
@@ -721,7 +712,7 @@ func TestTSDBEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
@@ -731,7 +722,7 @@ func TestTSDBEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
@@ -753,7 +744,7 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	tsd, err := tsdb.New(db.DB())
 	if err != nil {
@@ -795,7 +786,7 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Check that an event was published.
 	select {
@@ -832,7 +823,7 @@ func TestChatEmptyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400 for empty messages, got %d", resp.StatusCode)
@@ -852,7 +843,7 @@ func TestChatNilMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400 for nil messages, got %d", resp.StatusCode)
@@ -888,7 +879,7 @@ func TestChatPolicyOutOfRange(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
@@ -919,7 +910,7 @@ func TestChatValidPolicyStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for valid policy, got %d", resp.StatusCode)
@@ -941,7 +932,7 @@ func TestPlanEmptyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400 for empty messages, got %d", resp.StatusCode)
@@ -976,7 +967,7 @@ func TestPlanInvalidIterations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
@@ -1002,7 +993,7 @@ func TestPlanInvalidMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid mode, got %d", resp.StatusCode)
@@ -1032,7 +1023,7 @@ func TestModelsUpsertValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
@@ -1058,7 +1049,7 @@ func TestModelsUpsertValidModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for valid model, got %d", resp.StatusCode)
@@ -1077,7 +1068,7 @@ func TestModelsPatchValidation(t *testing.T) {
 	model := router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true}
 	body, _ := json.Marshal(model)
 	resp, _ := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	tests := []struct {
 		name  string
@@ -1098,7 +1089,7 @@ func TestModelsPatchValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
@@ -1131,7 +1122,7 @@ func TestRoutingConfigSetValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
@@ -1156,7 +1147,7 @@ func TestRoutingConfigSetValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for valid config, got %d", resp.StatusCode)
@@ -1172,7 +1163,7 @@ func TestVaultLockHandler(t *testing.T) {
 	// Unlock vault first so Lock actually transitions state.
 	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
 	resp, _ := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if v.IsLocked() {
 		t.Fatal("vault should be unlocked before lock test")
 	}
@@ -1182,7 +1173,7 @@ func TestVaultLockHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1208,7 +1199,7 @@ func TestProvidersListHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1232,7 +1223,7 @@ func TestProvidersDeleteHandler(t *testing.T) {
 	// Unlock vault and create a provider first.
 	body, _ := json.Marshal(map[string]string{"admin_password": "supersecretpassword"})
 	resp, _ := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if v.IsLocked() {
 		t.Fatal("vault should be unlocked")
 	}
@@ -1243,7 +1234,7 @@ func TestProvidersDeleteHandler(t *testing.T) {
 		"enabled": true,
 	})
 	resp, _ = http.Post(ts.URL+"/admin/v1/providers", "application/json", bytes.NewReader(provBody))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Delete the provider.
 	req, _ := http.NewRequest("DELETE", ts.URL+"/admin/v1/providers/del-provider", nil)
@@ -1251,7 +1242,7 @@ func TestProvidersDeleteHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1274,7 +1265,7 @@ func TestModelsListHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1302,7 +1293,7 @@ func TestModelsDeleteHandler(t *testing.T) {
 	model := router.Model{ID: "delete-me", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true}
 	body, _ := json.Marshal(model)
 	resp, _ := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Delete the model.
 	req, _ := http.NewRequest("DELETE", ts.URL+"/admin/v1/models/delete-me", nil)
@@ -1310,7 +1301,7 @@ func TestModelsDeleteHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1333,7 +1324,7 @@ func TestRoutingConfigGetHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1354,7 +1345,7 @@ func TestHealthStatsHandlerFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1377,7 +1368,7 @@ func TestStatsHandlerFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1406,7 +1397,7 @@ func TestAuditLogsHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
@@ -1429,7 +1420,7 @@ func TestRewardsHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)

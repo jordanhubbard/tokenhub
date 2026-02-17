@@ -25,7 +25,7 @@ func SSEHandler(bus *events.Bus) http.HandlerFunc {
 		defer bus.Unsubscribe(sub)
 
 		// Send initial connection event.
-		fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"ok\"}\n\n")
+		_, _ = fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"ok\"}\n\n")
 		flusher.Flush()
 
 		for {
@@ -33,7 +33,7 @@ func SSEHandler(bus *events.Bus) http.HandlerFunc {
 			case <-r.Context().Done():
 				return
 			case e := <-sub.C:
-				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, e.JSON())
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, e.JSON())
 				flusher.Flush()
 			}
 		}

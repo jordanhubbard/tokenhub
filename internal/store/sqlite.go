@@ -23,7 +23,7 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 	}
 	// Enable WAL mode and set busy timeout.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("sqlite pragmas: %w", err)
 	}
 	return &SQLiteStore{db: db}, nil
@@ -137,7 +137,7 @@ func (s *SQLiteStore) ListModels(ctx context.Context) ([]ModelRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var models []ModelRecord
 	for rows.Next() {
@@ -192,7 +192,7 @@ func (s *SQLiteStore) ListProviders(ctx context.Context) ([]ProviderRecord, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var providers []ProviderRecord
 	for rows.Next() {
@@ -301,7 +301,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var logs []RequestLog
 	for rows.Next() {
@@ -337,7 +337,7 @@ func (s *SQLiteStore) ListAuditLogs(ctx context.Context, limit int, offset int) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var logs []AuditEntry
 	for rows.Next() {
@@ -431,7 +431,7 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var keys []APIKeyRecord
 	for rows.Next() {
@@ -465,7 +465,7 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var keys []APIKeyRecord
 	for rows.Next() {
@@ -531,7 +531,7 @@ func (s *SQLiteStore) ListRewards(ctx context.Context, limit int, offset int) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var logs []RewardEntry
 	for rows.Next() {
@@ -561,7 +561,7 @@ func (s *SQLiteStore) GetRewardSummary(ctx context.Context) ([]RewardSummary, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var summaries []RewardSummary
 	for rows.Next() {

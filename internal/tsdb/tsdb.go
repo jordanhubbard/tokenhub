@@ -128,10 +128,10 @@ func (s *Store) flush(points []Point) {
 	}
 	stmt, err := tx.Prepare(`INSERT INTO tsdb_points (ts, metric, model_id, provider_id, value) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, p := range points {
 		_, _ = stmt.Exec(p.Timestamp.UnixMilli(), p.Metric, p.ModelID, p.ProviderID, p.Value)
@@ -182,7 +182,7 @@ func (s *Store) Query(ctx context.Context, q QueryParams) ([]Series, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Group into series by model+provider combo.
 	type seriesKey struct{ model, provider string }
@@ -236,7 +236,7 @@ func (s *Store) Metrics(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var metrics []string
 	for rows.Next() {

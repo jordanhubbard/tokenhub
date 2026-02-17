@@ -145,7 +145,7 @@ func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payloa
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
 		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		return nil, se
@@ -176,7 +176,7 @@ func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

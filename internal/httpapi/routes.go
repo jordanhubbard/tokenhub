@@ -80,7 +80,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 			})
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		stat, _ := f.Stat()
 		http.ServeContent(w, r, "index.html", stat.ModTime(), f.(readSeeker))

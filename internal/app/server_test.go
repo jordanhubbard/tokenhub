@@ -19,7 +19,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	for _, key := range envVars {
 		t.Setenv(key, "")
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 	}
 
 	cfg, err := LoadConfig()
@@ -137,16 +137,16 @@ func TestNewServer(t *testing.T) {
 	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
 	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
 	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
+	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
 
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)
 	if err != nil {
 		t.Fatalf("NewServer() error: %v", err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	if srv == nil {
 		t.Fatal("expected non-nil server")
@@ -157,16 +157,16 @@ func TestNewServerHasRouter(t *testing.T) {
 	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
 	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
 	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
+	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
 
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)
 	if err != nil {
 		t.Fatalf("NewServer() error: %v", err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	if srv.Router() == nil {
 		t.Fatal("expected non-nil Router()")
@@ -177,9 +177,9 @@ func TestServerClose(t *testing.T) {
 	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
 	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
 	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
+	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
 
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)

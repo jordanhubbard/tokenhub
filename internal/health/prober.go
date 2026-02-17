@@ -126,7 +126,7 @@ func (p *Prober) probe(target Probeable) {
 		)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Any 2xx or 405 (Method Not Allowed — endpoint exists) counts as healthy.
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 || resp.StatusCode == http.StatusMethodNotAllowed {

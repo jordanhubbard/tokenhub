@@ -18,7 +18,7 @@ func newTestManager(t *testing.T) *Manager {
 	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return NewManager(s)
 }
 

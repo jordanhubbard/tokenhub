@@ -1,36 +1,74 @@
-.PHONY: build run test test-race vet lint docker clean docs docs-serve
+.PHONY: build run test test-race test-integration vet lint docker clean docs docs-serve release builder
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS   := -s -w -X main.version=$(VERSION)
 
-build:
-	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
+BUILDER_IMAGE := tokenhub-builder
+DOCKER_RUN    := docker run --rm \
+	-v $(CURDIR):/src \
+	-v tokenhub-gomod:/go/pkg/mod \
+	-v tokenhub-gocache:/root/.cache/go-build \
+	-w /src \
+	$(BUILDER_IMAGE)
 
-run: build
-	./bin/tokenhub
+# ──── Builder image (cached) ────
 
-test:
-	go test ./...
+builder:
+	@docker build -q -t $(BUILDER_IMAGE) -f Dockerfile.dev . >/dev/null
 
-test-race:
-	go test -race ./...
+# ──── Build ────
 
-vet:
-	go vet ./...
+build: builder
+	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
 
-lint:
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed; skipping"
+# ──── Run ────
+
+run: docker
+	docker compose up
+
+# ──── Tests ────
+
+test: builder
+	$(DOCKER_RUN) go test ./...
+
+test-race: builder
+	$(DOCKER_RUN) go test -race ./...
+
+test-coverage: builder
+	$(DOCKER_RUN) go test -race -coverprofile=coverage.out ./...
+
+test-integration: docker
+	@bash tests/integration.sh
+
+# ──── Code quality ────
+
+vet: builder
+	$(DOCKER_RUN) go vet ./...
+
+lint: builder
+	$(DOCKER_RUN) golangci-lint run
+
+# ──── Docker ────
 
 docker:
 	docker build -t tokenhub:$(VERSION) .
 
-docs:
-	@command -v mdbook >/dev/null 2>&1 || { echo "mdbook not found. Install: cargo install mdbook (or: brew install mdbook)"; exit 1; }
-	cd docs && mdbook build
+# ──── Docs ────
 
-docs-serve:
-	@command -v mdbook >/dev/null 2>&1 || { echo "mdbook not found. Install: cargo install mdbook (or: brew install mdbook)"; exit 1; }
-	cd docs && mdbook serve --open
+docs: builder
+	$(DOCKER_RUN) sh -c "cd docs && mdbook build"
+
+docs-serve: builder
+	docker run --rm -v $(CURDIR):/src -w /src -p 3000:3000 $(BUILDER_IMAGE) \
+		sh -c "cd docs && mdbook serve -n 0.0.0.0"
+
+# ──── Release ────
+
+release: docker
+	docker tag tokenhub:$(VERSION) tokenhub:latest
+	@echo "Tagged tokenhub:$(VERSION) as tokenhub:latest"
+
+# ──── Clean ────
 
 clean:
-	rm -rf bin/ docs/book/
+	rm -rf bin/ docs/book/ coverage.out
