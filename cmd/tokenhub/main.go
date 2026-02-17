@@ -60,6 +60,21 @@ func main() {
 		}
 	}()
 
+	// SIGHUP: hot-reload configuration without restarting.
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
+	go func() {
+		for range reload {
+			log.Printf("SIGHUP received, reloading configuration...")
+			newCfg, err := app.LoadConfig()
+			if err != nil {
+				log.Printf("config reload error: %v (keeping current config)", err)
+				continue
+			}
+			srv.Reload(newCfg)
+		}
+	}()
+
 	// Graceful shutdown: drain in-flight requests, then close resources.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

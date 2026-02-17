@@ -175,6 +175,10 @@
         <label>Expires at (optional)</label>
         <input type="date" id="new-key-expiry">
       </div>
+      <div class="field">
+        <label>Monthly Budget USD (0 = unlimited)</label>
+        <input type="number" id="new-key-budget" step="0.01" min="0" value="0" placeholder="0.00">
+      </div>
       <div class="actions">
         <button class="btn" onclick="hideCreateKeyModal()">Cancel</button>
         <button class="btn primary" onclick="createAPIKey()">Create</button>
@@ -326,7 +330,7 @@
       <div class="apikeys-table-wrap">
         <table class="admin-table">
           <thead>
-            <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Expires</th><th>Rotation</th><th>Enabled</th><th>Actions</th></tr>
+            <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Expires</th><th>Rotation</th><th>Budget</th><th>Enabled</th><th>Actions</th></tr>
           </thead>
           <tbody id="apikeys-body"></tbody>
         </table>
@@ -868,7 +872,7 @@
         .then(keys => {
           const tbody = document.getElementById('apikeys-body');
           if (!Array.isArray(keys) || keys.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" style="color:#8a8d9a;text-align:center;">No API keys</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="color:#8a8d9a;text-align:center;">No API keys</td></tr>';
             return;
           }
           tbody.innerHTML = keys.map(k => {
@@ -877,6 +881,7 @@
             const lastUsed = k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'never';
             const expires = k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'never';
             const rotation = k.rotation_days > 0 ? k.rotation_days + 'd' : 'manual';
+            const budget = k.monthly_budget_usd > 0 ? '$' + k.monthly_budget_usd.toFixed(2) : 'unlimited';
             const enabledIcon = k.enabled ? '✓' : '✗';
             const enabledColor = k.enabled ? '#4caf50' : '#f44336';
             return `<tr>
@@ -887,6 +892,7 @@
               <td>${lastUsed}</td>
               <td>${expires}</td>
               <td>${rotation}</td>
+              <td>${budget}</td>
               <td style="color:${enabledColor};font-weight:500">${enabledIcon}</td>
               <td>
                 <button class="btn sm" onclick="rotateKey('${k.id}')">Rotate</button>
@@ -913,8 +919,9 @@
       if (document.getElementById('scope-chat').checked) scopes.push('chat');
       if (document.getElementById('scope-plan').checked) scopes.push('plan');
       const rotation = parseInt(document.getElementById('new-key-rotation').value) || 0;
+      const budget = parseFloat(document.getElementById('new-key-budget').value) || 0;
       const expiryVal = document.getElementById('new-key-expiry').value;
-      const body = { name, scopes: JSON.stringify(scopes), rotation_days: rotation };
+      const body = { name, scopes: JSON.stringify(scopes), rotation_days: rotation, monthly_budget_usd: budget };
       if (expiryVal) body.expires_at = new Date(expiryVal).toISOString();
       fetch('/admin/v1/apikeys', {
         method: 'POST',

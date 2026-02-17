@@ -20,25 +20,34 @@ var sensitiveHeaders = map[string]bool{
 	"set-cookie":      true,
 }
 
+// globalLevel is the dynamic level variable used by the JSON handler.
+// It allows runtime log-level changes via SetLevel without recreating the logger.
+var globalLevel = new(slog.LevelVar)
+
 // Setup initializes the global slog logger with the given level.
 // The returned logger uses a redacting handler that strips sensitive data.
 func Setup(level string) *slog.Logger {
-	var lvl slog.Level
-	switch level {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
+	SetLevel(level)
 
-	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: globalLevel})
 	logger := slog.New(&RedactingHandler{base: base})
 	slog.SetDefault(logger)
 	return logger
+}
+
+// SetLevel changes the global log level dynamically at runtime.
+// Valid values are "debug", "warn", "error"; anything else defaults to "info".
+func SetLevel(level string) {
+	switch level {
+	case "debug":
+		globalLevel.Set(slog.LevelDebug)
+	case "warn":
+		globalLevel.Set(slog.LevelWarn)
+	case "error":
+		globalLevel.Set(slog.LevelError)
+	default:
+		globalLevel.Set(slog.LevelInfo)
+	}
 }
 
 // RedactingHandler wraps an slog.Handler to redact sensitive attribute values.

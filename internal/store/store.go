@@ -7,16 +7,17 @@ import (
 
 // APIKeyRecord is the persisted form of a client API key.
 type APIKeyRecord struct {
-	ID           string     `json:"id"`
-	KeyHash      string     `json:"-"`                     // bcrypt hash, never serialized
-	KeyPrefix    string     `json:"key_prefix"`            // first 8 chars for identification
-	Name         string     `json:"name"`
-	Scopes       string     `json:"scopes"`                // JSON array stored as text
-	CreatedAt    time.Time  `json:"created_at"`
-	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
-	RotationDays int        `json:"rotation_days"`          // 0 = manual rotation only
-	Enabled      bool       `json:"enabled"`
+	ID               string     `json:"id"`
+	KeyHash          string     `json:"-"`                     // bcrypt hash, never serialized
+	KeyPrefix        string     `json:"key_prefix"`            // first 8 chars for identification
+	Name             string     `json:"name"`
+	Scopes           string     `json:"scopes"`                // JSON array stored as text
+	CreatedAt        time.Time  `json:"created_at"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	RotationDays     int        `json:"rotation_days"`          // 0 = manual rotation only
+	MonthlyBudgetUSD float64    `json:"monthly_budget_usd"`     // 0 = unlimited
+	Enabled          bool       `json:"enabled"`
 }
 
 // Store defines the persistence interface for tokenhub.
@@ -35,6 +36,7 @@ type Store interface {
 	// Request log (for audit and dashboard)
 	LogRequest(ctx context.Context, entry RequestLog) error
 	ListRequestLogs(ctx context.Context, limit int, offset int) ([]RequestLog, error)
+	GetMonthlySpend(ctx context.Context, apiKeyID string) (float64, error)
 
 	// Vault persistence
 	SaveVaultBlob(ctx context.Context, salt []byte, data map[string]string) error
@@ -115,6 +117,7 @@ type RequestLog struct {
 	StatusCode       int       `json:"status_code"`
 	ErrorClass       string    `json:"error_class,omitempty"`
 	RequestID        string    `json:"request_id,omitempty"`
+	APIKeyID         string    `json:"api_key_id,omitempty"`
 }
 
 // RewardSummary aggregates reward data per model per token bucket for

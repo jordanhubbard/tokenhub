@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,11 +16,13 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
+	"github.com/jordanhubbard/tokenhub/internal/idempotency"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/ratelimit"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
 	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
+	"github.com/jordanhubbard/tokenhub/internal/tracing"
 	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
 	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
@@ -40,9 +43,11 @@ type Server struct {
 	logger     *slog.Logger
 	temporal   *temporalpkg.Manager        // nil when Temporal disabled
 	prober     *health.Prober              // nil when no probeable adapters
-	rateLimiter *ratelimit.Limiter
-	stopBandit func()                      // nil when Thompson Sampling disabled
-	tsdb       *tsdb.Store                 // nil when TSDB failed to init
+	rateLimiter      *ratelimit.Limiter
+	idempotencyCache *idempotency.Cache        // nil when idempotency disabled
+	otelShutdown     func(context.Context) error // nil when OTel disabled
+	stopBandit       func()                    // nil when Thompson Sampling disabled
+	tsdb             *tsdb.Store               // nil when TSDB failed to init
 
 	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
@@ -50,11 +55,30 @@ type Server struct {
 func NewServer(cfg Config) (*Server, error) {
 	logger := logging.Setup(cfg.LogLevel)
 
+	// Initialize OpenTelemetry tracing (opt-in).
+	otelShutdown, err := tracing.Setup(tracing.Config{
+		Enabled:     cfg.OTelEnabled,
+		Endpoint:    cfg.OTelEndpoint,
+		ServiceName: cfg.OTelServiceName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("otel setup: %w", err)
+	}
+	if cfg.OTelEnabled {
+		logger.Info("opentelemetry tracing enabled",
+			slog.String("endpoint", cfg.OTelEndpoint),
+			slog.String("service", cfg.OTelServiceName),
+		)
+	}
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(logging.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
+	if cfg.OTelEnabled {
+		r.Use(tracing.Middleware())
+	}
 	corsOrigins := cfg.CORSOrigins
 	if len(corsOrigins) == 0 {
 		corsOrigins = []string{"*"}
@@ -180,8 +204,9 @@ func NewServer(cfg Config) (*Server, error) {
 	stopBandit := router.StartRefreshLoop(router.DefaultRefreshConfig(), sampler, fetchRewards, logger)
 	logger.Info("thompson sampling bandit policy initialized")
 
-	// Initialize API key manager.
+	// Initialize API key manager and budget checker.
 	keyMgr := apikey.NewManager(db)
+	budgetChecker := apikey.NewBudgetChecker(db)
 
 	bus := events.NewBus()
 	sc := stats.NewCollector()
@@ -192,18 +217,24 @@ func NewServer(cfg Config) (*Server, error) {
 		logger.Warn("failed to initialize TSDB", slog.String("error", err.Error()))
 	}
 
+	// Initialize idempotency cache (5-minute TTL, 10k max entries).
+	idemCache := idempotency.New(5*time.Minute, 10000)
+	logger.Info("idempotency cache initialized", slog.Duration("ttl", 5*time.Minute), slog.Int("max_entries", 10000))
+
 	s := &Server{
-		cfg:         cfg,
-		r:           r,
-		vault:       v,
-		engine:      eng,
-		store:       db,
-		logger:      logger,
-		prober:      prober,
-		rateLimiter: rl,
-		stopBandit:  stopBandit,
-		tsdb:        ts,
-		stopPrune:   make(chan struct{}),
+		cfg:              cfg,
+		r:                r,
+		vault:            v,
+		engine:           eng,
+		store:            db,
+		logger:           logger,
+		prober:           prober,
+		rateLimiter:      rl,
+		idempotencyCache: idemCache,
+		otelShutdown:     otelShutdown,
+		stopBandit:       stopBandit,
+		tsdb:             ts,
+		stopPrune:        make(chan struct{}),
 	}
 
 	// Start TSDB auto-prune goroutine.
@@ -220,16 +251,18 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	deps := httpapi.Dependencies{
-		Engine:     eng,
-		Vault:      v,
-		Metrics:    m,
-		Store:      db,
-		Health:     ht,
-		EventBus:   bus,
-		Stats:      sc,
-		TSDB:       ts,
-		APIKeyMgr:  keyMgr,
-		AdminToken: cfg.AdminToken,
+		Engine:           eng,
+		Vault:            v,
+		Metrics:          m,
+		Store:            db,
+		Health:           ht,
+		EventBus:         bus,
+		Stats:            sc,
+		TSDB:             ts,
+		APIKeyMgr:        keyMgr,
+		BudgetChecker:    budgetChecker,
+		AdminToken:       cfg.AdminToken,
+		IdempotencyCache: idemCache,
 	}
 
 	// Initialize Temporal workflow engine if enabled.
@@ -276,6 +309,24 @@ func NewServer(cfg Config) (*Server, error) {
 
 func (s *Server) Router() http.Handler { return s.r }
 
+// Reload applies hot-reloadable configuration parameters at runtime without
+// restarting the server. It updates rate limiter settings, routing policy
+// defaults, and the log level.
+func (s *Server) Reload(cfg Config) {
+	s.rateLimiter.UpdateLimits(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	s.engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudget, cfg.DefaultMaxLatencyMs)
+	logging.SetLevel(cfg.LogLevel)
+	s.cfg = cfg
+	s.logger.Info("configuration reloaded",
+		slog.Int("rate_limit_rps", cfg.RateLimitRPS),
+		slog.Int("rate_limit_burst", cfg.RateLimitBurst),
+		slog.String("default_mode", cfg.DefaultMode),
+		slog.Float64("default_max_budget", cfg.DefaultMaxBudget),
+		slog.Int("default_max_latency_ms", cfg.DefaultMaxLatencyMs),
+		slog.String("log_level", cfg.LogLevel),
+	)
+}
+
 func (s *Server) Close() error {
 	close(s.stopPrune)
 	if s.stopBandit != nil {
@@ -287,8 +338,18 @@ func (s *Server) Close() error {
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
 	}
+	if s.idempotencyCache != nil {
+		s.idempotencyCache.Stop()
+	}
 	if s.temporal != nil {
 		s.temporal.Stop()
+	}
+	if s.otelShutdown != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.otelShutdown(ctx); err != nil {
+			s.logger.Warn("otel shutdown error", slog.String("error", err.Error()))
+		}
 	}
 	if s.tsdb != nil {
 		s.tsdb.Stop()

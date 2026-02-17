@@ -129,6 +129,8 @@ func newTestConfig() Config {
 		DefaultMaxBudget:    0.05,
 		DefaultMaxLatencyMs: 20000,
 		ProviderTimeoutSecs: 30,
+		RateLimitRPS:        60,
+		RateLimitBurst:      120,
 	}
 }
 
@@ -190,5 +192,60 @@ func TestServerClose(t *testing.T) {
 	err = srv.Close()
 	if err != nil {
 		t.Fatalf("Close() error: %v", err)
+	}
+}
+
+func TestServerReload(t *testing.T) {
+	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
+	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
+	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
+	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
+
+	cfg := newTestConfig()
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer() error: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	// Verify initial config.
+	if srv.cfg.RateLimitRPS != 60 {
+		t.Fatalf("initial RateLimitRPS = %d, want 60", srv.cfg.RateLimitRPS)
+	}
+	if srv.cfg.DefaultMode != "normal" {
+		t.Fatalf("initial DefaultMode = %q, want %q", srv.cfg.DefaultMode, "normal")
+	}
+
+	// Reload with updated configuration.
+	newCfg := cfg
+	newCfg.RateLimitRPS = 100
+	newCfg.RateLimitBurst = 200
+	newCfg.DefaultMode = "budget"
+	newCfg.DefaultMaxBudget = 1.0
+	newCfg.DefaultMaxLatencyMs = 5000
+	newCfg.LogLevel = "debug"
+
+	srv.Reload(newCfg)
+
+	// Verify stored config was updated.
+	if srv.cfg.RateLimitRPS != 100 {
+		t.Errorf("after Reload RateLimitRPS = %d, want 100", srv.cfg.RateLimitRPS)
+	}
+	if srv.cfg.RateLimitBurst != 200 {
+		t.Errorf("after Reload RateLimitBurst = %d, want 200", srv.cfg.RateLimitBurst)
+	}
+	if srv.cfg.DefaultMode != "budget" {
+		t.Errorf("after Reload DefaultMode = %q, want %q", srv.cfg.DefaultMode, "budget")
+	}
+	if srv.cfg.DefaultMaxBudget != 1.0 {
+		t.Errorf("after Reload DefaultMaxBudget = %f, want 1.0", srv.cfg.DefaultMaxBudget)
+	}
+	if srv.cfg.DefaultMaxLatencyMs != 5000 {
+		t.Errorf("after Reload DefaultMaxLatencyMs = %d, want 5000", srv.cfg.DefaultMaxLatencyMs)
+	}
+	if srv.cfg.LogLevel != "debug" {
+		t.Errorf("after Reload LogLevel = %q, want %q", srv.cfg.LogLevel, "debug")
 	}
 }

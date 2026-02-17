@@ -14,10 +14,11 @@ import (
 // APIKeysCreateHandler handles POST /admin/v1/apikeys — creates a new API key.
 func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 	type createReq struct {
-		Name         string  `json:"name"`
-		Scopes       string  `json:"scopes"`        // JSON array, e.g. '["chat","plan"]'
-		RotationDays int     `json:"rotation_days"`
-		ExpiresIn    *string `json:"expires_in"`     // duration string, e.g. "720h"
+		Name             string  `json:"name"`
+		Scopes           string  `json:"scopes"`             // JSON array, e.g. '["chat","plan"]'
+		RotationDays     int     `json:"rotation_days"`
+		ExpiresIn        *string `json:"expires_in"`          // duration string, e.g. "720h"
+		MonthlyBudgetUSD float64 `json:"monthly_budget_usd"` // 0 = unlimited
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
@@ -53,6 +54,15 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 		if err != nil {
 			http.Error(w, "failed to create key: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		// Set monthly budget if specified.
+		if req.MonthlyBudgetUSD > 0 {
+			rec.MonthlyBudgetUSD = req.MonthlyBudgetUSD
+			if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {
+				http.Error(w, "failed to set budget: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 
 		if d.Store != nil {
@@ -202,6 +212,14 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 				return
 			}
 			rec.RotationDays = int(f)
+		}
+		if v, ok := patch["monthly_budget_usd"]; ok {
+			f, ok := v.(float64)
+			if !ok || f < 0 {
+				http.Error(w, "monthly_budget_usd must be a non-negative number", http.StatusBadRequest)
+				return
+			}
+			rec.MonthlyBudgetUSD = f
 		}
 
 		if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {

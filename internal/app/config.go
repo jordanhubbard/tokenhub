@@ -27,6 +27,11 @@ type Config struct {
 	RateLimitRPS   int      // requests per second per IP
 	RateLimitBurst int      // burst capacity per IP
 
+	// OpenTelemetry tracing (opt-in).
+	OTelEnabled     bool   // TOKENHUB_OTEL_ENABLED, default false
+	OTelEndpoint    string // TOKENHUB_OTEL_ENDPOINT, default "localhost:4318"
+	OTelServiceName string // TOKENHUB_OTEL_SERVICE_NAME, default "tokenhub"
+
 	// Temporal workflow engine.
 	TemporalEnabled   bool
 	TemporalHostPort  string
@@ -51,6 +56,10 @@ func LoadConfig() (Config, error) {
 		CORSOrigins:    getEnvStringSlice("TOKENHUB_CORS_ORIGINS", nil),
 		RateLimitRPS:   getEnvInt("TOKENHUB_RATE_LIMIT_RPS", 60),
 		RateLimitBurst: getEnvInt("TOKENHUB_RATE_LIMIT_BURST", 120),
+
+		OTelEnabled:     getEnvBool("TOKENHUB_OTEL_ENABLED", false),
+		OTelEndpoint:    getEnv("TOKENHUB_OTEL_ENDPOINT", "localhost:4318"),
+		OTelServiceName: getEnv("TOKENHUB_OTEL_SERVICE_NAME", "tokenhub"),
 
 		TemporalEnabled:   getEnvBool("TOKENHUB_TEMPORAL_ENABLED", false),
 		TemporalHostPort:  getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),

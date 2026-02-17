@@ -17,6 +17,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
+	"github.com/jordanhubbard/tokenhub/internal/idempotency"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
@@ -36,10 +37,14 @@ type Dependencies struct {
 	TSDB     *tsdb.Store
 
 	// API key management (nil if not configured).
-	APIKeyMgr *apikey.Manager
+	APIKeyMgr     *apikey.Manager
+	BudgetChecker *apikey.BudgetChecker
 
 	// Admin endpoint authentication token (empty = no auth).
 	AdminToken string
+
+	// Idempotency cache (nil = idempotency disabled).
+	IdempotencyCache *idempotency.Cache
 
 	// Temporal workflow client (nil when Temporal is disabled).
 	TemporalClient    client.Client
@@ -98,9 +103,13 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Route("/v1", func(r chi.Router) {
+		// Apply idempotency middleware before auth so cached responses are replayed early.
+		if d.IdempotencyCache != nil {
+			r.Use(idempotency.Middleware(d.IdempotencyCache))
+		}
 		// Apply API key auth middleware if key manager is configured.
 		if d.APIKeyMgr != nil {
-			r.Use(apikey.AuthMiddleware(d.APIKeyMgr))
+			r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker))
 		}
 		r.Post("/chat", ChatHandler(d))
 		r.Post("/plan", PlanHandler(d))

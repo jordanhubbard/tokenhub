@@ -127,6 +127,38 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+
+	// Backwards-compatible ALTER TABLE migrations.
+	// Each migration is idempotent: we check if the column exists before adding.
+	alterMigrations := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"request_logs", "api_key_id", "ALTER TABLE request_logs ADD COLUMN api_key_id TEXT NOT NULL DEFAULT ''"},
+		{"api_keys", "monthly_budget_usd", "ALTER TABLE api_keys ADD COLUMN monthly_budget_usd REAL NOT NULL DEFAULT 0"},
+	}
+	for _, m := range alterMigrations {
+		var count int
+		err := s.db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
+			m.table, m.column).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("migrate check column %s.%s: %w", m.table, m.column, err)
+		}
+		if count == 0 {
+			if _, err := s.db.ExecContext(ctx, m.ddl); err != nil {
+				return fmt.Errorf("migrate alter %s add %s: %w", m.table, m.column, err)
+			}
+		}
+	}
+
+	// Add index on request_logs.api_key_id for budget queries.
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id)`); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
 	return nil
 }
 
@@ -232,10 +264,10 @@ func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LogRequest(ctx context.Context, entry RequestLog) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Timestamp, entry.ModelID, entry.ProviderID, entry.Mode,
-		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID)
+		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID, entry.APIKeyID)
 	return err
 }
 
@@ -301,7 +333,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id
+		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id
 		 FROM request_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -313,13 +345,27 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		var l RequestLog
 		var ts string
 		if err := rows.Scan(&l.ID, &ts, &l.ModelID, &l.ProviderID, &l.Mode,
-			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID); err != nil {
+			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID, &l.APIKeyID); err != nil {
 			return nil, err
 		}
 		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()
+}
+
+// GetMonthlySpend returns the total estimated cost for an API key in the current month.
+func (s *SQLiteStore) GetMonthlySpend(ctx context.Context, apiKeyID string) (float64, error) {
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var total float64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM request_logs WHERE api_key_id = ? AND timestamp >= ?`,
+		apiKeyID, monthStart.Format(time.RFC3339)).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("get monthly spend: %w", err)
+	}
+	return total, nil
 }
 
 // Audit Logs
@@ -392,11 +438,11 @@ func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key APIKeyRecord) error 
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.ID, key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
 		key.CreatedAt.UTC().Format(time.RFC3339), lastUsed, expires,
-		key.RotationDays, enabledInt)
+		key.RotationDays, enabledInt, key.MonthlyBudgetUSD)
 	return err
 }
 
@@ -406,10 +452,10 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 	var lastUsed, expires sql.NullString
 	var enabledInt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
 		 FROM api_keys WHERE id = ?`, id).
 		Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt)
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -431,7 +477,7 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 
 func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]APIKeyRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
 		 FROM api_keys WHERE key_prefix = ? AND enabled = 1`, prefix)
 	if err != nil {
 		return nil, err
@@ -445,7 +491,7 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 		var lastUsed, expires sql.NullString
 		var enabledInt int
 		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt); err != nil {
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
 			return nil, err
 		}
 		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -465,7 +511,7 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 
 func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
 		 FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -479,7 +525,7 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 		var lastUsed, expires sql.NullString
 		var enabledInt int
 		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt); err != nil {
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
 			return nil, err
 		}
 		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -512,10 +558,10 @@ func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key APIKeyRecord) error 
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?
+		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?, monthly_budget_usd=?
 		 WHERE id=?`,
 		key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
-		lastUsed, expires, key.RotationDays, enabledInt, key.ID)
+		lastUsed, expires, key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.ID)
 	return err
 }
 

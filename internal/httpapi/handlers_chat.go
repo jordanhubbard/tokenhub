@@ -247,6 +247,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 						StatusCode: http.StatusBadGateway,
 						ErrorClass: "routing_failure",
 						RequestID:  middleware.GetReqID(r.Context()),
+						APIKeyID:   apiKeyID,
 					}))
 				}
 				if d.Store != nil {
@@ -300,6 +301,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					LatencyMs:        latencyMs,
 					StatusCode:       http.StatusOK,
 					RequestID:        middleware.GetReqID(r.Context()),
+					APIKeyID:         apiKeyID,
 				}))
 			}
 			if d.Store != nil {

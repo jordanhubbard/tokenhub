@@ -127,6 +127,16 @@ func (l *Limiter) evictOldest() {
 	}
 }
 
+// UpdateLimits changes the rate and burst parameters at runtime.
+// Existing per-IP buckets are not reset; they will use the new burst cap on
+// their next refill cycle.
+func (l *Limiter) UpdateLimits(rate, burst int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rate = rate
+	l.burst = burst
+}
+
 // Stop terminates the background cleanup goroutine.
 func (l *Limiter) Stop() {
 	close(l.stop)

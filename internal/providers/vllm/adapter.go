@@ -1,11 +1,8 @@
 package vllm
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -135,74 +132,9 @@ func (a *Adapter) SendStream(ctx context.Context, model string, req router.Reque
 }
 
 func (a *Adapter) makeStreamRequest(ctx context.Context, baseURL, endpoint string, payload any) (io.ReadCloser, error) {
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+endpoint, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	// Forward request ID for tracing.
-	if reqID := providers.GetRequestID(ctx); reqID != "" {
-		req.Header.Set("X-Request-ID", reqID)
-	}
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read error response: %w", err)
-		}
-		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
-		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, se
-	}
-
-	return resp.Body, nil
+	return providers.DoStreamRequest(ctx, a.client, baseURL+endpoint, payload, nil)
 }
 
 func (a *Adapter) makeRequest(ctx context.Context, baseURL, endpoint string, payload any) ([]byte, error) {
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+endpoint, bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	// Forward request ID for tracing.
-	if reqID := providers.GetRequestID(ctx); reqID != "" {
-		req.Header.Set("X-Request-ID", reqID)
-	}
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
-		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, se
-	}
-
-	return body, nil
+	return providers.DoRequest(ctx, a.client, baseURL+endpoint, payload, nil)
 }
