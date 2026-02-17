@@ -20,11 +20,11 @@ func VaultLockHandler(d Dependencies) http.HandlerFunc {
 		}
 		d.Vault.Lock()
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "vault.lock",
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -49,15 +49,15 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 			salt := d.Vault.Salt()
 			data := d.Vault.Export()
 			if salt != nil {
-				_ = d.Store.SaveVaultBlob(r.Context(), salt, data)
+				warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
 			}
 		}
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "vault.unlock",
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -104,11 +104,11 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 
 		// Log audit entry.
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "vault.rotate",
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -145,7 +145,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 				salt := d.Vault.Salt()
 				data := d.Vault.Export()
 				if salt != nil {
-					_ = d.Store.SaveVaultBlob(r.Context(), salt, data)
+					warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
 				}
 			}
 		}
@@ -157,12 +157,12 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "provider.upsert",
 				Resource:  req.ID,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "cred_store": req.CredStore})
 	}
@@ -197,12 +197,12 @@ func ProvidersDeleteHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "provider.delete",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -242,7 +242,7 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 		d.Engine.RegisterModel(m)
 		// Persist to store.
 		if d.Store != nil {
-			_ = d.Store.UpsertModel(r.Context(), store.ModelRecord{
+			warnOnErr("upsert_model", d.Store.UpsertModel(r.Context(), store.ModelRecord{
 				ID:               m.ID,
 				ProviderID:       m.ProviderID,
 				Weight:           m.Weight,
@@ -250,15 +250,15 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 				InputPer1K:       m.InputPer1K,
 				OutputPer1K:      m.OutputPer1K,
 				Enabled:          m.Enabled,
-			})
+			}))
 		}
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "model.upsert",
 				Resource:  m.ID,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -293,12 +293,12 @@ func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "model.delete",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
@@ -397,12 +397,12 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			Enabled:          existing.Enabled,
 		})
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "model.patch",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "model": existing})
@@ -460,11 +460,11 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 		// Apply to engine.
 		d.Engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudgetUSD, cfg.DefaultMaxLatencyMs)
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "routing-config.update",
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}

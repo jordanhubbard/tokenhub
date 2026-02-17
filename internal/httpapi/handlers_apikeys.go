@@ -56,12 +56,12 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.create",
 				Resource:  rec.ID,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -120,12 +120,12 @@ func APIKeysRotateHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.rotate",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -210,12 +210,12 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.update",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -242,12 +242,12 @@ func APIKeysDeleteHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			_ = d.Store.LogAudit(r.Context(), store.AuditEntry{
+			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.revoke",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
-			})
+			}))
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

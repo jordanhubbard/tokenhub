@@ -121,17 +121,17 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 					d.Metrics.RequestsTotal.WithLabelValues(mode, "", "", "error").Inc()
 				}
 				if d.Store != nil {
-					_ = d.Store.LogRequest(r.Context(), store.RequestLog{
+					warnOnErr("log_request", d.Store.LogRequest(r.Context(), store.RequestLog{
 						Timestamp:  time.Now().UTC(),
 						Mode:       mode,
 						LatencyMs:  latencyMs,
 						StatusCode: http.StatusBadGateway,
 						ErrorClass: "routing_failure",
 						RequestID:  middleware.GetReqID(r.Context()),
-					})
+					}))
 				}
 				if d.Store != nil {
-					_ = d.Store.LogReward(r.Context(), store.RewardEntry{
+					warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
 						Timestamp:   time.Now().UTC(),
 						RequestID:   middleware.GetReqID(r.Context()),
 						Mode:        mode,
@@ -140,7 +140,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 						Success:     false,
 						ErrorClass:  "routing_failure",
 						Reward:      router.ComputeReward(float64(latencyMs), 0, false, 0),
-					})
+					}))
 				}
 				if d.EventBus != nil {
 					d.EventBus.Publish(events.Event{
@@ -169,7 +169,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				d.Metrics.CostUSD.WithLabelValues(decision.ModelID, decision.ProviderID).Add(decision.EstimatedCostUSD)
 			}
 			if d.Store != nil {
-				_ = d.Store.LogRequest(r.Context(), store.RequestLog{
+				warnOnErr("log_request", d.Store.LogRequest(r.Context(), store.RequestLog{
 					Timestamp:        time.Now().UTC(),
 					ModelID:          decision.ModelID,
 					ProviderID:       decision.ProviderID,
@@ -178,10 +178,10 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 					LatencyMs:        latencyMs,
 					StatusCode:       http.StatusOK,
 					RequestID:        middleware.GetReqID(r.Context()),
-				})
+				}))
 			}
 			if d.Store != nil {
-				_ = d.Store.LogReward(r.Context(), store.RewardEntry{
+				warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
 					Timestamp:  time.Now().UTC(),
 					RequestID:  middleware.GetReqID(r.Context()),
 					ModelID:    decision.ModelID,
@@ -191,7 +191,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 					CostUSD:    decision.EstimatedCostUSD,
 					Success:    true,
 					Reward:     router.ComputeReward(float64(latencyMs), decision.EstimatedCostUSD, true, 0),
-				})
+				}))
 			}
 			if d.EventBus != nil {
 				d.EventBus.Publish(events.Event{

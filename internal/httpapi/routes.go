@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -181,13 +182,20 @@ func mountDocs(r chi.Router) {
 func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientIP := r.Header.Get("X-Real-IP")
+			if clientIP == "" {
+				clientIP = r.RemoteAddr
+			}
+
 			auth := r.Header.Get("Authorization")
 			if !strings.HasPrefix(auth, "Bearer ") {
+				slog.Warn("admin auth: missing token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "missing admin token", http.StatusUnauthorized)
 				return
 			}
 			provided := strings.TrimPrefix(auth, "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				slog.Warn("admin auth: invalid token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid admin token", http.StatusUnauthorized)
 				return
 			}

@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -18,6 +20,18 @@ import (
 	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
 	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 )
+
+// maxStreamBytes limits streaming response size to prevent memory exhaustion (100 MB).
+const maxStreamBytes = 100 * 1024 * 1024
+
+// warnOnErr logs a warning if a background store operation fails.
+// Used for audit logs, request logs, and reward logs that should not block
+// the response but whose failures must be visible.
+func warnOnErr(op string, err error) {
+	if err != nil {
+		slog.Warn("store operation failed", slog.String("op", op), slog.String("error", err.Error()))
+	}
+}
 
 type ChatRequest struct {
 	// Side-channel negotiation
@@ -140,16 +154,37 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 
 			flusher, _ := w.(http.Flusher)
-			buf := make([]byte, 4096)
+			buf := make([]byte, 32*1024)
+			var totalBytes int64
+			reqID := middleware.GetReqID(r.Context())
 			for {
 				n, readErr := body.Read(buf)
 				if n > 0 {
-					_, _ = w.Write(buf[:n])
+					totalBytes += int64(n)
+					if totalBytes > maxStreamBytes {
+						slog.Warn("stream: max size exceeded, terminating",
+							slog.String("request_id", reqID),
+							slog.String("model", decision.ModelID),
+							slog.Int64("bytes", totalBytes))
+						break
+					}
+					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+						slog.Warn("stream: write error",
+							slog.String("request_id", reqID),
+							slog.String("error", writeErr.Error()))
+						break
+					}
 					if flusher != nil {
 						flusher.Flush()
 					}
 				}
 				if readErr != nil {
+					if readErr != io.EOF {
+						slog.Warn("stream: read error",
+							slog.String("request_id", reqID),
+							slog.String("model", decision.ModelID),
+							slog.String("error", readErr.Error()))
+					}
 					break
 				}
 			}
@@ -205,17 +240,17 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					d.Metrics.RequestsTotal.WithLabelValues(policy.Mode, "", "", "error").Inc()
 				}
 				if d.Store != nil {
-					_ = d.Store.LogRequest(r.Context(), store.RequestLog{
+					warnOnErr("log_request", d.Store.LogRequest(r.Context(), store.RequestLog{
 						Timestamp:  time.Now().UTC(),
 						Mode:       policy.Mode,
 						LatencyMs:  latencyMs,
 						StatusCode: http.StatusBadGateway,
 						ErrorClass: "routing_failure",
 						RequestID:  middleware.GetReqID(r.Context()),
-					})
+					}))
 				}
 				if d.Store != nil {
-					_ = d.Store.LogReward(r.Context(), store.RewardEntry{
+					warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
 						Timestamp:       time.Now().UTC(),
 						RequestID:       middleware.GetReqID(r.Context()),
 						Mode:            policy.Mode,
@@ -227,7 +262,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 						Success:         false,
 						ErrorClass:      "routing_failure",
 						Reward:          router.ComputeReward(float64(latencyMs), 0, false, latencyBudgetMs),
-					})
+					}))
 				}
 				if d.EventBus != nil {
 					d.EventBus.Publish(events.Event{
@@ -256,7 +291,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				d.Metrics.CostUSD.WithLabelValues(decision.ModelID, decision.ProviderID).Add(decision.EstimatedCostUSD)
 			}
 			if d.Store != nil {
-				_ = d.Store.LogRequest(r.Context(), store.RequestLog{
+				warnOnErr("log_request", d.Store.LogRequest(r.Context(), store.RequestLog{
 					Timestamp:        time.Now().UTC(),
 					ModelID:          decision.ModelID,
 					ProviderID:       decision.ProviderID,
@@ -265,10 +300,10 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					LatencyMs:        latencyMs,
 					StatusCode:       http.StatusOK,
 					RequestID:        middleware.GetReqID(r.Context()),
-				})
+				}))
 			}
 			if d.Store != nil {
-				_ = d.Store.LogReward(r.Context(), store.RewardEntry{
+				warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
 					Timestamp:       time.Now().UTC(),
 					RequestID:       middleware.GetReqID(r.Context()),
 					ModelID:         decision.ModelID,
@@ -281,7 +316,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					CostUSD:         decision.EstimatedCostUSD,
 					Success:         true,
 					Reward:          router.ComputeReward(float64(latencyMs), decision.EstimatedCostUSD, true, latencyBudgetMs),
-				})
+				}))
 			}
 			if d.EventBus != nil {
 				d.EventBus.Publish(events.Event{

@@ -10,11 +10,12 @@ import (
 
 // Limiter is a per-IP token bucket rate limiter.
 type Limiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	rate    int           // tokens added per interval
-	burst   int           // max tokens (bucket capacity)
+	mu       sync.Mutex
+	buckets  map[string]*bucket
+	rate     int           // tokens added per interval
+	burst    int           // max tokens (bucket capacity)
 	interval time.Duration // refill interval
+	stop     chan struct{}
 }
 
 type bucket struct {
@@ -30,6 +31,7 @@ func New(rate, burst int, interval time.Duration) *Limiter {
 		rate:     rate,
 		burst:    burst,
 		interval: interval,
+		stop:     make(chan struct{}),
 	}
 	// Periodically clean up stale entries.
 	go l.cleanup()
@@ -81,17 +83,27 @@ func (l *Limiter) allow(key string) bool {
 	return true
 }
 
+// Stop terminates the background cleanup goroutine.
+func (l *Limiter) Stop() {
+	close(l.stop)
+}
+
 func (l *Limiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		l.mu.Lock()
-		cutoff := time.Now().Add(-10 * time.Minute)
-		for k, b := range l.buckets {
-			if b.lastFill.Before(cutoff) {
-				delete(l.buckets, k)
+	for {
+		select {
+		case <-ticker.C:
+			l.mu.Lock()
+			cutoff := time.Now().Add(-10 * time.Minute)
+			for k, b := range l.buckets {
+				if b.lastFill.Before(cutoff) {
+					delete(l.buckets, k)
+				}
 			}
+			l.mu.Unlock()
+		case <-l.stop:
+			return
 		}
-		l.mu.Unlock()
 	}
 }

@@ -34,13 +34,14 @@ type Server struct {
 
 	r *chi.Mux
 
-	vault    *vault.Vault
-	engine   *router.Engine
-	store    store.Store
-	logger   *slog.Logger
-	temporal  *temporalpkg.Manager // nil when Temporal disabled
-	prober    *health.Prober      // nil when no probeable adapters
-	stopBandit func()             // nil when Thompson Sampling disabled
+	vault      *vault.Vault
+	engine     *router.Engine
+	store      store.Store
+	logger     *slog.Logger
+	temporal   *temporalpkg.Manager        // nil when Temporal disabled
+	prober     *health.Prober              // nil when no probeable adapters
+	rateLimiter *ratelimit.Limiter
+	stopBandit func()                      // nil when Thompson Sampling disabled
 
 	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
@@ -187,15 +188,16 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:        cfg,
-		r:          r,
-		vault:      v,
-		engine:     eng,
-		store:      db,
-		logger:     logger,
-		prober:     prober,
-		stopBandit: stopBandit,
-		stopPrune:  make(chan struct{}),
+		cfg:         cfg,
+		r:           r,
+		vault:       v,
+		engine:      eng,
+		store:       db,
+		logger:      logger,
+		prober:      prober,
+		rateLimiter: rl,
+		stopBandit:  stopBandit,
+		stopPrune:   make(chan struct{}),
 	}
 
 	// Start TSDB auto-prune goroutine.
@@ -274,6 +276,9 @@ func (s *Server) Close() error {
 	}
 	if s.prober != nil {
 		s.prober.Stop()
+	}
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
 	}
 	if s.temporal != nil {
 		s.temporal.Stop()

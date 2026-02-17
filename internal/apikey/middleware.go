@@ -2,6 +2,7 @@ package apikey
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -25,31 +26,41 @@ func FromContext(ctx context.Context) *store.APIKeyRecord {
 func AuthMiddleware(mgr *Manager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientIP := r.Header.Get("X-Real-IP")
+			if clientIP == "" {
+				clientIP = r.RemoteAddr
+			}
+
 			auth := r.Header.Get("Authorization")
 			if auth == "" {
+				slog.Warn("api key auth: missing token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "authorization required", http.StatusUnauthorized)
 				return
 			}
 
 			if !strings.HasPrefix(auth, "Bearer ") {
+				slog.Warn("api key auth: invalid format", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid authorization format", http.StatusUnauthorized)
 				return
 			}
 			token := strings.TrimPrefix(auth, "Bearer ")
 
 			if !strings.HasPrefix(token, keyPrefix) {
+				slog.Warn("api key auth: invalid prefix", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid api key format", http.StatusUnauthorized)
 				return
 			}
 
 			rec, err := mgr.Validate(r.Context(), token)
 			if err != nil {
+				slog.Warn("api key auth: validation failed", slog.String("ip", clientIP), slog.String("path", r.URL.Path), slog.String("error", err.Error()))
 				http.Error(w, "invalid api key", http.StatusUnauthorized)
 				return
 			}
 
 			// Check scope for this endpoint.
 			if !CheckScope(rec, r.URL.Path) {
+				slog.Warn("api key auth: insufficient scope", slog.String("ip", clientIP), slog.String("key_id", rec.ID), slog.String("path", r.URL.Path))
 				http.Error(w, "insufficient scope", http.StatusForbidden)
 				return
 			}
