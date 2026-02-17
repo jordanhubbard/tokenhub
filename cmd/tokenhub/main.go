@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,23 @@ import (
 var version = "dev"
 
 func main() {
+	// Built-in health check mode for Docker HEALTHCHECK (distroless has no curl).
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		addr := os.Getenv("TOKENHUB_LISTEN_ADDR")
+		if addr == "" {
+			addr = ":8080"
+		}
+		resp, err := http.Get(fmt.Sprintf("http://localhost%s/healthz", addr))
+		if err != nil {
+			os.Exit(1)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	log.Printf("tokenhub version %s", version)
 	cfg, err := app.LoadConfig()
 	if err != nil {

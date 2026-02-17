@@ -22,6 +22,15 @@ TokenHub is configured entirely via environment variables. All variables are opt
 | `TOKENHUB_DEFAULT_MAX_BUDGET_USD` | `0.05` | Default max cost per request (USD) |
 | `TOKENHUB_DEFAULT_MAX_LATENCY_MS` | `20000` | Default max latency (milliseconds) |
 
+### Security & Hardening
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_ADMIN_TOKEN` | — | Bearer token for `/admin/v1/*` access (required in production) |
+| `TOKENHUB_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins |
+| `TOKENHUB_RATE_LIMIT_RPS` | `60` | Max requests per second per IP |
+| `TOKENHUB_RATE_LIMIT_BURST` | `120` | Burst capacity per IP |
+
 ### Provider API Keys
 
 | Variable | Default | Description |
@@ -58,6 +67,12 @@ export TOKENHUB_LOG_LEVEL="info"
 export TOKENHUB_DB_DSN="file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 export TOKENHUB_VAULT_ENABLED="true"
 export TOKENHUB_PROVIDER_TIMEOUT_SECS="30"
+
+# Security
+export TOKENHUB_ADMIN_TOKEN="your-secret-admin-token"
+export TOKENHUB_CORS_ORIGINS="https://app.example.com"
+export TOKENHUB_RATE_LIMIT_RPS="100"
+export TOKENHUB_RATE_LIMIT_BURST="200"
 
 # Routing
 export TOKENHUB_DEFAULT_MODE="normal"

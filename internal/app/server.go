@@ -13,12 +13,13 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
-	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
+	"github.com/jordanhubbard/tokenhub/internal/ratelimit"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
+	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
 	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
 	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
@@ -52,13 +53,21 @@ func NewServer(cfg Config) (*Server, error) {
 	r.Use(middleware.RealIP)
 	r.Use(logging.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
+	corsOrigins := cfg.CORSOrigins
+	if len(corsOrigins) == 0 {
+		corsOrigins = []string{"*"}
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
 		AllowCredentials: false,
 		MaxAge:           300,
 	}))
+
+	// Per-IP rate limiting.
+	rl := ratelimit.New(cfg.RateLimitRPS, cfg.RateLimitBurst, time.Second)
+	r.Use(rl.Middleware)
 
 	v, err := vault.New(cfg.VaultEnabled)
 	if err != nil {
@@ -194,16 +203,25 @@ func NewServer(cfg Config) (*Server, error) {
 		go s.tsdbPruneLoop(ts)
 	}
 
+	// Log security warnings.
+	if cfg.AdminToken == "" {
+		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — admin endpoints are UNPROTECTED")
+	}
+	if len(cfg.CORSOrigins) == 0 {
+		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")
+	}
+
 	deps := httpapi.Dependencies{
-		Engine:    eng,
-		Vault:     v,
-		Metrics:   m,
-		Store:     db,
-		Health:    ht,
-		EventBus:  bus,
-		Stats:     sc,
-		TSDB:      ts,
-		APIKeyMgr: keyMgr,
+		Engine:     eng,
+		Vault:      v,
+		Metrics:    m,
+		Store:      db,
+		Health:     ht,
+		EventBus:   bus,
+		Stats:      sc,
+		TSDB:       ts,
+		APIKeyMgr:  keyMgr,
+		AdminToken: cfg.AdminToken,
 	}
 
 	// Initialize Temporal workflow engine if enabled.

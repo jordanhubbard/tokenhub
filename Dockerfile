@@ -27,4 +27,6 @@ COPY --from=build /src/docs/book /docs/book
 COPY --from=build /src/config/config.example.yaml /config/config.yaml
 USER nonroot:nonroot
 EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["/tokenhub", "-healthcheck"]
 ENTRYPOINT ["/tokenhub"]

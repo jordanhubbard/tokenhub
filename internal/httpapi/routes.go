@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	tokenhub "github.com/jordanhubbard/tokenhub"
@@ -34,6 +36,9 @@ type Dependencies struct {
 
 	// API key management (nil if not configured).
 	APIKeyMgr *apikey.Manager
+
+	// Admin endpoint authentication token (empty = no auth).
+	AdminToken string
 
 	// Temporal workflow client (nil when Temporal is disabled).
 	TemporalClient    client.Client
@@ -101,6 +106,11 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Route("/admin/v1", func(r chi.Router) {
+		// Protect admin endpoints when an admin token is configured.
+		if d.AdminToken != "" {
+			r.Use(adminAuthMiddleware(d.AdminToken))
+		}
+
 		// API key management endpoints.
 		r.Post("/apikeys", APIKeysCreateHandler(d))
 		r.Get("/apikeys", APIKeysListHandler(d))
@@ -164,6 +174,25 @@ func mountDocs(r chi.Router) {
 			})
 			return
 		}
+	}
+}
+
+// adminAuthMiddleware checks for a valid Bearer token on admin endpoints.
+func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") {
+				http.Error(w, "missing admin token", http.StatusUnauthorized)
+				return
+			}
+			provided := strings.TrimPrefix(auth, "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				http.Error(w, "invalid admin token", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 

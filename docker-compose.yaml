@@ -10,6 +10,10 @@ services:
       - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
       - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
       - TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000
+      - TOKENHUB_ADMIN_TOKEN=${TOKENHUB_ADMIN_TOKEN}
+      - TOKENHUB_CORS_ORIGINS=${TOKENHUB_CORS_ORIGINS}
+      - TOKENHUB_RATE_LIMIT_RPS=${TOKENHUB_RATE_LIMIT_RPS:-60}
+      - TOKENHUB_RATE_LIMIT_BURST=${TOKENHUB_RATE_LIMIT_BURST:-120}
       - TOKENHUB_TEMPORAL_ENABLED=${TOKENHUB_TEMPORAL_ENABLED:-false}
       - TOKENHUB_TEMPORAL_HOST=temporal:7233
       - TOKENHUB_TEMPORAL_NAMESPACE=${TOKENHUB_TEMPORAL_NAMESPACE:-tokenhub}
@@ -17,8 +21,14 @@ services:
     volumes:
       - tokenhub_data:/data
     depends_on:
-      - vllm-1
-      - temporal
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "2"
 
   temporal:
     image: temporalio/auto-setup:latest
@@ -28,6 +38,18 @@ services:
       - DB=sqlite
     volumes:
       - temporal_data:/etc/temporal/data
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1"
 
   temporal-ui:
     image: temporalio/ui:latest
@@ -36,13 +58,21 @@ services:
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
     depends_on:
-      - temporal
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
 
   # Minimal vLLM placeholders (replace with your actual vLLM deployments)
   vllm-1:
     image: nginx:alpine
     ports:
       - "8000:80"
+    restart: unless-stopped
 
 volumes:
   tokenhub_data:

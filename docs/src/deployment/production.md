@@ -10,12 +10,16 @@ Use this checklist when deploying TokenHub to production.
 - [ ] **Create API keys** for all client applications
 - [ ] **Configure TSDB retention** appropriate for your storage budget
 
+## Security Hardening
+
+- [ ] **Set `TOKENHUB_ADMIN_TOKEN`**: Required to protect `/admin/v1/*` endpoints with Bearer token auth
+- [ ] **Set `TOKENHUB_CORS_ORIGINS`**: Restrict CORS to your domain(s) (e.g., `https://app.example.com`)
+- [ ] **Rate limiting**: Review `TOKENHUB_RATE_LIMIT_RPS` (default: 60/s) and `TOKENHUB_RATE_LIMIT_BURST` (default: 120) for your traffic patterns
+
 ## Network Security
 
 - [ ] **TLS termination**: Place TokenHub behind a reverse proxy (nginx, Caddy, Traefik) with TLS
-- [ ] **Restrict admin endpoints**: Only expose `/admin/v1/*` to trusted networks
 - [ ] **Firewall rules**: Only allow inbound traffic on the configured listen port
-- [ ] **CORS configuration**: Review CORS settings in `server.go` for your domain requirements
 
 ### Example nginx Configuration
 
