@@ -88,7 +88,7 @@ groups:
       # Rate limiting kicking in frequently.
       - alert: TokenHubHighRateLimiting
         expr: |
-          sum(rate(tokenhub_requests_total{status="rate_limited"}[5m])) > 10
+          rate(tokenhub_rate_limited_total[5m]) > 10
         for: 5m
         labels:
           severity: warning

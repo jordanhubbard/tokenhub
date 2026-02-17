@@ -52,19 +52,44 @@ type Store struct {
 	// Write buffer for batching inserts.
 	buf    []Point
 	bufMax int
+
+	stopFlush chan struct{} // signals periodic flush goroutine to stop
 }
 
 // New creates a TSDB store using the given SQLite DB handle.
+// A background goroutine flushes buffered points every 30 seconds to
+// prevent data loss if the buffer never reaches capacity.
 func New(db *sql.DB) (*Store, error) {
 	s := &Store{
 		db:        db,
 		retention: 7 * 24 * time.Hour, // 7 day default
 		bufMax:    100,
+		stopFlush: make(chan struct{}),
 	}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
+	go s.periodicFlush()
 	return s, nil
+}
+
+// Stop terminates the background flush goroutine and flushes remaining data.
+func (s *Store) Stop() {
+	close(s.stopFlush)
+	s.Flush()
+}
+
+func (s *Store) periodicFlush() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.Flush()
+		case <-s.stopFlush:
+			return
+		}
+	}
 }
 
 // SetRetention sets the data retention period.

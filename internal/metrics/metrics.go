@@ -10,9 +10,10 @@ import (
 type Registry struct {
 	reg *prometheus.Registry
 
-	RequestsTotal *prometheus.CounterVec
-	RequestLatency *prometheus.HistogramVec
-	CostUSD *prometheus.CounterVec
+	RequestsTotal   *prometheus.CounterVec
+	RequestLatency  *prometheus.HistogramVec
+	CostUSD         *prometheus.CounterVec
+	RateLimitedTotal prometheus.Counter
 }
 
 func New() *Registry {
@@ -32,8 +33,12 @@ func New() *Registry {
 			Name: "tokenhub_cost_usd_total",
 			Help: "Estimated USD cost",
 		}, []string{"model", "provider"}),
+		RateLimitedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tokenhub_rate_limited_total",
+			Help: "Total requests rejected by rate limiter",
+		}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD)
+	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.RateLimitedTotal)
 	return m
 }
 

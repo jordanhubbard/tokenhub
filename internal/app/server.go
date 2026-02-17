@@ -42,6 +42,7 @@ type Server struct {
 	prober     *health.Prober              // nil when no probeable adapters
 	rateLimiter *ratelimit.Limiter
 	stopBandit func()                      // nil when Thompson Sampling disabled
+	tsdb       *tsdb.Store                 // nil when TSDB failed to init
 
 	stopPrune chan struct{} // signals TSDB prune goroutine to stop
 }
@@ -66,8 +67,11 @@ func NewServer(cfg Config) (*Server, error) {
 		MaxAge:           300,
 	}))
 
+	m := metrics.New()
+
 	// Per-IP rate limiting.
-	rl := ratelimit.New(cfg.RateLimitRPS, cfg.RateLimitBurst, time.Second)
+	rl := ratelimit.New(cfg.RateLimitRPS, cfg.RateLimitBurst, time.Second,
+		ratelimit.WithCounter(m.RateLimitedTotal))
 	r.Use(rl.Middleware)
 
 	v, err := vault.New(cfg.VaultEnabled)
@@ -177,7 +181,6 @@ func NewServer(cfg Config) (*Server, error) {
 	// Initialize API key manager.
 	keyMgr := apikey.NewManager(db)
 
-	m := metrics.New()
 	bus := events.NewBus()
 	sc := stats.NewCollector()
 
@@ -197,6 +200,7 @@ func NewServer(cfg Config) (*Server, error) {
 		prober:      prober,
 		rateLimiter: rl,
 		stopBandit:  stopBandit,
+		tsdb:        ts,
 		stopPrune:   make(chan struct{}),
 	}
 
@@ -282,6 +286,9 @@ func (s *Server) Close() error {
 	}
 	if s.temporal != nil {
 		s.temporal.Stop()
+	}
+	if s.tsdb != nil {
+		s.tsdb.Stop()
 	}
 	if s.store != nil {
 		return s.store.Close()

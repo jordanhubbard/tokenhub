@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Limiter is a per-IP token bucket rate limiter.
@@ -16,6 +18,7 @@ type Limiter struct {
 	burst    int           // max tokens (bucket capacity)
 	interval time.Duration // refill interval
 	stop     chan struct{}
+	counter  prometheus.Counter // optional: incremented on each 429
 }
 
 type bucket struct {
@@ -24,8 +27,9 @@ type bucket struct {
 }
 
 // New creates a rate limiter. rate is requests per interval; burst is the
-// maximum burst size.
-func New(rate, burst int, interval time.Duration) *Limiter {
+// maximum burst size. An optional Prometheus counter is incremented on each
+// rejected request (pass nil to disable).
+func New(rate, burst int, interval time.Duration, opts ...Option) *Limiter {
 	l := &Limiter{
 		buckets:  make(map[string]*bucket),
 		rate:     rate,
@@ -33,9 +37,22 @@ func New(rate, burst int, interval time.Duration) *Limiter {
 		interval: interval,
 		stop:     make(chan struct{}),
 	}
+	for _, o := range opts {
+		o(l)
+	}
 	// Periodically clean up stale entries.
 	go l.cleanup()
 	return l
+}
+
+// Option configures a Limiter.
+type Option func(*Limiter)
+
+// WithCounter sets a Prometheus counter that is incremented on each 429.
+func WithCounter(c prometheus.Counter) Option {
+	return func(l *Limiter) {
+		l.counter = c
+	}
 }
 
 // Middleware returns an http.Handler middleware that enforces rate limits per
@@ -47,6 +64,9 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 		if !l.allow(ip) {
+			if l.counter != nil {
+				l.counter.Inc()
+			}
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return

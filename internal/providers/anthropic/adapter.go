@@ -153,8 +153,11 @@ func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payloa
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read error response: %w", err)
+		}
 		se := &providers.StatusError{StatusCode: resp.StatusCode, Body: string(body)}
 		se.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		return nil, se

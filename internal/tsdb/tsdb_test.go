@@ -25,6 +25,7 @@ func TestWriteAndQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now.Add(-2 * time.Minute), Metric: "latency", ModelID: "m1", Value: 100})
@@ -52,6 +53,7 @@ func TestQueryWithTimeRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now.Add(-10 * time.Minute), Metric: "cost", Value: 0.01})
@@ -79,6 +81,7 @@ func TestQueryGroupsByModelAndProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m1", ProviderID: "p1", Value: 100})
@@ -99,6 +102,7 @@ func TestQueryFilterByModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now, Metric: "latency", ModelID: "m1", Value: 100})
@@ -122,6 +126,7 @@ func TestDownsample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 
 	now := time.Now().UTC().Truncate(time.Minute)
 	// Write 6 points in the same minute bucket.
@@ -160,6 +165,7 @@ func TestPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 	s.SetRetention(time.Hour)
 
 	now := time.Now().UTC()
@@ -189,6 +195,7 @@ func TestMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 
 	now := time.Now().UTC()
 	s.Write(Point{Timestamp: now, Metric: "latency", Value: 100})
@@ -210,6 +217,7 @@ func TestBufferFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Stop)
 	s.bufMax = 3 // small buffer for testing
 
 	now := time.Now().UTC()

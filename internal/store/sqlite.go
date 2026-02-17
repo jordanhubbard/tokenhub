@@ -26,6 +26,11 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite pragmas: %w", err)
 	}
+	// SQLite only supports one writer at a time. Limit connections to avoid
+	// contention and keep a small idle pool for read concurrency.
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Hour)
 	return &SQLiteStore{db: db}, nil
 }
 
