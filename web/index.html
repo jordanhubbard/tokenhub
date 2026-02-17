@@ -869,9 +869,10 @@
     function fetchAPIKeys() {
       fetch('/admin/v1/apikeys')
         .then(r => r.json())
-        .then(keys => {
+        .then(data => {
+          const keys = data.keys || [];
           const tbody = document.getElementById('apikeys-body');
-          if (!Array.isArray(keys) || keys.length === 0) {
+          if (keys.length === 0) {
             tbody.innerHTML = '<tr><td colspan="10" style="color:#8a8d9a;text-align:center;">No API keys</td></tr>';
             return;
           }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.temporal.io/sdk/activity"
@@ -185,7 +186,7 @@ func (a *Activities) StreamLogResult(ctx context.Context, input StreamLogInput) 
 	}
 
 	if a.Store != nil {
-		_ = a.Store.LogRequest(ctx, store.RequestLog{
+		if err := a.Store.LogRequest(ctx, store.RequestLog{
 			Timestamp:        now,
 			ModelID:          input.ModelID,
 			ProviderID:       input.ProviderID,
@@ -195,10 +196,12 @@ func (a *Activities) StreamLogResult(ctx context.Context, input StreamLogInput) 
 			StatusCode:       statusCode,
 			ErrorClass:       input.ErrorClass,
 			RequestID:        input.RequestID,
-		})
+		}); err != nil {
+			slog.Warn("log_request failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
+		}
 
 		tokens := 0
-		_ = a.Store.LogReward(ctx, store.RewardEntry{
+		if err := a.Store.LogReward(ctx, store.RewardEntry{
 			Timestamp:       now,
 			RequestID:       input.RequestID,
 			ModelID:         input.ModelID,
@@ -211,7 +214,9 @@ func (a *Activities) StreamLogResult(ctx context.Context, input StreamLogInput) 
 			Success:         input.Success,
 			ErrorClass:      input.ErrorClass,
 			Reward:          router.ComputeReward(float64(input.LatencyMs), input.CostUSD, input.Success, 0),
-		})
+		}); err != nil {
+			slog.Warn("log_reward failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
+		}
 	}
 
 	if a.Metrics != nil {
@@ -275,7 +280,7 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 	}
 
 	if a.Store != nil {
-		_ = a.Store.LogRequest(ctx, store.RequestLog{
+		if err := a.Store.LogRequest(ctx, store.RequestLog{
 			Timestamp:        now,
 			ModelID:          input.ModelID,
 			ProviderID:       input.ProviderID,
@@ -285,10 +290,12 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 			StatusCode:       statusCode,
 			ErrorClass:       input.ErrorClass,
 			RequestID:        input.RequestID,
-		})
+		}); err != nil {
+			slog.Warn("log_request failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
+		}
 
 		tokens := 0 // not available at this point
-		_ = a.Store.LogReward(ctx, store.RewardEntry{
+		if err := a.Store.LogReward(ctx, store.RewardEntry{
 			Timestamp:       now,
 			RequestID:       input.RequestID,
 			ModelID:         input.ModelID,
@@ -301,7 +308,9 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 			Success:         input.Success,
 			ErrorClass:      input.ErrorClass,
 			Reward:          router.ComputeReward(float64(input.LatencyMs), input.CostUSD, input.Success, 0),
-		})
+		}); err != nil {
+			slog.Warn("log_reward failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
+		}
 	}
 
 	if a.Metrics != nil {

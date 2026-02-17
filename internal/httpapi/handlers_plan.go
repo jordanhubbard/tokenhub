@@ -13,10 +13,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/providers"
 	"github.com/jordanhubbard/tokenhub/internal/router"
-	"github.com/jordanhubbard/tokenhub/internal/stats"
-	"github.com/jordanhubbard/tokenhub/internal/store"
 	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
-	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 )
 
 type PlanRequest struct {
@@ -66,6 +63,14 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		apiKeyID := ""
 		if rec := apikey.FromContext(r.Context()); rec != nil {
 			apiKeyID = rec.ID
+		}
+
+		// Estimate tokens for reward logging (same heuristic as ChatHandler).
+		estimatedTokens := req.Request.EstimatedInputTokens
+		if estimatedTokens == 0 {
+			for _, msg := range req.Request.Messages {
+				estimatedTokens += len(msg.Content) / 4
+			}
 		}
 
 		// Inject request ID into context for provider tracing.
@@ -161,45 +166,17 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		if err != nil {
 			// Record metrics for failed requests (skip if Temporal already logged).
 			if !temporalHandledLogging {
-				if d.Metrics != nil {
-					d.Metrics.RequestsTotal.WithLabelValues(mode, "", "", "error").Inc()
-				}
-				if d.Store != nil {
-					warnOnErr("log_request", d.Store.LogRequest(r.Context(), store.RequestLog{
-						Timestamp:  time.Now().UTC(),
-						Mode:       mode,
-						LatencyMs:  latencyMs,
-						StatusCode: http.StatusBadGateway,
-						ErrorClass: "routing_failure",
-						RequestID:  middleware.GetReqID(r.Context()),
-					}))
-				}
-				if d.Store != nil {
-					warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
-						Timestamp:  time.Now().UTC(),
-						RequestID:  middleware.GetReqID(r.Context()),
-						Mode:       mode,
-						LatencyMs:  float64(latencyMs),
-						CostUSD:    0,
-						Success:    false,
-						ErrorClass: "routing_failure",
-						Reward:     router.ComputeReward(float64(latencyMs), 0, false, 0),
-					}))
-				}
-				if d.EventBus != nil {
-					d.EventBus.Publish(events.Event{
-						Type:       events.EventRouteError,
-						LatencyMs:  float64(latencyMs),
-						ErrorClass: "routing_failure",
-						ErrorMsg:   err.Error(),
-					})
-				}
-				if d.Stats != nil {
-					d.Stats.Record(stats.Snapshot{
-						LatencyMs: float64(latencyMs),
-						Success:   false,
-					})
-				}
+				recordObservability(d, observeParams{
+					Ctx:             r.Context(),
+					Mode:            mode,
+					LatencyMs:       latencyMs,
+					Success:         false,
+					ErrorClass:      "routing_failure",
+					ErrorMsg:        err.Error(),
+					RequestID:       middleware.GetReqID(r.Context()),
+					APIKeyID:        apiKeyID,
+					EstimatedTokens: estimatedTokens,
+				})
 			}
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -207,60 +184,19 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 
 		// Record metrics for successful requests (skip if Temporal already logged).
 		if !temporalHandledLogging {
-			if d.Metrics != nil {
-				d.Metrics.RequestsTotal.WithLabelValues(mode, decision.ModelID, decision.ProviderID, "ok").Inc()
-				d.Metrics.RequestLatency.WithLabelValues(mode, decision.ModelID, decision.ProviderID).Observe(float64(latencyMs))
-				d.Metrics.CostUSD.WithLabelValues(decision.ModelID, decision.ProviderID).Add(decision.EstimatedCostUSD)
-			}
-			if d.Store != nil {
-				warnOnErr("log_request", d.Store.LogRequest(r.Context(), store.RequestLog{
-					Timestamp:        time.Now().UTC(),
-					ModelID:          decision.ModelID,
-					ProviderID:       decision.ProviderID,
-					Mode:             mode,
-					EstimatedCostUSD: decision.EstimatedCostUSD,
-					LatencyMs:        latencyMs,
-					StatusCode:       http.StatusOK,
-					RequestID:        middleware.GetReqID(r.Context()),
-				}))
-			}
-			if d.Store != nil {
-				warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
-					Timestamp:  time.Now().UTC(),
-					RequestID:  middleware.GetReqID(r.Context()),
-					ModelID:    decision.ModelID,
-					ProviderID: decision.ProviderID,
-					Mode:       mode,
-					LatencyMs:  float64(latencyMs),
-					CostUSD:    decision.EstimatedCostUSD,
-					Success:    true,
-					Reward:     router.ComputeReward(float64(latencyMs), decision.EstimatedCostUSD, true, 0),
-				}))
-			}
-			if d.EventBus != nil {
-				d.EventBus.Publish(events.Event{
-					Type:       events.EventRouteSuccess,
-					ModelID:    decision.ModelID,
-					ProviderID: decision.ProviderID,
-					LatencyMs:  float64(latencyMs),
-					CostUSD:    decision.EstimatedCostUSD,
-					Reason:     decision.Reason,
-				})
-			}
-			if d.Stats != nil {
-				d.Stats.Record(stats.Snapshot{
-					ModelID:    decision.ModelID,
-					ProviderID: decision.ProviderID,
-					LatencyMs:  float64(latencyMs),
-					CostUSD:    decision.EstimatedCostUSD,
-					Success:    true,
-				})
-			}
-			if d.TSDB != nil {
-				now := time.Now().UTC()
-				d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: decision.ModelID, ProviderID: decision.ProviderID, Value: float64(latencyMs)})
-				d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: decision.ModelID, ProviderID: decision.ProviderID, Value: decision.EstimatedCostUSD})
-			}
+			recordObservability(d, observeParams{
+				Ctx:             r.Context(),
+				ModelID:         decision.ModelID,
+				ProviderID:      decision.ProviderID,
+				Mode:            mode,
+				CostUSD:         decision.EstimatedCostUSD,
+				LatencyMs:       latencyMs,
+				Success:         true,
+				Reason:          decision.Reason,
+				RequestID:       middleware.GetReqID(r.Context()),
+				APIKeyID:        apiKeyID,
+				EstimatedTokens: estimatedTokens,
+			})
 		}
 
 		w.Header().Set("Content-Type", "application/json")
