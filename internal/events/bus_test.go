@@ -127,3 +127,109 @@ func TestEventJSON(t *testing.T) {
 		t.Fatal("expected non-empty JSON")
 	}
 }
+
+func TestWorkflowEvents(t *testing.T) {
+	bus := NewBus()
+	sub := bus.Subscribe(10)
+	defer bus.Unsubscribe(sub)
+
+	// Publish workflow_started event.
+	bus.Publish(Event{
+		Type:         EventWorkflowStarted,
+		WorkflowID:   "chat-req-123",
+		WorkflowType: "ChatWorkflow",
+		RequestID:    "req-123",
+	})
+
+	// Publish activity_completed event.
+	bus.Publish(Event{
+		Type:         EventActivityCompleted,
+		ActivityType: "SelectModel",
+		ModelID:      "gpt-4",
+		ProviderID:   "openai",
+		RequestID:    "req-123",
+	})
+
+	// Publish workflow_completed event.
+	bus.Publish(Event{
+		Type:         EventWorkflowCompleted,
+		WorkflowID:   "chat-req-123",
+		WorkflowType: "ChatWorkflow",
+		ModelID:      "gpt-4",
+		ProviderID:   "openai",
+		LatencyMs:    250,
+		CostUSD:      0.003,
+	})
+
+	// Verify workflow_started.
+	select {
+	case e := <-sub.C:
+		if e.Type != EventWorkflowStarted {
+			t.Errorf("expected workflow_started, got %s", e.Type)
+		}
+		if e.WorkflowID != "chat-req-123" {
+			t.Errorf("expected workflow_id chat-req-123, got %s", e.WorkflowID)
+		}
+		if e.WorkflowType != "ChatWorkflow" {
+			t.Errorf("expected workflow_type ChatWorkflow, got %s", e.WorkflowType)
+		}
+		if e.RequestID != "req-123" {
+			t.Errorf("expected request_id req-123, got %s", e.RequestID)
+		}
+		if e.Timestamp.IsZero() {
+			t.Error("expected timestamp to be set")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for workflow_started event")
+	}
+
+	// Verify activity_completed.
+	select {
+	case e := <-sub.C:
+		if e.Type != EventActivityCompleted {
+			t.Errorf("expected activity_completed, got %s", e.Type)
+		}
+		if e.ActivityType != "SelectModel" {
+			t.Errorf("expected activity_type SelectModel, got %s", e.ActivityType)
+		}
+		if e.ModelID != "gpt-4" {
+			t.Errorf("expected model_id gpt-4, got %s", e.ModelID)
+		}
+		if e.ProviderID != "openai" {
+			t.Errorf("expected provider_id openai, got %s", e.ProviderID)
+		}
+		if e.RequestID != "req-123" {
+			t.Errorf("expected request_id req-123, got %s", e.RequestID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for activity_completed event")
+	}
+
+	// Verify workflow_completed.
+	select {
+	case e := <-sub.C:
+		if e.Type != EventWorkflowCompleted {
+			t.Errorf("expected workflow_completed, got %s", e.Type)
+		}
+		if e.WorkflowID != "chat-req-123" {
+			t.Errorf("expected workflow_id chat-req-123, got %s", e.WorkflowID)
+		}
+		if e.WorkflowType != "ChatWorkflow" {
+			t.Errorf("expected workflow_type ChatWorkflow, got %s", e.WorkflowType)
+		}
+		if e.ModelID != "gpt-4" {
+			t.Errorf("expected model_id gpt-4, got %s", e.ModelID)
+		}
+		if e.ProviderID != "openai" {
+			t.Errorf("expected provider_id openai, got %s", e.ProviderID)
+		}
+		if e.LatencyMs != 250 {
+			t.Errorf("expected latency_ms 250, got %f", e.LatencyMs)
+		}
+		if e.CostUSD != 0.003 {
+			t.Errorf("expected cost_usd 0.003, got %f", e.CostUSD)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for workflow_completed event")
+	}
+}

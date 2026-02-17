@@ -111,6 +111,20 @@ func ChatWorkflow(ctx workflow.Context, input ChatInput) (ChatOutput, error) {
 	}, nil
 }
 
+// StreamLogWorkflow records the result of a streaming request via Temporal for visibility.
+// The actual SSE byte streaming is handled directly by the HTTP handler; this workflow
+// provides the logging/observability bookend that appears in the Temporal workflow list.
+func StreamLogWorkflow(ctx workflow.Context, input StreamLogInput) error {
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 2,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+	return workflow.ExecuteActivity(ctx, (*Activities).StreamLogResult, input).Get(ctx, nil)
+}
+
 // OrchestrationWorkflow replaces engine.Orchestrate() as a Temporal workflow.
 func OrchestrationWorkflow(ctx workflow.Context, input OrchestrationInput) (ChatOutput, error) {
 	ao := workflow.ActivityOptions{

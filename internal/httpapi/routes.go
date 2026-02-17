@@ -15,6 +15,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
+	"github.com/jordanhubbard/tokenhub/internal/circuitbreaker"
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/idempotency"
@@ -49,6 +50,9 @@ type Dependencies struct {
 	// Temporal workflow client (nil when Temporal is disabled).
 	TemporalClient    client.Client
 	TemporalTaskQueue string
+
+	// Circuit breaker for Temporal dispatch (nil when Temporal is disabled).
+	CircuitBreaker *circuitbreaker.Breaker
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {

@@ -69,6 +69,13 @@ type LogInput struct {
 	ErrorClass string  `json:"error_class,omitempty"`
 }
 
+// StreamLogInput is the input for the StreamLogResult activity.
+// It extends LogInput with streaming-specific metrics.
+type StreamLogInput struct {
+	LogInput
+	BytesStreamed int64 `json:"bytes_streamed"`
+}
+
 // EscalateInput is the input for the ClassifyAndEscalate activity.
 type EscalateInput struct {
 	ErrorMsg       string `json:"error_msg"`

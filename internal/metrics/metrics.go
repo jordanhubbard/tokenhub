@@ -15,6 +15,10 @@ type Registry struct {
 	CostUSD          *prometheus.CounterVec
 	RateLimitedTotal prometheus.Counter
 	TemporalUp       prometheus.Gauge
+
+	// Circuit breaker metrics.
+	TemporalCircuitState prometheus.Gauge   // 0=closed, 1=open, 2=half-open
+	TemporalFallbackTotal prometheus.Counter // count of requests that fell back to direct engine
 }
 
 func New() *Registry {
@@ -42,8 +46,16 @@ func New() *Registry {
 			Name: "tokenhub_temporal_up",
 			Help: "Whether Temporal workflow engine is connected (1=up, 0=down/disabled)",
 		}),
+		TemporalCircuitState: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tokenhub_temporal_circuit_state",
+			Help: "Temporal circuit breaker state (0=closed, 1=open, 2=half-open)",
+		}),
+		TemporalFallbackTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tokenhub_temporal_fallback_total",
+			Help: "Total requests that fell back to direct engine due to circuit breaker",
+		}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.RateLimitedTotal, m.TemporalUp)
+	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal)
 	return m
 }
 

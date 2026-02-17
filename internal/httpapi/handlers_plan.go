@@ -76,8 +76,8 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		var err error
 		temporalHandledLogging := false
 
-		if d.TemporalClient != nil {
-			// Dispatch via Temporal orchestration workflow.
+		if d.TemporalClient != nil && d.CircuitBreaker != nil && d.CircuitBreaker.Allow() {
+			// Dispatch via Temporal orchestration workflow (circuit closed or half-open probe).
 			requestID := middleware.GetReqID(r.Context())
 			input := temporalpkg.OrchestrationInput{
 				RequestID: requestID,
@@ -91,23 +91,67 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				TaskQueue: d.TemporalTaskQueue,
 			}, temporalpkg.OrchestrationWorkflow, input)
 			if terr != nil {
-				// Temporal unavailable — fall back to direct path.
+				// Temporal unavailable — record failure and fall back.
+				d.CircuitBreaker.RecordFailure()
+				if d.Metrics != nil {
+					d.Metrics.TemporalFallbackTotal.Inc()
+				}
 				decision, resp, err = d.Engine.Orchestrate(reqCtx, req.Request, req.Orchestration)
 			} else {
+				if d.EventBus != nil {
+					d.EventBus.Publish(events.Event{
+						Type:         events.EventWorkflowStarted,
+						WorkflowID:   workflowID,
+						WorkflowType: "OrchestrationWorkflow",
+						RequestID:    requestID,
+					})
+				}
 				var output temporalpkg.ChatOutput
 				if terr = run.Get(reqCtx, &output); terr != nil {
+					d.CircuitBreaker.RecordFailure()
+					if d.Metrics != nil {
+						d.Metrics.TemporalFallbackTotal.Inc()
+					}
 					decision, resp, err = d.Engine.Orchestrate(reqCtx, req.Request, req.Orchestration)
 				} else if output.Error != "" {
+					d.CircuitBreaker.RecordSuccess()
 					err = fmt.Errorf("%s", output.Error)
 					decision = output.Decision
 					temporalHandledLogging = true // LogResult activity already ran
+					if d.EventBus != nil {
+						d.EventBus.Publish(events.Event{
+							Type:         events.EventWorkflowFailed,
+							WorkflowID:   workflowID,
+							WorkflowType: "OrchestrationWorkflow",
+							ErrorMsg:     output.Error,
+						})
+					}
 				} else {
+					d.CircuitBreaker.RecordSuccess()
 					decision = output.Decision
 					resp = output.Response
 					temporalHandledLogging = true // LogResult activity already ran
+					if d.EventBus != nil {
+						d.EventBus.Publish(events.Event{
+							Type:         events.EventWorkflowCompleted,
+							WorkflowID:   workflowID,
+							WorkflowType: "OrchestrationWorkflow",
+							ModelID:      decision.ModelID,
+							ProviderID:   decision.ProviderID,
+							LatencyMs:    float64(output.LatencyMs),
+							CostUSD:      decision.EstimatedCostUSD,
+						})
+					}
 				}
 			}
 		} else {
+			// Direct engine call (circuit open or Temporal disabled).
+			if d.TemporalClient != nil && d.CircuitBreaker != nil {
+				// Circuit is open — count the fallback.
+				if d.Metrics != nil {
+					d.Metrics.TemporalFallbackTotal.Inc()
+				}
+			}
 			decision, resp, err = d.Engine.Orchestrate(reqCtx, req.Request, req.Orchestration)
 		}
 		latencyMs := time.Since(start).Milliseconds()
@@ -132,14 +176,14 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				}
 				if d.Store != nil {
 					warnOnErr("log_reward", d.Store.LogReward(r.Context(), store.RewardEntry{
-						Timestamp:   time.Now().UTC(),
-						RequestID:   middleware.GetReqID(r.Context()),
-						Mode:        mode,
-						LatencyMs:   float64(latencyMs),
-						CostUSD:     0,
-						Success:     false,
-						ErrorClass:  "routing_failure",
-						Reward:      router.ComputeReward(float64(latencyMs), 0, false, 0),
+						Timestamp:  time.Now().UTC(),
+						RequestID:  middleware.GetReqID(r.Context()),
+						Mode:       mode,
+						LatencyMs:  float64(latencyMs),
+						CostUSD:    0,
+						Success:    false,
+						ErrorClass: "routing_failure",
+						Reward:     router.ComputeReward(float64(latencyMs), 0, false, 0),
 					}))
 				}
 				if d.EventBus != nil {

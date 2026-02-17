@@ -34,6 +34,15 @@ func (a *Activities) SelectModel(ctx context.Context, input ChatInput) (router.D
 	if err != nil {
 		return router.Decision{}, fmt.Errorf("select model: %w", err)
 	}
+	if a.EventBus != nil {
+		a.EventBus.Publish(events.Event{
+			Type:         events.EventActivityCompleted,
+			ActivityType: "SelectModel",
+			ModelID:      decision.ModelID,
+			ProviderID:   decision.ProviderID,
+			RequestID:    input.RequestID,
+		})
+	}
 	return decision, nil
 }
 
@@ -63,6 +72,16 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 		if classified != nil {
 			errClass = string(classified.Class)
 		}
+		if a.EventBus != nil {
+			a.EventBus.Publish(events.Event{
+				Type:         events.EventActivityCompleted,
+				ActivityType: "SendToProvider",
+				ModelID:      input.ModelID,
+				ProviderID:   input.ProviderID,
+				LatencyMs:    float64(latencyMs),
+				ErrorMsg:     err.Error(),
+			})
+		}
 		return SendOutput{
 			LatencyMs:  latencyMs,
 			ErrorClass: errClass,
@@ -82,6 +101,17 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 
 	tokens := EstimateTokens(input.Request)
 	estCost := (float64(tokens)/1000.0)*m.InputPer1K + (512.0/1000.0)*m.OutputPer1K
+
+	if a.EventBus != nil {
+		a.EventBus.Publish(events.Event{
+			Type:         events.EventActivityCompleted,
+			ActivityType: "SendToProvider",
+			ModelID:      input.ModelID,
+			ProviderID:   input.ProviderID,
+			LatencyMs:    float64(latencyMs),
+			CostUSD:      estCost,
+		})
+	}
 
 	return SendOutput{
 		Response:      json.RawMessage(resp),
@@ -108,6 +138,13 @@ func (a *Activities) ClassifyAndEscalate(ctx context.Context, input EscalateInpu
 
 	larger := a.Engine.FindLargerContextModel(m, input.TokensNeeded*2)
 	if larger != nil {
+		if a.EventBus != nil {
+			a.EventBus.Publish(events.Event{
+				Type:    events.EventEscalation,
+				ModelID: input.CurrentModelID,
+				Reason:  "escalating to " + larger.ID,
+			})
+		}
 		return EscalateOutput{
 			NextModelID: larger.ID,
 			ShouldRetry: true,
@@ -115,6 +152,117 @@ func (a *Activities) ClassifyAndEscalate(ctx context.Context, input EscalateInpu
 	}
 
 	return EscalateOutput{ShouldRetry: false}, nil
+}
+
+// StreamSelectModel performs model selection for streaming requests via Temporal for visibility.
+// It returns the routing decision and emits a workflow_started event on the EventBus.
+func (a *Activities) StreamSelectModel(ctx context.Context, input ChatInput) (router.Decision, error) {
+	decision, _, err := a.Engine.SelectModel(ctx, input.Request, input.Policy)
+	if err != nil {
+		return router.Decision{}, fmt.Errorf("stream select model: %w", err)
+	}
+
+	if a.EventBus != nil {
+		a.EventBus.Publish(events.Event{
+			Type:       events.EventStreamStarted,
+			ModelID:    decision.ModelID,
+			ProviderID: decision.ProviderID,
+			Reason:     fmt.Sprintf("stream-select:%s", input.RequestID),
+		})
+	}
+
+	return decision, nil
+}
+
+// StreamLogResult logs the result of a completed streaming request.
+// It records the same observability data as LogResult plus streaming-specific metrics.
+func (a *Activities) StreamLogResult(ctx context.Context, input StreamLogInput) error {
+	now := time.Now().UTC()
+
+	statusCode := 200
+	if !input.Success {
+		statusCode = 502
+	}
+
+	if a.Store != nil {
+		_ = a.Store.LogRequest(ctx, store.RequestLog{
+			Timestamp:        now,
+			ModelID:          input.ModelID,
+			ProviderID:       input.ProviderID,
+			Mode:             input.Mode,
+			EstimatedCostUSD: input.CostUSD,
+			LatencyMs:        input.LatencyMs,
+			StatusCode:       statusCode,
+			ErrorClass:       input.ErrorClass,
+			RequestID:        input.RequestID,
+		})
+
+		tokens := 0
+		_ = a.Store.LogReward(ctx, store.RewardEntry{
+			Timestamp:       now,
+			RequestID:       input.RequestID,
+			ModelID:         input.ModelID,
+			ProviderID:      input.ProviderID,
+			Mode:            input.Mode,
+			EstimatedTokens: tokens,
+			TokenBucket:     router.TokenBucketLabel(tokens),
+			LatencyMs:       float64(input.LatencyMs),
+			CostUSD:         input.CostUSD,
+			Success:         input.Success,
+			ErrorClass:      input.ErrorClass,
+			Reward:          router.ComputeReward(float64(input.LatencyMs), input.CostUSD, input.Success, 0),
+		})
+	}
+
+	if a.Metrics != nil {
+		status := "ok"
+		if !input.Success {
+			status = "error"
+		}
+		a.Metrics.RequestsTotal.WithLabelValues(input.Mode, input.ModelID, input.ProviderID, status).Inc()
+		if input.Success {
+			a.Metrics.RequestLatency.WithLabelValues(input.Mode, input.ModelID, input.ProviderID).Observe(float64(input.LatencyMs))
+			a.Metrics.CostUSD.WithLabelValues(input.ModelID, input.ProviderID).Add(input.CostUSD)
+		}
+	}
+
+	if a.EventBus != nil {
+		if input.Success {
+			a.EventBus.Publish(events.Event{
+				Type:       events.EventRouteSuccess,
+				ModelID:    input.ModelID,
+				ProviderID: input.ProviderID,
+				LatencyMs:  float64(input.LatencyMs),
+				CostUSD:    input.CostUSD,
+			})
+		} else {
+			a.EventBus.Publish(events.Event{
+				Type:       events.EventRouteError,
+				ModelID:    input.ModelID,
+				ProviderID: input.ProviderID,
+				LatencyMs:  float64(input.LatencyMs),
+				ErrorClass: input.ErrorClass,
+			})
+		}
+	}
+
+	if a.Stats != nil {
+		a.Stats.Record(stats.Snapshot{
+			ModelID:    input.ModelID,
+			ProviderID: input.ProviderID,
+			LatencyMs:  float64(input.LatencyMs),
+			CostUSD:    input.CostUSD,
+			Success:    input.Success,
+		})
+	}
+
+	if a.TSDB != nil && input.Success {
+		a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(input.LatencyMs)})
+		a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: input.CostUSD})
+		a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "stream_bytes", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(input.BytesStreamed)})
+	}
+
+	return nil
 }
 
 // LogResult persists observability data: request logs, reward logs, metrics, events, stats, TSDB.

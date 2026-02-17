@@ -36,6 +36,7 @@ func New(cfg Config, acts *Activities) (*Manager, error) {
 	// Register workflows.
 	w.RegisterWorkflow(ChatWorkflow)
 	w.RegisterWorkflow(OrchestrationWorkflow)
+	w.RegisterWorkflow(StreamLogWorkflow)
 
 	// Register activities.
 	w.RegisterActivity(acts.SelectModel)
@@ -43,6 +44,8 @@ func New(cfg Config, acts *Activities) (*Manager, error) {
 	w.RegisterActivity(acts.ClassifyAndEscalate)
 	w.RegisterActivity(acts.LogResult)
 	w.RegisterActivity(acts.ResolveModel)
+	w.RegisterActivity(acts.StreamSelectModel)
+	w.RegisterActivity(acts.StreamLogResult)
 
 	return &Manager{
 		client: c,

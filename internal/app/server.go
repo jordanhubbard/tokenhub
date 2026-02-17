@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
+	"github.com/jordanhubbard/tokenhub/internal/circuitbreaker"
 	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
@@ -250,6 +251,19 @@ func NewServer(cfg Config) (*Server, error) {
 		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")
 	}
 
+	// Initialize Temporal circuit breaker.
+	cb := circuitbreaker.New(
+		circuitbreaker.WithThreshold(3),
+		circuitbreaker.WithCooldown(30*time.Second),
+		circuitbreaker.WithOnStateChange(func(from, to circuitbreaker.State) {
+			logger.Warn("temporal circuit breaker state change",
+				slog.String("from", from.String()),
+				slog.String("to", to.String()),
+			)
+			m.TemporalCircuitState.Set(float64(to))
+		}),
+	)
+
 	deps := httpapi.Dependencies{
 		Engine:           eng,
 		Vault:            v,
@@ -263,6 +277,7 @@ func NewServer(cfg Config) (*Server, error) {
 		BudgetChecker:    budgetChecker,
 		AdminToken:       cfg.AdminToken,
 		IdempotencyCache: idemCache,
+		CircuitBreaker:   cb,
 	}
 
 	// Initialize Temporal workflow engine if enabled.

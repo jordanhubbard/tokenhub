@@ -367,3 +367,68 @@ func TestContainsDigit(t *testing.T) {
 		require.True(t, containsDigit("item 0 selected", 0))
 	})
 }
+
+// ---------------------------------------------------------------------------
+// 9. TestStreamLogWorkflow_Success
+// ---------------------------------------------------------------------------
+
+func TestStreamLogWorkflow_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.OnActivity(actsRef.StreamLogResult, mock.Anything, mock.Anything).Return(nil)
+
+	input := StreamLogInput{
+		LogInput: LogInput{
+			RequestID:  "stream-001",
+			ModelID:    "gpt-4",
+			ProviderID: "openai",
+			Mode:       "normal",
+			LatencyMs:  1500,
+			CostUSD:    0.05,
+			Success:    true,
+		},
+		BytesStreamed: 65536,
+	}
+	env.ExecuteWorkflow(StreamLogWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	env.AssertExpectations(t)
+}
+
+// ---------------------------------------------------------------------------
+// 10. TestStreamLogWorkflow_ActivityFails
+// ---------------------------------------------------------------------------
+
+func TestStreamLogWorkflow_ActivityFails(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.OnActivity(actsRef.StreamLogResult, mock.Anything, mock.Anything).
+		Return(fmt.Errorf("store unavailable"))
+
+	input := StreamLogInput{
+		LogInput: LogInput{
+			RequestID:  "stream-002",
+			ModelID:    "gpt-4",
+			ProviderID: "openai",
+			Mode:       "normal",
+			LatencyMs:  800,
+			CostUSD:    0.02,
+			Success:    false,
+			ErrorClass: "stream_error",
+		},
+		BytesStreamed: 1024,
+	}
+	env.ExecuteWorkflow(StreamLogWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "store unavailable")
+
+	env.AssertExpectations(t)
+}
