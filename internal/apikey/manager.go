@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/store"
 )
 
@@ -209,4 +211,58 @@ func routeToScope(endpoint string) string {
 	default:
 		return ""
 	}
+}
+
+// EnforceRotation finds all API keys that have exceeded their rotation period
+// and disables them. It logs a warning for each disabled key and emits an event
+// on the provided EventBus (if non-nil). Returns the count of keys that were
+// disabled.
+func (m *Manager) EnforceRotation(ctx context.Context, bus *events.Bus, logger *slog.Logger) (int, error) {
+	expired, err := m.store.ListExpiredRotationKeys(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list expired rotation keys: %w", err)
+	}
+
+	disabled := 0
+	for i := range expired {
+		k := &expired[i]
+		k.Enabled = false
+		if err := m.store.UpdateAPIKey(ctx, *k); err != nil {
+			logger.Error("failed to disable expired rotation key",
+				slog.String("key_id", k.ID),
+				slog.String("key_name", k.Name),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+
+		// Invalidate any cached entries for this key.
+		m.mu.Lock()
+		for ck, cv := range m.cache {
+			if cv.record.ID == k.ID {
+				delete(m.cache, ck)
+			}
+		}
+		m.mu.Unlock()
+
+		logger.Warn("disabled API key: rotation period exceeded",
+			slog.String("key_id", k.ID),
+			slog.String("key_name", k.Name),
+			slog.Int("rotation_days", k.RotationDays),
+			slog.Time("created_at", k.CreatedAt),
+		)
+
+		if bus != nil {
+			bus.Publish(events.Event{
+				Type:       events.EventKeyRotationExpired,
+				Timestamp:  time.Now().UTC(),
+				APIKeyName: k.Name,
+				Reason:     fmt.Sprintf("key %q exceeded %d-day rotation period", k.Name, k.RotationDays),
+			})
+		}
+
+		disabled++
+	}
+
+	return disabled, nil
 }

@@ -613,3 +613,128 @@ func TestVaultBlobEmpty(t *testing.T) {
 		t.Errorf("expected nil data, got %v", data)
 	}
 }
+
+func TestListExpiredRotationKeys(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Key 1: rotation_days=1, created 2 days ago — should be expired.
+	expired := APIKeyRecord{
+		ID:           "key-expired",
+		KeyHash:      "$2a$10$hash1",
+		KeyPrefix:    "tokenhub_aaaaaaaa",
+		Name:         "expired-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-48 * time.Hour),
+		RotationDays: 1,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, expired); err != nil {
+		t.Fatalf("create expired key failed: %v", err)
+	}
+
+	// Key 2: rotation_days=90, created 1 day ago — should NOT be expired.
+	fresh := APIKeyRecord{
+		ID:           "key-fresh",
+		KeyHash:      "$2a$10$hash2",
+		KeyPrefix:    "tokenhub_bbbbbbbb",
+		Name:         "fresh-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-24 * time.Hour),
+		RotationDays: 90,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, fresh); err != nil {
+		t.Fatalf("create fresh key failed: %v", err)
+	}
+
+	// Key 3: rotation_days=0 (manual rotation), created 100 days ago — should NOT be expired.
+	manual := APIKeyRecord{
+		ID:           "key-manual",
+		KeyHash:      "$2a$10$hash3",
+		KeyPrefix:    "tokenhub_cccccccc",
+		Name:         "manual-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-100 * 24 * time.Hour),
+		RotationDays: 0,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, manual); err != nil {
+		t.Fatalf("create manual key failed: %v", err)
+	}
+
+	// Key 4: rotation_days=1, created 2 days ago, but DISABLED — should NOT appear.
+	disabledExpired := APIKeyRecord{
+		ID:           "key-disabled-expired",
+		KeyHash:      "$2a$10$hash4",
+		KeyPrefix:    "tokenhub_dddddddd",
+		Name:         "disabled-expired-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-48 * time.Hour),
+		RotationDays: 1,
+		Enabled:      false,
+	}
+	if err := s.CreateAPIKey(ctx, disabledExpired); err != nil {
+		t.Fatalf("create disabled expired key failed: %v", err)
+	}
+
+	keys, err := s.ListExpiredRotationKeys(ctx)
+	if err != nil {
+		t.Fatalf("list expired rotation keys failed: %v", err)
+	}
+
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 expired key, got %d", len(keys))
+	}
+	if keys[0].ID != "key-expired" {
+		t.Errorf("expected key-expired, got %s", keys[0].ID)
+	}
+	if !keys[0].Enabled {
+		t.Error("expected key to still be enabled (query returns enabled keys)")
+	}
+}
+
+func TestListExpiredRotationKeysEmpty(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	keys, err := s.ListExpiredRotationKeys(ctx)
+	if err != nil {
+		t.Fatalf("list expired rotation keys failed: %v", err)
+	}
+	if keys != nil {
+		t.Errorf("expected nil for empty db, got %d keys", len(keys))
+	}
+}
+
+func TestListExpiredRotationKeysBoundary(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Key with rotation_days=1 created exactly 1 day ago — should be expired
+	// (the rotation period has elapsed).
+	boundary := APIKeyRecord{
+		ID:           "key-boundary",
+		KeyHash:      "$2a$10$hash5",
+		KeyPrefix:    "tokenhub_eeeeeeee",
+		Name:         "boundary-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-24 * time.Hour),
+		RotationDays: 1,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, boundary); err != nil {
+		t.Fatalf("create boundary key failed: %v", err)
+	}
+
+	keys, err := s.ListExpiredRotationKeys(ctx)
+	if err != nil {
+		t.Fatalf("list expired rotation keys failed: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 expired key at boundary, got %d", len(keys))
+	}
+	if keys[0].ID != "key-boundary" {
+		t.Errorf("expected key-boundary, got %s", keys[0].ID)
+	}
+}

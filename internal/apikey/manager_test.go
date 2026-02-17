@@ -2,10 +2,12 @@ package apikey
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jordanhubbard/tokenhub/internal/events"
 	"github.com/jordanhubbard/tokenhub/internal/store"
 )
 
@@ -218,5 +220,239 @@ func TestValidateCache(t *testing.T) {
 	}
 	if rec.Name != "cache-key" {
 		t.Errorf("expected cache-key, got %s", rec.Name)
+	}
+}
+
+// newTestManagerWithStore creates a Manager and returns both the manager and
+// the underlying store for direct manipulation in tests.
+func newTestManagerWithStore(t *testing.T) (*Manager, *store.SQLiteStore) {
+	t.Helper()
+	s := newTestStore(t)
+	return NewManager(s), s
+}
+
+func TestEnforceRotation_DisablesExpiredKeys(t *testing.T) {
+	mgr, s := newTestManagerWithStore(t)
+	ctx := context.Background()
+	logger := slog.Default()
+	bus := events.NewBus()
+
+	// Create a key with rotation_days=1 that was created 2 days ago.
+	expired := store.APIKeyRecord{
+		ID:           "key-expired",
+		KeyHash:      "$2a$10$fakehash",
+		KeyPrefix:    "tokenhub_aaaaaaaa",
+		Name:         "expired-rotation-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-48 * time.Hour),
+		RotationDays: 1,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, expired); err != nil {
+		t.Fatalf("create expired key failed: %v", err)
+	}
+
+	// Create a fresh key that should not be affected.
+	fresh := store.APIKeyRecord{
+		ID:           "key-fresh",
+		KeyHash:      "$2a$10$fakehash2",
+		KeyPrefix:    "tokenhub_bbbbbbbb",
+		Name:         "fresh-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC(),
+		RotationDays: 90,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, fresh); err != nil {
+		t.Fatalf("create fresh key failed: %v", err)
+	}
+
+	count, err := mgr.EnforceRotation(ctx, bus, logger)
+	if err != nil {
+		t.Fatalf("enforce rotation failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 disabled key, got %d", count)
+	}
+
+	// Verify the expired key was disabled.
+	got, err := s.GetAPIKey(ctx, "key-expired")
+	if err != nil {
+		t.Fatalf("get expired key failed: %v", err)
+	}
+	if got.Enabled {
+		t.Error("expected expired key to be disabled")
+	}
+
+	// Verify the fresh key is still enabled.
+	got, err = s.GetAPIKey(ctx, "key-fresh")
+	if err != nil {
+		t.Fatalf("get fresh key failed: %v", err)
+	}
+	if !got.Enabled {
+		t.Error("expected fresh key to still be enabled")
+	}
+}
+
+func TestEnforceRotation_NoExpiredKeys(t *testing.T) {
+	mgr, s := newTestManagerWithStore(t)
+	ctx := context.Background()
+	logger := slog.Default()
+
+	// Create only a fresh key.
+	fresh := store.APIKeyRecord{
+		ID:           "key-fresh",
+		KeyHash:      "$2a$10$fakehash",
+		KeyPrefix:    "tokenhub_aaaaaaaa",
+		Name:         "fresh-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC(),
+		RotationDays: 90,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, fresh); err != nil {
+		t.Fatalf("create fresh key failed: %v", err)
+	}
+
+	count, err := mgr.EnforceRotation(ctx, nil, logger)
+	if err != nil {
+		t.Fatalf("enforce rotation failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 disabled keys, got %d", count)
+	}
+
+	// Verify key still enabled.
+	got, err := s.GetAPIKey(ctx, "key-fresh")
+	if err != nil {
+		t.Fatalf("get key failed: %v", err)
+	}
+	if !got.Enabled {
+		t.Error("expected key to still be enabled")
+	}
+}
+
+func TestEnforceRotation_EmitsEvent(t *testing.T) {
+	mgr, s := newTestManagerWithStore(t)
+	ctx := context.Background()
+	logger := slog.Default()
+	bus := events.NewBus()
+
+	// Subscribe to events.
+	sub := bus.Subscribe(10)
+	defer bus.Unsubscribe(sub)
+
+	// Create an expired key.
+	expired := store.APIKeyRecord{
+		ID:           "key-event",
+		KeyHash:      "$2a$10$fakehash",
+		KeyPrefix:    "tokenhub_eeeeeeee",
+		Name:         "event-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-48 * time.Hour),
+		RotationDays: 1,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, expired); err != nil {
+		t.Fatalf("create expired key failed: %v", err)
+	}
+
+	count, err := mgr.EnforceRotation(ctx, bus, logger)
+	if err != nil {
+		t.Fatalf("enforce rotation failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 disabled key, got %d", count)
+	}
+
+	// Check that an event was emitted.
+	select {
+	case evt := <-sub.C:
+		if evt.Type != events.EventKeyRotationExpired {
+			t.Errorf("expected event type %s, got %s", events.EventKeyRotationExpired, evt.Type)
+		}
+		if evt.APIKeyName != "event-key" {
+			t.Errorf("expected api_key_name event-key, got %s", evt.APIKeyName)
+		}
+		if evt.Reason == "" {
+			t.Error("expected non-empty reason in event")
+		}
+	default:
+		t.Error("expected event to be published, but channel was empty")
+	}
+}
+
+func TestEnforceRotation_NilBusDoesNotPanic(t *testing.T) {
+	mgr, s := newTestManagerWithStore(t)
+	ctx := context.Background()
+	logger := slog.Default()
+
+	// Create an expired key.
+	expired := store.APIKeyRecord{
+		ID:           "key-nil-bus",
+		KeyHash:      "$2a$10$fakehash",
+		KeyPrefix:    "tokenhub_ffffffff",
+		Name:         "nil-bus-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-48 * time.Hour),
+		RotationDays: 1,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, expired); err != nil {
+		t.Fatalf("create expired key failed: %v", err)
+	}
+
+	// Should not panic with nil bus.
+	count, err := mgr.EnforceRotation(ctx, nil, logger)
+	if err != nil {
+		t.Fatalf("enforce rotation failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 disabled key, got %d", count)
+	}
+}
+
+func TestEnforceRotation_InvalidatesCachedKeys(t *testing.T) {
+	mgr, s := newTestManagerWithStore(t)
+	ctx := context.Background()
+	logger := slog.Default()
+
+	// Create an expired key and pre-populate cache.
+	expired := store.APIKeyRecord{
+		ID:           "key-cached",
+		KeyHash:      "$2a$10$fakehash",
+		KeyPrefix:    "tokenhub_gggggggg",
+		Name:         "cached-key",
+		Scopes:       `["chat"]`,
+		CreatedAt:    time.Now().UTC().Add(-48 * time.Hour),
+		RotationDays: 1,
+		Enabled:      true,
+	}
+	if err := s.CreateAPIKey(ctx, expired); err != nil {
+		t.Fatalf("create expired key failed: %v", err)
+	}
+
+	// Manually insert a cache entry for this key.
+	mgr.mu.Lock()
+	mgr.cache["fake-cache-key"] = cachedKey{
+		record:    &expired,
+		expiresAt: time.Now().Add(5 * time.Minute),
+	}
+	mgr.mu.Unlock()
+
+	count, err := mgr.EnforceRotation(ctx, nil, logger)
+	if err != nil {
+		t.Fatalf("enforce rotation failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 disabled key, got %d", count)
+	}
+
+	// Verify the cache entry was removed.
+	mgr.mu.RLock()
+	_, found := mgr.cache["fake-cache-key"]
+	mgr.mu.RUnlock()
+	if found {
+		t.Error("expected cache entry to be invalidated after rotation enforcement")
 	}
 }

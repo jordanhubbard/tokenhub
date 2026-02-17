@@ -16,6 +16,20 @@ import (
 // version is set at build time via -ldflags.
 var version = "dev"
 
+// runHealthCheck performs an HTTP health check against the given address.
+// addr should be in the form ":port" or "host:port".
+func runHealthCheck(addr string) error {
+	resp, err := http.Get(fmt.Sprintf("http://localhost%s/healthz", addr))
+	if err != nil {
+		return fmt.Errorf("health check request failed: %w", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func main() {
 	// Built-in health check mode for Docker HEALTHCHECK (distroless has no curl).
 	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
@@ -23,12 +37,7 @@ func main() {
 		if addr == "" {
 			addr = ":8080"
 		}
-		resp, err := http.Get(fmt.Sprintf("http://localhost%s/healthz", addr))
-		if err != nil {
-			os.Exit(1)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
+		if err := runHealthCheck(addr); err != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)

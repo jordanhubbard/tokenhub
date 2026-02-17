@@ -543,6 +543,48 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	return keys, rows.Err()
 }
 
+// ListExpiredRotationKeys returns enabled keys whose rotation period has elapsed.
+// A key is considered expired for rotation when rotation_days > 0, the key is
+// enabled, and created_at + rotation_days is in the past.
+func (s *SQLiteStore) ListExpiredRotationKeys(ctx context.Context) ([]APIKeyRecord, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
+		 FROM api_keys
+		 WHERE rotation_days > 0
+		   AND enabled = 1
+		   AND datetime(created_at, '+' || rotation_days || ' days') <= datetime(?)`,
+		now)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var keys []APIKeyRecord
+	for rows.Next() {
+		var k APIKeyRecord
+		var createdAt string
+		var lastUsed, expires sql.NullString
+		var enabledInt int
+		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
+			return nil, err
+		}
+		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if lastUsed.Valid {
+			t, _ := time.Parse(time.RFC3339, lastUsed.String)
+			k.LastUsedAt = &t
+		}
+		if expires.Valid {
+			t, _ := time.Parse(time.RFC3339, expires.String)
+			k.ExpiresAt = &t
+		}
+		k.Enabled = enabledInt != 0
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
 func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key APIKeyRecord) error {
 	var lastUsed, expires *string
 	if key.LastUsedAt != nil {

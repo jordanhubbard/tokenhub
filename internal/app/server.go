@@ -50,7 +50,10 @@ type Server struct {
 	stopBandit       func()                    // nil when Thompson Sampling disabled
 	tsdb             *tsdb.Store               // nil when TSDB failed to init
 
-	stopPrune chan struct{} // signals TSDB prune goroutine to stop
+	stopPrune    chan struct{} // signals TSDB prune goroutine to stop
+	stopRotation chan struct{} // signals key rotation enforcement goroutine to stop
+	apiKeyMgr    *apikey.Manager
+	eventBus     *events.Bus
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -236,12 +239,18 @@ func NewServer(cfg Config) (*Server, error) {
 		stopBandit:       stopBandit,
 		tsdb:             ts,
 		stopPrune:        make(chan struct{}),
+		stopRotation:     make(chan struct{}),
+		apiKeyMgr:        keyMgr,
+		eventBus:         bus,
 	}
 
 	// Start TSDB auto-prune goroutine.
 	if ts != nil {
 		go s.tsdbPruneLoop(ts)
 	}
+
+	// Start API key rotation enforcement goroutine.
+	go s.rotationEnforceLoop()
 
 	// Log security warnings.
 	if cfg.AdminToken == "" {
@@ -344,6 +353,7 @@ func (s *Server) Reload(cfg Config) {
 
 func (s *Server) Close() error {
 	close(s.stopPrune)
+	close(s.stopRotation)
 	if s.stopBandit != nil {
 		s.stopBandit()
 	}
@@ -390,6 +400,28 @@ func (s *Server) tsdbPruneLoop(ts *tsdb.Store) {
 				s.logger.Info("TSDB pruned", slog.Int64("deleted", deleted))
 			}
 		case <-s.stopPrune:
+			return
+		}
+	}
+}
+
+// rotationEnforceLoop periodically checks for API keys that have exceeded
+// their rotation period and disables them.
+func (s *Server) rotationEnforceLoop() {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			count, err := s.apiKeyMgr.EnforceRotation(ctx, s.eventBus, s.logger)
+			cancel()
+			if err != nil {
+				s.logger.Warn("key rotation enforcement failed", slog.String("error", err.Error()))
+			} else if count > 0 {
+				s.logger.Info("key rotation enforcement completed", slog.Int("disabled", count))
+			}
+		case <-s.stopRotation:
 			return
 		}
 	}
