@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-integration vet lint docker clean docs docs-serve release builder
+.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release builder
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -39,6 +39,9 @@ test-coverage: builder
 
 test-integration: docker
 	@bash tests/integration.sh
+
+test-e2e:
+	@bash tests/e2e-temporal.sh
 
 # ──── Code quality ────
 
