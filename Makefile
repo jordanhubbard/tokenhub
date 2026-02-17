@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release builder
+.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release release-major release-minor release-patch builder
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -66,10 +66,21 @@ docs-serve: builder
 		sh -c "cd docs && mdbook serve -n 0.0.0.0"
 
 # ──── Release ────
+#   make release              # Bump patch version (x.y.Z)
+#   make release-minor        # Bump minor version (x.Y.0)
+#   make release-major        # Bump major version (X.0.0)
+#   BATCH=yes make release    # Non-interactive mode
 
-release: docker
-	docker tag tokenhub:$(VERSION) tokenhub:latest
-	@echo "Tagged tokenhub:$(VERSION) as tokenhub:latest"
+release:
+	@./scripts/release.sh patch
+
+release-minor:
+	@./scripts/release.sh minor
+
+release-major:
+	@./scripts/release.sh major
+
+release-patch: release
 
 # ──── Clean ────
 
