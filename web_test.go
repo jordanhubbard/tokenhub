@@ -1,7 +1,6 @@
 package tokenhub
 
 import (
-	"embed"
 	"strings"
 	"testing"
 )
@@ -9,10 +8,6 @@ import (
 func TestWebFSNotNil(t *testing.T) {
 	// embed.FS is a value type; a zero-value FS contains no files.
 	// Verify WebFS is populated by checking it differs from the zero value.
-	var zero embed.FS
-	if _, err := zero.ReadDir("."); err == nil {
-		// zero value ReadDir(".") returns nil, nil — compare entries instead.
-	}
 	entries, err := WebFS.ReadDir("web")
 	if err != nil {
 		t.Fatalf("WebFS.ReadDir(\"web\") failed: %v — embedded FS appears uninitialized", err)

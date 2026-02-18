@@ -14,7 +14,7 @@ DOCKER_RUN    := docker run --rm \
 # ──── Builder image (cached) ────
 
 builder:
-	@docker build -q -t $(BUILDER_IMAGE) -f Dockerfile.dev . >/dev/null
+	@docker build -q -t $(BUILDER_IMAGE) -f Dockerfile.dev . >/dev/null 2>&1
 
 # ──── Build ────
 
