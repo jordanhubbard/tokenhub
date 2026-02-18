@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release release-major release-minor release-patch builder
+.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release release-major release-minor release-patch builder setup
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -11,10 +11,23 @@ DOCKER_RUN    := docker run --rm \
 	-w /src \
 	$(BUILDER_IMAGE)
 
+# Use buildx if available, fall back to legacy builder.
+# --load ensures the image is available to the local docker daemon.
+DOCKER_BUILD := $(shell docker buildx version >/dev/null 2>&1 && echo "docker buildx build --load" || echo "docker build")
+
+# ──── Host setup ────
+
+# setup aligns the host Docker CLI to the best available configuration.
+# On macOS with Homebrew-installed Docker, stale Docker Desktop symlinks in
+# ~/.docker/cli-plugins/ shadow the working Homebrew binaries.  This target
+# detects and repairs that situation.
+setup:
+	@scripts/setup-docker.sh
+
 # ──── Builder image (cached) ────
 
-builder:
-	@docker build -q -t $(BUILDER_IMAGE) -f Dockerfile.dev . >/dev/null 2>&1
+builder: setup
+	@$(DOCKER_BUILD) -q -t $(BUILDER_IMAGE) -f Dockerfile.dev . >/dev/null
 
 # ──── Build ────
 
@@ -49,12 +62,12 @@ vet: builder
 	$(DOCKER_RUN) go vet ./...
 
 lint: builder
-	$(DOCKER_RUN) golangci-lint run
+	$(DOCKER_RUN) golangci-lint run --concurrency=1
 
 # ──── Docker ────
 
-docker:
-	docker build -t tokenhub:$(VERSION) .
+docker: setup
+	$(DOCKER_BUILD) -t tokenhub:$(VERSION) .
 
 # ──── Docs ────
 
