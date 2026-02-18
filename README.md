@@ -39,7 +39,7 @@ TokenHub sits between clients and LLM providers as a reverse proxy. Its core com
 **TSDB** -- Lightweight embedded time-series database for latency, cost, and throughput metrics with configurable retention and pruning.
 
 ```
-Client --> /v1/chat or /v1/plan
+Client --> /v1/chat/completions or /v1/chat or /v1/plan
               |
         [Rate Limiter] --> [Idempotency Cache] --> [API Key Auth + Budget Check]
               |
@@ -162,6 +162,7 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/chat` | Route a chat completion request to the best-fit model. Supports `stream: true` for SSE. |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions endpoint. Drop-in replacement for the OpenAI API. |
 | `POST` | `/v1/plan` | Orchestrated multi-model request (adversarial, vote, or refine mode). |
 | `GET` | `/healthz` | Health check. Returns adapter and model counts. |
 | `GET` | `/metrics` | Prometheus metrics endpoint. |
@@ -179,6 +180,32 @@ The `/v1/chat` and `/v1/plan` endpoints accept an OpenAI-compatible message form
   "parameters": {"temperature": 0.7, "max_tokens": 1024}
 }
 ```
+
+#### OpenAI-Compatible Endpoint
+
+The `/v1/chat/completions` endpoint accepts the standard OpenAI request format, making TokenHub a drop-in replacement for any client that targets the OpenAI API:
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKENHUB_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "temperature": 0.7,
+    "max_tokens": 256
+  }'
+```
+
+Works with the OpenAI Python SDK:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="your-tokenhub-key")
+resp = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hi"}])
+```
+
+The `model` field maps to TokenHub's model hint — if the model is registered, it's selected directly; otherwise the routing engine selects the best available model. Responses use the standard OpenAI format (`id`, `object`, `created`, `model`, `choices`, `usage`). Streaming (`"stream": true`) returns SSE in the standard OpenAI format.
 
 ### Admin API Endpoints
 

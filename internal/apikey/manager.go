@@ -204,7 +204,7 @@ func CheckScope(record *store.APIKeyRecord, endpoint string) bool {
 
 func routeToScope(endpoint string) string {
 	switch endpoint {
-	case "/v1/chat":
+	case "/v1/chat", "/v1/chat/completions":
 		return "chat"
 	case "/v1/plan":
 		return "plan"
