@@ -14,8 +14,8 @@ RUN apk add --no-cache git ca-certificates curl bash && \
       arm64) MDBOOK_ARCH="aarch64-unknown-linux-musl" ;; \
       *) echo "unsupported arch: ${TARGETARCH}" && exit 1 ;; \
     esac && \
-    curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-${MDBOOK_ARCH}.tar.gz" \
-      | tar xz -C /usr/local/bin && \
+    curl -sSL --retry 3 --retry-delay 5 "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-${MDBOOK_ARCH}.tar.gz" \
+      -o /tmp/mdbook.tar.gz && tar xz -C /usr/local/bin -f /tmp/mdbook.tar.gz && rm /tmp/mdbook.tar.gz && \
     curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin
 
 # Download Go dependencies first (layer cache).
