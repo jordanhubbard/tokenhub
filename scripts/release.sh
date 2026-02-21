@@ -186,7 +186,7 @@ main() {
     # Run tests
     info "Running tests..."
     local test_output_file=$(mktemp)
-    if ! go test -race ./... > "$test_output_file" 2>&1; then
+    if ! CGO_ENABLED=1 go test -race ./... > "$test_output_file" 2>&1; then
         if [[ "$BATCH_MODE" == "yes" ]]; then
             rm -f "$test_output_file"
             error "Tests failed in batch mode. Fix tests before releasing."
