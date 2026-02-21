@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	tokenhub "github.com/jordanhubbard/tokenhub"
@@ -59,6 +60,9 @@ type Dependencies struct {
 
 	// Rate limiter for expensive API endpoints (nil = no rate limiting).
 	RateLimiter *ratelimit.Limiter
+
+	// Provider timeout for constructing new adapters at runtime.
+	ProviderTimeout time.Duration
 }
 
 // maxRequestBodySize is the maximum allowed request body for POST/PUT/PATCH endpoints (10 MB).

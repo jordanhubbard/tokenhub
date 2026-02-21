@@ -1,6 +1,6 @@
 services:
   tokenhub:
-    image: tokenhub:v0.2.3
+    image: tokenhub:v0.2.4
     ports:
       - "8090:8080"
     environment:

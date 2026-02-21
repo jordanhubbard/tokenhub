@@ -3,15 +3,47 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
+	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
+	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/store"
 )
+
+// registerProviderAdapter constructs and registers a runtime adapter for the
+// given provider record. It resolves the API key from the vault when the
+// credential store is "vault". This is called on every upsert/patch so that
+// changes take effect immediately without a restart and so that repeated
+// registrations from bootstrap scripts are a no-op.
+func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverride string) {
+	if p.BaseURL == "" {
+		return
+	}
+	apiKey := apiKeyOverride
+	if apiKey == "" && p.CredStore == "vault" && d.Vault != nil && !d.Vault.IsLocked() {
+		apiKey, _ = d.Vault.Get("provider:" + p.ID + ":api_key")
+	}
+	timeout := d.ProviderTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	switch p.Type {
+	case "anthropic":
+		d.Engine.RegisterAdapter(anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout)))
+	case "vllm":
+		d.Engine.RegisterAdapter(vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout)))
+	default:
+		d.Engine.RegisterAdapter(openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout)))
+	}
+	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
+}
 
 func VaultLockHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +189,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 				return
 			}
 		}
+		registerProviderAdapter(d, req.ProviderRecord, req.APIKey)
 		if d.Store != nil {
 			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
@@ -638,6 +671,14 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Extract the explicit API key from the patch (if any) for adapter registration.
+		var apiKeyOverride string
+		if v, ok := patch["api_key"]; ok {
+			if s, ok := v.(string); ok {
+				apiKeyOverride = s
+			}
+		}
+		registerProviderAdapter(d, *existing, apiKeyOverride)
 		warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 			Timestamp: time.Now().UTC(),
 			Action:    "provider.patch",

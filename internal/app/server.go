@@ -300,6 +300,7 @@ func NewServer(cfg Config) (*Server, error) {
 		IdempotencyCache: idemCache,
 		CircuitBreaker:   cb,
 		RateLimiter:      rl,
+		ProviderTimeout:  time.Duration(cfg.ProviderTimeoutSecs) * time.Second,
 	}
 
 	// Initialize Temporal workflow engine if enabled.
