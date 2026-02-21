@@ -146,6 +146,10 @@ func NewServer(cfg Config) (*Server, error) {
 	// Load additional providers from credentials file (~/.tokenhub/credentials).
 	loadCredentialsFile(cfg.CredentialsFile, eng, timeout, logger)
 
+	// Load persisted providers from DB and register adapters so they're
+	// included in health probing and routing from the moment we start.
+	loadPersistedProviders(eng, v, db, timeout, logger)
+
 	// Start health check prober for registered adapters (disable with TOKENHUB_HEALTH_PROBE_DISABLED=true).
 	var prober *health.Prober
 	if os.Getenv("TOKENHUB_HEALTH_PROBE_DISABLED") != "true" {
@@ -616,6 +620,50 @@ func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration,
 		slog.Int("providers", len(creds.Providers)),
 		slog.Int("models", len(creds.Models)),
 	)
+}
+
+// loadPersistedProviders reads provider records from the database and creates
+// runtime adapters for any that don't already have one registered (e.g. from
+// env vars). This ensures providers added via the admin API or bootstrap.local
+// survive restarts without re-running the bootstrap script.
+func loadPersistedProviders(eng *router.Engine, v *vault.Vault, db store.Store, timeout time.Duration, logger *slog.Logger) {
+	providers, err := db.ListProviders(context.Background())
+	if err != nil {
+		logger.Warn("failed to load persisted providers", slog.String("error", err.Error()))
+		return
+	}
+	existingAdapters := make(map[string]bool)
+	for _, id := range eng.ListAdapterIDs() {
+		existingAdapters[id] = true
+	}
+	logger.Info("loadPersistedProviders", slog.Int("db_providers", len(providers)), slog.Int("existing_adapters", len(existingAdapters)))
+	registered := 0
+	for _, p := range providers {
+		logger.Info("checking provider", slog.String("id", p.ID), slog.Bool("enabled", p.Enabled), slog.String("base_url", p.BaseURL), slog.Bool("already_registered", existingAdapters[p.ID]))
+		if !p.Enabled || p.BaseURL == "" {
+			continue
+		}
+		if existingAdapters[p.ID] {
+			continue
+		}
+		apiKey := ""
+		if p.CredStore == "vault" && v != nil && !v.IsLocked() {
+			apiKey, _ = v.Get("provider:" + p.ID + ":api_key")
+		}
+		switch p.Type {
+		case "anthropic":
+			eng.RegisterAdapter(anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout)))
+		case "vllm":
+			eng.RegisterAdapter(vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout)))
+		default:
+			eng.RegisterAdapter(openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout)))
+		}
+		registered++
+		logger.Info("registered persisted provider", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
+	}
+	if registered > 0 {
+		logger.Info("loaded persisted providers", slog.Int("count", registered))
+	}
 }
 
 func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger) {

@@ -44,13 +44,15 @@ run: docker
 
 # ──── Bootstrap ────
 
+TOKENHUB_PORT ?= 8090
+
 bootstrap:
 	@if [ -f bootstrap.local ]; then \
 		max=50; attempt=0; \
 		while [ $$attempt -lt $$max ]; do \
-			if curl -sf http://localhost:8080/healthz > /dev/null 2>&1; then \
+			if curl -sf http://localhost:$(TOKENHUB_PORT)/healthz > /dev/null 2>&1; then \
 				echo "TokenHub is healthy, running bootstrap.local..."; \
-				chmod +x bootstrap.local && ./bootstrap.local; \
+				chmod +x bootstrap.local && TOKENHUB_URL=http://localhost:$(TOKENHUB_PORT) ./bootstrap.local; \
 				break; \
 			fi; \
 			attempt=$$((attempt + 1)); \
