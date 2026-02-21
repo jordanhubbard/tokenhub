@@ -736,36 +736,67 @@ function runSimulation() {
 // Provider + Model Management
 // ============================
 function fetchProviders() {
-  fetch('/admin/v1/providers').then(r => r.json()).then(data => {
-    const items = data.items || data || [];
-    const providers = Array.isArray(items) ? items : [];
+  // Merge store-persisted providers with engine-runtime providers so that
+  // env-var and credentials-file providers show up in the UI too.
+  Promise.all([
+    fetch('/admin/v1/providers').then(r => r.json()).catch(() => ({ items: [] })),
+    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ adapters: [], models: [] }))
+  ]).then(([storeData, engineData]) => {
+    const storeProviders = Array.isArray(storeData.items) ? storeData.items : [];
+    const storeIds = new Set(storeProviders.map(p => p.id));
+    const engineAdapters = engineData.adapters || [];
+    const engineModels = engineData.models || [];
+
+    // Derive runtime-only providers from engine models (not in store).
+    const runtimeProviderIds = new Set();
+    engineModels.forEach(m => { if (!storeIds.has(m.provider_id)) runtimeProviderIds.add(m.provider_id); });
+    engineAdapters.forEach(a => { if (!storeIds.has(a)) runtimeProviderIds.add(a); });
+
+    const runtimeProviders = [...runtimeProviderIds].map(id => {
+      const models = engineModels.filter(m => m.provider_id === id);
+      return { id, type: 'env', base_url: '', cred_store: 'env', enabled: true, _runtime: true, _modelCount: models.length };
+    });
+
+    const allProviders = [...storeProviders, ...runtimeProviders];
     const tbody = document.getElementById('providers-body');
     const emptyEl = document.getElementById('providers-empty');
     const tableEl = document.getElementById('providers-table-wrap');
-    if (providers.length === 0) {
+    if (allProviders.length === 0) {
       emptyEl.style.display = 'block';
       tableEl.style.display = 'none';
     } else {
       emptyEl.style.display = 'none';
       tableEl.style.display = 'block';
-      tbody.innerHTML = providers.map(p => `<tr>
-        <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px">${p.base_url||'-'}</td><td>${p.cred_store||'none'}</td>
-        <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
-        <td><button class="btn sm" onclick="discoverModels('${p.id}')">Discover</button> <button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button></td>
-      </tr>`).join('');
+      tbody.innerHTML = allProviders.map(p => {
+        const src = p._runtime ? '<span style="color:#64b5f6;font-size:11px">runtime</span>' : p.cred_store || 'none';
+        const actions = p._runtime
+          ? `<span style="color:#666;font-size:11px">${p._modelCount} model(s)</span>`
+          : `<button class="btn sm" onclick="discoverModels('${p.id}')">Discover</button> <button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button>`;
+        return `<tr>
+          <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px">${p.base_url||'-'}</td><td>${src}</td>
+          <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
+          <td>${actions}</td>
+        </tr>`;
+      }).join('');
     }
     // Update model form provider dropdown.
     const sel = document.getElementById('mdl-provider');
     const cur = sel.value;
-    const adapterIds = providers.map(p => p.id);
-    // Also include runtime adapters.
-    fetch('/admin/v1/engine/models').then(r=>r.json()).then(d => {
-      (d.adapters || []).forEach(a => { if (!adapterIds.includes(a)) adapterIds.push(a); });
-      sel.innerHTML = adapterIds.map(id => `<option value="${id}" ${id===cur?'selected':''}>${id}</option>`).join('');
-    }).catch(() => {
-      sel.innerHTML = adapterIds.map(id => `<option value="${id}" ${id===cur?'selected':''}>${id}</option>`).join('');
+    const allIds = allProviders.map(p => p.id);
+    sel.innerHTML = allIds.map(id => `<option value="${id}" ${id===cur?'selected':''}>${id}</option>`).join('');
+
+    // Populate topology graph with known providers and models.
+    allProviders.forEach(p => ensureNode(p.id, p.id, 'provider'));
+    engineModels.forEach(m => {
+      ensureNode(m.provider_id, m.provider_id, 'provider');
+      ensureNode(m.id, m.id, 'model');
+      const edgeId = `${m.provider_id}-${m.id}`;
+      if (!cy.getElementById(edgeId).length) {
+        cy.add({ data: { id: edgeId, source: m.provider_id, target: m.id, width: 1.5, color: '#3a5a8a', opacity: 0.4, edgeLabel: '' } });
+      }
     });
-  }).catch(() => {});
+    cy.layout({ name: 'cose', animate: true, animationDuration: 400, nodeRepulsion: () => 8000 }).run();
+  });
 }
 
 function deleteProvider(id) {

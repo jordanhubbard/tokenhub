@@ -78,6 +78,11 @@ func bodySizeLimit(limit int64) func(http.Handler) http.Handler {
 }
 
 func MountRoutes(r chi.Router, d Dependencies) {
+	// Redirect root to admin dashboard.
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusFound)
+	})
+
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		// Verify the system can actually route requests.
 		modelCount := len(d.Engine.ListModels())
