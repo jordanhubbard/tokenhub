@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -97,26 +99,47 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		})
 	})
 
-	// Serve the embedded admin UI at /admin.
+	// Serve the embedded admin UI at /admin (with or without trailing slash).
 	sub, _ := fs.Sub(tokenhub.WebFS, "web")
-	r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
-		// Serve index.html for the SPA entry point.
-		f, err := sub.Open("index.html")
-		if err != nil {
+
+	// Compute a content hash from the embedded index.html for cache-busting
+	// asset URLs. This changes on every rebuild so browsers always get fresh JS.
+	assetVersion := "0"
+	if indexBytes, err := fs.ReadFile(sub, "index.html"); err == nil {
+		h := sha256.Sum256(indexBytes)
+		assetVersion = hex.EncodeToString(h[:8])
+	}
+	// Inject version query param into script src attributes.
+	cachedHTML := ""
+	if raw, err := fs.ReadFile(sub, "index.html"); err == nil {
+		cachedHTML = strings.ReplaceAll(string(raw),
+			"/_assets/cytoscape.min.js", "/_assets/cytoscape.min.js?v="+assetVersion)
+		cachedHTML = strings.ReplaceAll(cachedHTML,
+			"/_assets/d3.min.js", "/_assets/d3.min.js?v="+assetVersion)
+	}
+
+	serveAdmin := func(w http.ResponseWriter, r *http.Request) {
+		if cachedHTML == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"tokenhub":     "admin",
 				"vault_locked": d.Vault.IsLocked(),
 			})
 			return
 		}
-		defer func() { _ = f.Close() }()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		stat, _ := f.Stat()
-		http.ServeContent(w, r, "index.html", stat.ModTime(), f.(readSeeker))
-	})
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		w.Header().Set("ETag", `"`+assetVersion+`"`)
+		_, _ = w.Write([]byte(cachedHTML))
+	}
+	r.Get("/admin", serveAdmin)
+	r.Get("/admin/", serveAdmin)
 
 	// Static assets served under /_assets/ to avoid conflicts with /admin/v1.
-	r.Handle("/_assets/*", http.StripPrefix("/_assets/", http.FileServer(http.FS(sub))))
+	// Assets are immutable per release; cache for 1 year with version-busted URLs.
+	r.Handle("/_assets/*", http.StripPrefix("/_assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		http.FileServer(http.FS(sub)).ServeHTTP(w, r)
+	})))
 
 	// JSON API for programmatic access.
 	r.Get("/admin/api/info", func(w http.ResponseWriter, _ *http.Request) {
