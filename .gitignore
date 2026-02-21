@@ -47,3 +47,4 @@ settings.json
 
 # Editor/IDE state
 .cursor/
+Dockerfile.slim
