@@ -122,6 +122,9 @@ type RequestLog struct {
 	ErrorClass       string    `json:"error_class,omitempty"`
 	RequestID        string    `json:"request_id,omitempty"`
 	APIKeyID         string    `json:"api_key_id,omitempty"`
+	InputTokens      int       `json:"input_tokens"`
+	OutputTokens     int       `json:"output_tokens"`
+	TotalTokens      int       `json:"total_tokens"`
 }
 
 // RewardSummary aggregates reward data per model per token bucket for

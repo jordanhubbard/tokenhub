@@ -103,6 +103,14 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 	tokens := router.EstimateTokens(input.Request)
 	estCost := (float64(tokens)/1000.0)*m.InputPer1K + (512.0/1000.0)*m.OutputPer1K
 
+	// Extract actual token usage from the provider response.
+	var inTok, outTok int
+	if usage := extractProviderUsage(resp); usage.input > 0 || usage.output > 0 {
+		inTok = usage.input
+		outTok = usage.output
+		estCost = (float64(inTok)/1000.0)*m.InputPer1K + (float64(outTok)/1000.0)*m.OutputPer1K
+	}
+
 	if a.EventBus != nil {
 		a.EventBus.Publish(events.Event{
 			Type:         events.EventActivityCompleted,
@@ -118,6 +126,8 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 		Response:      json.RawMessage(resp),
 		LatencyMs:     latencyMs,
 		EstimatedCost: estCost,
+		InputTokens:   inTok,
+		OutputTokens:  outTok,
 	}, nil
 }
 
@@ -290,11 +300,14 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 			StatusCode:       statusCode,
 			ErrorClass:       input.ErrorClass,
 			RequestID:        input.RequestID,
+			InputTokens:      input.InputTokens,
+			OutputTokens:     input.OutputTokens,
+			TotalTokens:      input.InputTokens + input.OutputTokens,
 		}); err != nil {
 			slog.Warn("log_request failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
 		}
 
-		tokens := 0 // not available at this point
+		tokens := input.InputTokens + input.OutputTokens
 		if err := a.Store.LogReward(ctx, store.RewardEntry{
 			Timestamp:       now,
 			RequestID:       input.RequestID,
@@ -322,17 +335,26 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 		if input.Success {
 			a.Metrics.RequestLatency.WithLabelValues(input.Mode, input.ModelID, input.ProviderID).Observe(float64(input.LatencyMs))
 			a.Metrics.CostUSD.WithLabelValues(input.ModelID, input.ProviderID).Add(input.CostUSD)
+			if input.InputTokens > 0 {
+				a.Metrics.TokensTotal.WithLabelValues(input.ModelID, input.ProviderID, "input").Add(float64(input.InputTokens))
+			}
+			if input.OutputTokens > 0 {
+				a.Metrics.TokensTotal.WithLabelValues(input.ModelID, input.ProviderID, "output").Add(float64(input.OutputTokens))
+			}
 		}
 	}
 
 	if a.EventBus != nil {
 		if input.Success {
 			a.EventBus.Publish(events.Event{
-				Type:       events.EventRouteSuccess,
-				ModelID:    input.ModelID,
-				ProviderID: input.ProviderID,
-				LatencyMs:  float64(input.LatencyMs),
-				CostUSD:    input.CostUSD,
+				Type:         events.EventRouteSuccess,
+				ModelID:      input.ModelID,
+				ProviderID:   input.ProviderID,
+				LatencyMs:    float64(input.LatencyMs),
+				CostUSD:      input.CostUSD,
+				InputTokens:  input.InputTokens,
+				OutputTokens: input.OutputTokens,
+				TotalTokens:  input.InputTokens + input.OutputTokens,
 			})
 		} else {
 			a.EventBus.Publish(events.Event{
@@ -347,18 +369,52 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 
 	if a.Stats != nil {
 		a.Stats.Record(stats.Snapshot{
-			ModelID:    input.ModelID,
-			ProviderID: input.ProviderID,
-			LatencyMs:  float64(input.LatencyMs),
-			CostUSD:    input.CostUSD,
-			Success:    input.Success,
+			ModelID:      input.ModelID,
+			ProviderID:   input.ProviderID,
+			LatencyMs:    float64(input.LatencyMs),
+			CostUSD:      input.CostUSD,
+			Success:      input.Success,
+			InputTokens:  input.InputTokens,
+			OutputTokens: input.OutputTokens,
 		})
 	}
 
 	if a.TSDB != nil && input.Success {
 		a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(input.LatencyMs)})
 		a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: input.CostUSD})
+		if total := input.InputTokens + input.OutputTokens; total > 0 {
+			a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "tokens", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(total)})
+		}
 	}
 
 	return nil
+}
+
+type providerUsage struct{ input, output int }
+
+// extractProviderUsage parses token counts from a raw provider response,
+// supporting both OpenAI and Anthropic response formats.
+func extractProviderUsage(raw json.RawMessage) providerUsage {
+	if len(raw) == 0 {
+		return providerUsage{}
+	}
+	var oai struct {
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &oai); err == nil && oai.Usage != nil {
+		return providerUsage{input: oai.Usage.PromptTokens, output: oai.Usage.CompletionTokens}
+	}
+	var ant struct {
+		Usage *struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &ant); err == nil && ant.Usage != nil {
+		return providerUsage{input: ant.Usage.InputTokens, output: ant.Usage.OutputTokens}
+	}
+	return providerUsage{}
 }

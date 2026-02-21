@@ -234,18 +234,23 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
+		usage := extractUsage(resp)
+		actualCost := computeActualCost(usage, decision.EstimatedCostUSD, d.Engine, decision.ModelID)
+
 		recordObservability(d, observeParams{
 			Ctx:             r.Context(),
 			ModelID:         decision.ModelID,
 			ProviderID:      decision.ProviderID,
 			Mode:            policy.Mode,
-			CostUSD:         decision.EstimatedCostUSD,
+			CostUSD:         actualCost,
 			LatencyMs:       latencyMs,
 			Success:         true,
 			Reason:          decision.Reason,
 			RequestID:       reqID,
 			APIKeyID:        apiKeyID,
 			EstimatedTokens: estimatedTokens,
+			InputTokens:     usage.InputTokens,
+			OutputTokens:    usage.OutputTokens,
 		})
 
 		// Build OpenAI-compatible response.

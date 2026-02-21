@@ -357,6 +357,10 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Extract actual token usage from the provider response.
+		usage := extractUsage(resp)
+		actualCost := computeActualCost(usage, decision.EstimatedCostUSD, d.Engine, decision.ModelID)
+
 		// Record metrics for successful requests (skip if Temporal already logged).
 		if !temporalHandledLogging {
 			recordObservability(d, observeParams{
@@ -364,7 +368,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				ModelID:         decision.ModelID,
 				ProviderID:      decision.ProviderID,
 				Mode:            policy.Mode,
-				CostUSD:         decision.EstimatedCostUSD,
+				CostUSD:         actualCost,
 				LatencyMs:       latencyMs,
 				Success:         true,
 				Reason:          decision.Reason,
@@ -372,6 +376,8 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				APIKeyID:        apiKeyID,
 				EstimatedTokens: estimatedTokens,
 				LatencyBudgetMs: latencyBudgetMs,
+				InputTokens:     usage.InputTokens,
+				OutputTokens:    usage.OutputTokens,
 			})
 		}
 
@@ -382,7 +388,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 
 		_ = json.NewEncoder(w).Encode(ChatResponse{
 			NegotiatedModel:  decision.ModelID,
-			EstimatedCostUSD: decision.EstimatedCostUSD,
+			EstimatedCostUSD: actualCost,
 			RoutingReason:    decision.Reason,
 			Response:         resp,
 		})

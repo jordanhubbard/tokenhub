@@ -97,6 +97,7 @@
     .live-feed .provider { color: #ce93d8; }
     .live-feed .latency { color: #ffc107; min-width: 60px; text-align: right; }
     .live-feed .cost { color: #4caf50; min-width: 70px; text-align: right; }
+    .live-feed .tokens { color: #81d4fa; min-width: 60px; text-align: right; font-size: 11px; }
     .live-feed .reason { color: #666; }
     .live-feed .err { color: #f44336; }
     .live-feed .entry.error { background: rgba(244,67,54,0.05); }
@@ -310,6 +311,7 @@
       <h2>Overview</h2>
       <div class="stat-row">
         <div class="stat-box"><div class="value" id="total-requests">0</div><div class="label">Requests</div></div>
+        <div class="stat-box"><div class="value" id="total-tokens">0</div><div class="label">Tokens</div></div>
         <div class="stat-box"><div class="value" id="total-cost">$0.00</div><div class="label">Cost</div></div>
         <div class="stat-box"><div class="value" id="avg-latency">0ms</div><div class="label">Avg Latency</div></div>
         <div class="stat-box"><div class="value" id="error-rate">0%</div><div class="label">Errors</div></div>
@@ -317,6 +319,7 @@
       <h2 style="margin-top:12px">Trends</h2>
       <div class="tabs" id="trend-tabs">
         <button class="active" onclick="switchTrend('cost',this)">Cost</button>
+        <button onclick="switchTrend('tokens',this)">Tokens</button>
         <button onclick="switchTrend('latency',this)">Latency</button>
       </div>
       <div id="trend-chart"></div>
@@ -332,7 +335,7 @@
     <div class="panel leaderboard">
       <h2>Model Leaderboard</h2>
       <div class="table-wrap">
-        <table><thead><tr><th>Model</th><th>Provider</th><th>Wt</th><th>Reqs</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead>
+        <table><thead><tr><th>Model</th><th>Provider</th><th>Wt</th><th>Reqs</th><th>Tokens</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead>
         <tbody id="leaderboard-body"></tbody></table>
       </div>
       <h2 style="margin-top:16px">Weights</h2>
@@ -375,7 +378,7 @@
     <div class="panel full-width">
       <h2>Request Log (Historical)</h2>
       <div class="table-wrap">
-        <table class="admin-table"><thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency</th><th>Cost</th><th>Status</th><th>Request ID</th></tr></thead>
+        <table class="admin-table"><thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Status</th><th>Request ID</th></tr></thead>
         <tbody id="request-log-body"></tbody></table>
       </div>
       <div class="pagination">
@@ -563,7 +566,7 @@ function switchTrend(metric, btn) {
 // ============================
 // SSE + Live Decision Feed
 // ============================
-let cumulativeCost = 0, totalRequests = 0, totalErrors = 0, totalLatency = 0;
+let cumulativeCost = 0, totalRequests = 0, totalErrors = 0, totalLatency = 0, totalTokens = 0;
 let feedEntries = 0;
 const perModelCost = {};
 
@@ -574,6 +577,7 @@ function connectSSE() {
   es.addEventListener('route_success', (e) => {
     const d = JSON.parse(e.data);
     totalRequests++; totalLatency += d.latency_ms || 0; cumulativeCost += d.cost_usd || 0;
+    totalTokens += d.total_tokens || 0;
     perModelCost[d.model_id] = (perModelCost[d.model_id] || 0) + (d.cost_usd || 0);
     animateEdge(d.provider_id, d.model_id, d.latency_ms, d.cost_usd);
     appendFeedEntry(d, false);
@@ -602,11 +606,12 @@ function appendFeedEntry(d, isErr) {
   const ts = new Date(d.timestamp || Date.now()).toLocaleTimeString();
   const lat = d.latency_ms ? Math.round(d.latency_ms) + 'ms' : '-';
   const cost = d.cost_usd ? '$' + d.cost_usd.toFixed(4) : '-';
+  const tok = d.total_tokens ? d.total_tokens.toLocaleString() + 'tok' : '';
   const cls = isErr ? 'entry error' : 'entry';
   const detail = isErr
     ? `<span class="err">${d.error_class || 'error'}: ${(d.error_msg||'').slice(0,60)}</span>`
     : `<span class="reason">${d.reason || ''}</span>`;
-  const html = `<div class="${cls}"><span class="ts">${ts}</span><span class="model">${d.model_id||'-'}</span><span class="provider">${d.provider_id||'-'}</span><span class="latency">${lat}</span><span class="cost">${cost}</span>${detail}</div>`;
+  const html = `<div class="${cls}"><span class="ts">${ts}</span><span class="model">${d.model_id||'-'}</span><span class="provider">${d.provider_id||'-'}</span><span class="latency">${lat}</span><span class="cost">${cost}</span>${tok ? `<span class="tokens">${tok}</span>` : ''}${detail}</div>`;
   feed.insertAdjacentHTML('afterbegin', html);
   feedEntries++;
   if (feedEntries > 200) feed.lastElementChild?.remove();
@@ -615,9 +620,25 @@ function appendFeedEntry(d, isErr) {
 
 function refreshStats() {
   document.getElementById('total-requests').textContent = totalRequests;
+  document.getElementById('total-tokens').textContent = totalTokens.toLocaleString();
   document.getElementById('total-cost').textContent = `$${cumulativeCost.toFixed(4)}`;
   document.getElementById('avg-latency').textContent = totalRequests > 0 ? `${Math.round(totalLatency / totalRequests)}ms` : '0ms';
   document.getElementById('error-rate').textContent = totalRequests > 0 ? `${(totalErrors / totalRequests * 100).toFixed(1)}%` : '0%';
+}
+
+function seedStatsFromServer() {
+  fetch('/admin/v1/stats').then(r => r.json()).then(data => {
+    const globals = data.global || [];
+    const g24h = globals.find(g => g.window === '24h') || globals.find(g => g.window === '1h') || globals[0];
+    if (g24h) {
+      totalRequests = g24h.request_count || 0;
+      totalErrors = g24h.error_count || 0;
+      totalLatency = (g24h.avg_latency_ms || 0) * (g24h.request_count || 1);
+      cumulativeCost = g24h.total_cost_usd || 0;
+      totalTokens = g24h.total_tokens || 0;
+      refreshStats();
+    }
+  }).catch(() => {});
 }
 
 // ============================
@@ -993,9 +1014,11 @@ function updateLeaderboard() {
   }).catch(() => {});
   fetch('/admin/v1/stats').then(r => r.json()).then(data => {
     const tbody = document.getElementById('leaderboard-body');
-    const models = (data.by_model && data.by_model['1m']) || [];
+    const windows = data.by_model || {};
+    const models = windows['24h'] || windows['1h'] || windows['5m'] || windows['1m'] || [];
     tbody.innerHTML = models.map(m => `<tr>
       <td>${m.model_id}</td><td>${m.provider_id||'-'}</td><td>${modelWeights[m.model_id]||'-'}</td><td>${m.request_count}</td>
+      <td>${(m.total_tokens||0).toLocaleString()}</td>
       <td>${Math.round(m.avg_latency_ms)}ms</td><td>$${(m.total_cost_usd||0).toFixed(4)}</td>
       <td><span class="badge ${m.error_rate>0.5?'down':m.error_rate>0.1?'degraded':'healthy'}">${(m.error_rate*100).toFixed(0)}%</span></td>
     </tr>`).join('');
@@ -1106,11 +1129,12 @@ function fetchRequestLogs() {
     const logs = data.logs || [];
     const tbody = document.getElementById('request-log-body');
     tbody.innerHTML = logs.length === 0 && requestLogOffset === 0
-      ? '<tr><td colspan="8" style="color:#8a8d9a;text-align:center">No logs</td></tr>'
+      ? '<tr><td colspan="9" style="color:#8a8d9a;text-align:center">No logs</td></tr>'
       : logs.map(e => {
         const latCls = e.latency_ms < 1000 ? 'color:#4caf50' : e.latency_ms <= 5000 ? 'color:#ffc107' : 'color:#f44336';
         const stCls = e.status_code === 200 ? 'color:#4caf50' : 'color:#f44336';
-        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.model_id||'-'}</td><td>${e.provider_id||'-'}</td><td>${e.mode||'-'}</td><td style="${latCls}">${e.latency_ms}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${e.request_id||'-'}</td></tr>`;
+        const tok = e.total_tokens > 0 ? e.total_tokens.toLocaleString() : '-';
+        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.model_id||'-'}</td><td>${e.provider_id||'-'}</td><td>${e.mode||'-'}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${e.request_id||'-'}</td></tr>`;
       }).join('');
     document.getElementById('req-log-page-info').textContent = `Page ${Math.floor(requestLogOffset/50)+1}`;
     document.getElementById('req-log-prev').disabled = requestLogOffset === 0;
@@ -1194,6 +1218,7 @@ function showToast(msg, type) {
 // ============================
 document.addEventListener('DOMContentLoaded', () => {
   initChart();
+  seedStatsFromServer();
   connectSSE();
   updateLeaderboard(); fetchAuditLog(); fetchVaultStatus(); fetchProviders();
   fetchModels(); fetchRoutingConfig(); fetchHealthStatus(); fetchRequestLogs();

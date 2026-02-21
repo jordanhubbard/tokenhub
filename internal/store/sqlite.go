@@ -138,6 +138,9 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	}{
 		{"request_logs", "api_key_id", "ALTER TABLE request_logs ADD COLUMN api_key_id TEXT NOT NULL DEFAULT ''"},
 		{"api_keys", "monthly_budget_usd", "ALTER TABLE api_keys ADD COLUMN monthly_budget_usd REAL NOT NULL DEFAULT 0"},
+		{"request_logs", "input_tokens", "ALTER TABLE request_logs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "output_tokens", "ALTER TABLE request_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "total_tokens", "ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, m := range alterMigrations {
 		var count int
@@ -265,10 +268,11 @@ func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LogRequest(ctx context.Context, entry RequestLog) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Timestamp, entry.ModelID, entry.ProviderID, entry.Mode,
-		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID, entry.APIKeyID)
+		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID, entry.APIKeyID,
+		entry.InputTokens, entry.OutputTokens, entry.TotalTokens)
 	return err
 }
 
@@ -334,7 +338,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id
+		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens
 		 FROM request_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -346,7 +350,8 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		var l RequestLog
 		var ts string
 		if err := rows.Scan(&l.ID, &ts, &l.ModelID, &l.ProviderID, &l.Mode,
-			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID, &l.APIKeyID); err != nil {
+			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID, &l.APIKeyID,
+			&l.InputTokens, &l.OutputTokens, &l.TotalTokens); err != nil {
 			return nil, err
 		}
 		l.Timestamp, _ = time.Parse(time.RFC3339, ts)

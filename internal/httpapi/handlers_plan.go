@@ -189,6 +189,9 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
+		usage := extractUsage(resp)
+		actualCost := computeActualCost(usage, decision.EstimatedCostUSD, d.Engine, decision.ModelID)
+
 		// Record metrics for successful requests (skip if Temporal already logged).
 		if !temporalHandledLogging {
 			recordObservability(d, observeParams{
@@ -196,13 +199,15 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				ModelID:         decision.ModelID,
 				ProviderID:      decision.ProviderID,
 				Mode:            mode,
-				CostUSD:         decision.EstimatedCostUSD,
+				CostUSD:         actualCost,
 				LatencyMs:       latencyMs,
 				Success:         true,
 				Reason:          decision.Reason,
 				RequestID:       middleware.GetReqID(r.Context()),
 				APIKeyID:        apiKeyID,
 				EstimatedTokens: estimatedTokens,
+				InputTokens:     usage.InputTokens,
+				OutputTokens:    usage.OutputTokens,
 			})
 		}
 
@@ -214,7 +219,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(PlanResponse{
 			NegotiatedModel:  decision.ModelID,
-			EstimatedCostUSD: decision.EstimatedCostUSD,
+			EstimatedCostUSD: actualCost,
 			RoutingReason:    decision.Reason,
 			Response:         resp,
 		})

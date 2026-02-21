@@ -8,12 +8,14 @@ import (
 
 // Snapshot is a single data point recorded for a request.
 type Snapshot struct {
-	Timestamp  time.Time
-	ModelID    string
-	ProviderID string
-	LatencyMs  float64
-	CostUSD    float64
-	Success    bool
+	Timestamp    time.Time
+	ModelID      string
+	ProviderID   string
+	LatencyMs    float64
+	CostUSD      float64
+	Success      bool
+	InputTokens  int
+	OutputTokens int
 }
 
 // Window defines a named time window for aggregation.
@@ -34,15 +36,18 @@ func DefaultWindows() []Window {
 
 // Aggregate holds computed stats for a time window.
 type Aggregate struct {
-	Window       string  `json:"window"`
-	ModelID      string  `json:"model_id,omitempty"`
-	ProviderID   string  `json:"provider_id,omitempty"`
-	RequestCount int     `json:"request_count"`
-	ErrorCount   int     `json:"error_count"`
-	ErrorRate    float64 `json:"error_rate"`
-	AvgLatencyMs float64 `json:"avg_latency_ms"`
-	P95LatencyMs float64 `json:"p95_latency_ms"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
+	Window        string  `json:"window"`
+	ModelID       string  `json:"model_id,omitempty"`
+	ProviderID    string  `json:"provider_id,omitempty"`
+	RequestCount  int     `json:"request_count"`
+	ErrorCount    int     `json:"error_count"`
+	ErrorRate     float64 `json:"error_rate"`
+	AvgLatencyMs  float64 `json:"avg_latency_ms"`
+	P95LatencyMs  float64 `json:"p95_latency_ms"`
+	TotalCostUSD  float64 `json:"total_cost_usd"`
+	InputTokens   int     `json:"input_tokens"`
+	OutputTokens  int     `json:"output_tokens"`
+	TotalTokens   int     `json:"total_tokens"`
 }
 
 // Collector maintains rolling snapshots for dashboard aggregation.
@@ -188,10 +193,13 @@ func computeAggregate(window, modelID, providerID string, snaps []Snapshot) Aggr
 		totalLatency += s.LatencyMs
 		latencies = append(latencies, s.LatencyMs)
 		a.TotalCostUSD += s.CostUSD
+		a.InputTokens += s.InputTokens
+		a.OutputTokens += s.OutputTokens
 		if !s.Success {
 			a.ErrorCount++
 		}
 	}
+	a.TotalTokens = a.InputTokens + a.OutputTokens
 
 	if a.RequestCount > 0 {
 		a.AvgLatencyMs = totalLatency / float64(a.RequestCount)

@@ -28,13 +28,16 @@ type Event struct {
 	Timestamp time.Time `json:"timestamp"`
 
 	// Routing fields (populated for route events).
-	ModelID     string  `json:"model_id,omitempty"`
-	ProviderID  string  `json:"provider_id,omitempty"`
-	LatencyMs   float64 `json:"latency_ms,omitempty"`
-	CostUSD     float64 `json:"cost_usd,omitempty"`
-	ErrorClass  string  `json:"error_class,omitempty"`
-	ErrorMsg    string  `json:"error_msg,omitempty"`
-	Reason      string  `json:"reason,omitempty"`
+	ModelID      string  `json:"model_id,omitempty"`
+	ProviderID   string  `json:"provider_id,omitempty"`
+	LatencyMs    float64 `json:"latency_ms,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
+	TotalTokens  int     `json:"total_tokens,omitempty"`
+	ErrorClass   string  `json:"error_class,omitempty"`
+	ErrorMsg     string  `json:"error_msg,omitempty"`
+	Reason       string  `json:"reason,omitempty"`
 
 	// Health fields (populated for health_change events).
 	OldState string `json:"old_state,omitempty"`

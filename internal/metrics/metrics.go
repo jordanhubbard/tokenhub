@@ -13,6 +13,7 @@ type Registry struct {
 	RequestsTotal    *prometheus.CounterVec
 	RequestLatency   *prometheus.HistogramVec
 	CostUSD          *prometheus.CounterVec
+	TokensTotal      *prometheus.CounterVec
 	RateLimitedTotal prometheus.Counter
 	TemporalUp       prometheus.Gauge
 
@@ -38,6 +39,10 @@ func New() *Registry {
 			Name: "tokenhub_cost_usd_total",
 			Help: "Estimated USD cost",
 		}, []string{"model", "provider"}),
+		TokensTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tokenhub_tokens_total",
+			Help: "Total tokens consumed (input + output)",
+		}, []string{"model", "provider", "direction"}),
 		RateLimitedTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tokenhub_rate_limited_total",
 			Help: "Total requests rejected by rate limiter",
@@ -55,7 +60,7 @@ func New() *Registry {
 			Help: "Total requests that fell back to direct engine due to circuit breaker",
 		}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal)
+	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.TokensTotal, m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal)
 	return m
 }
 

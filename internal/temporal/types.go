@@ -43,18 +43,22 @@ type SendOutput struct {
 	LatencyMs     int64           `json:"latency_ms"`
 	EstimatedCost float64         `json:"estimated_cost"`
 	ErrorClass    string          `json:"error_class,omitempty"`
+	InputTokens   int             `json:"input_tokens,omitempty"`
+	OutputTokens  int             `json:"output_tokens,omitempty"`
 }
 
 // LogInput is the input for the LogResult activity.
 type LogInput struct {
-	RequestID  string  `json:"request_id"`
-	ModelID    string  `json:"model_id"`
-	ProviderID string  `json:"provider_id"`
-	Mode       string  `json:"mode"`
-	LatencyMs  int64   `json:"latency_ms"`
-	CostUSD    float64 `json:"cost_usd"`
-	Success    bool    `json:"success"`
-	ErrorClass string  `json:"error_class,omitempty"`
+	RequestID    string  `json:"request_id"`
+	ModelID      string  `json:"model_id"`
+	ProviderID   string  `json:"provider_id"`
+	Mode         string  `json:"mode"`
+	LatencyMs    int64   `json:"latency_ms"`
+	CostUSD      float64 `json:"cost_usd"`
+	Success      bool    `json:"success"`
+	ErrorClass   string  `json:"error_class,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
 }
 
 // StreamLogInput is the input for the StreamLogResult activity.

@@ -13,6 +13,62 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 )
 
+// tokenUsage holds actual token counts extracted from a provider response.
+type tokenUsage struct {
+	InputTokens  int
+	OutputTokens int
+}
+
+// extractUsage parses token usage from a raw provider response. It supports
+// both OpenAI format (usage.prompt_tokens/completion_tokens) and Anthropic
+// format (usage.input_tokens/output_tokens).
+func extractUsage(raw json.RawMessage) tokenUsage {
+	if len(raw) == 0 {
+		return tokenUsage{}
+	}
+	var oai struct {
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &oai); err == nil && oai.Usage != nil {
+		return tokenUsage{
+			InputTokens:  oai.Usage.PromptTokens,
+			OutputTokens: oai.Usage.CompletionTokens,
+		}
+	}
+	var ant struct {
+		Usage *struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &ant); err == nil && ant.Usage != nil {
+		return tokenUsage{
+			InputTokens:  ant.Usage.InputTokens,
+			OutputTokens: ant.Usage.OutputTokens,
+		}
+	}
+	return tokenUsage{}
+}
+
+// computeActualCost calculates cost from actual token counts and per-1k rates.
+// Falls back to the pre-flight estimated cost when actual tokens are zero
+// (e.g. streaming responses that don't include a usage block).
+func computeActualCost(usage tokenUsage, estimatedCost float64, eng *router.Engine, modelID string) float64 {
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+		return estimatedCost
+	}
+	for _, m := range eng.ListModels() {
+		if m.ID == modelID {
+			return (float64(usage.InputTokens)/1000)*m.InputPer1K +
+				(float64(usage.OutputTokens)/1000)*m.OutputPer1K
+		}
+	}
+	return estimatedCost
+}
+
 // jsonError writes a JSON-encoded error response with the given status code.
 // Response body format: {"error": "<msg>"}
 func jsonError(w http.ResponseWriter, msg string, code int) {
@@ -45,6 +101,10 @@ type observeParams struct {
 	// Reward logging enrichment.
 	EstimatedTokens int
 	LatencyBudgetMs int
+
+	// Actual token usage extracted from the provider response.
+	InputTokens  int
+	OutputTokens int
 }
 
 // recordObservability writes a completed request result to all configured
@@ -66,6 +126,12 @@ func recordObservability(d Dependencies, p observeParams) {
 		if p.Success {
 			d.Metrics.RequestLatency.WithLabelValues(p.Mode, p.ModelID, p.ProviderID).Observe(float64(p.LatencyMs))
 			d.Metrics.CostUSD.WithLabelValues(p.ModelID, p.ProviderID).Add(p.CostUSD)
+			if p.InputTokens > 0 {
+				d.Metrics.TokensTotal.WithLabelValues(p.ModelID, p.ProviderID, "input").Add(float64(p.InputTokens))
+			}
+			if p.OutputTokens > 0 {
+				d.Metrics.TokensTotal.WithLabelValues(p.ModelID, p.ProviderID, "output").Add(float64(p.OutputTokens))
+			}
 		}
 	}
 
@@ -86,6 +152,9 @@ func recordObservability(d Dependencies, p observeParams) {
 			ErrorClass:       p.ErrorClass,
 			RequestID:        p.RequestID,
 			APIKeyID:         p.APIKeyID,
+			InputTokens:      p.InputTokens,
+			OutputTokens:     p.OutputTokens,
+			TotalTokens:      p.InputTokens + p.OutputTokens,
 		}))
 		warnOnErr("log_reward", d.Store.LogReward(p.Ctx, store.RewardEntry{
 			Timestamp:       time.Now().UTC(),
@@ -108,12 +177,15 @@ func recordObservability(d Dependencies, p observeParams) {
 	if d.EventBus != nil {
 		if p.Success {
 			d.EventBus.Publish(events.Event{
-				Type:       events.EventRouteSuccess,
-				ModelID:    p.ModelID,
-				ProviderID: p.ProviderID,
-				LatencyMs:  float64(p.LatencyMs),
-				CostUSD:    p.CostUSD,
-				Reason:     p.Reason,
+				Type:         events.EventRouteSuccess,
+				ModelID:      p.ModelID,
+				ProviderID:   p.ProviderID,
+				LatencyMs:    float64(p.LatencyMs),
+				CostUSD:      p.CostUSD,
+				InputTokens:  p.InputTokens,
+				OutputTokens: p.OutputTokens,
+				TotalTokens:  p.InputTokens + p.OutputTokens,
+				Reason:       p.Reason,
 			})
 		} else {
 			d.EventBus.Publish(events.Event{
@@ -130,11 +202,13 @@ func recordObservability(d Dependencies, p observeParams) {
 	// --- Stats ---
 	if d.Stats != nil {
 		d.Stats.Record(stats.Snapshot{
-			ModelID:    p.ModelID,
-			ProviderID: p.ProviderID,
-			LatencyMs:  float64(p.LatencyMs),
-			CostUSD:    p.CostUSD,
-			Success:    p.Success,
+			ModelID:      p.ModelID,
+			ProviderID:   p.ProviderID,
+			LatencyMs:    float64(p.LatencyMs),
+			CostUSD:      p.CostUSD,
+			Success:      p.Success,
+			InputTokens:  p.InputTokens,
+			OutputTokens: p.OutputTokens,
 		})
 	}
 
@@ -143,6 +217,9 @@ func recordObservability(d Dependencies, p observeParams) {
 		now := time.Now().UTC()
 		d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(p.LatencyMs)})
 		d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: p.CostUSD})
+		if total := p.InputTokens + p.OutputTokens; total > 0 {
+			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "tokens", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(total)})
+		}
 	}
 
 	// --- Budget cache invalidation ---
