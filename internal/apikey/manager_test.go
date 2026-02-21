@@ -191,6 +191,16 @@ func TestCheckScope(t *testing.T) {
 		t.Error("expected both scopes to allow /v1/plan")
 	}
 
+	// /v1/models maps to "chat" scope — read-only model listing.
+	rec.Scopes = `["chat"]`
+	if !CheckScope(rec, "/v1/models") {
+		t.Error("expected chat scope to allow /v1/models")
+	}
+	rec.Scopes = `["plan"]`
+	if CheckScope(rec, "/v1/models") {
+		t.Error("expected plan-only scope to deny /v1/models")
+	}
+
 	// Empty scopes = allow all.
 	rec.Scopes = ""
 	if !CheckScope(rec, "/v1/chat") {

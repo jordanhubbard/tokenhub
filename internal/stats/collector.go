@@ -81,7 +81,11 @@ func (c *Collector) Prune() {
 	cutoff := time.Now().Add(-c.maxAge)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.pruneLocked(cutoff)
+}
 
+// pruneLocked removes expired snapshots. Caller must hold c.mu (write lock).
+func (c *Collector) pruneLocked(cutoff time.Time) {
 	i := 0
 	for i < len(c.snapshots) && c.snapshots[i].Timestamp.Before(cutoff) {
 		i++
@@ -91,11 +95,22 @@ func (c *Collector) Prune() {
 	}
 }
 
+// snapshotsAfterPrune acquires a write lock, prunes expired snapshots, and
+// returns a snapshot of the current data. This avoids the lock gap that exists
+// when Prune() and a read lock are acquired separately.
+func (c *Collector) snapshotsAfterPrune() []Snapshot {
+	cutoff := time.Now().Add(-c.maxAge)
+	c.mu.Lock()
+	c.pruneLocked(cutoff)
+	cp := make([]Snapshot, len(c.snapshots))
+	copy(cp, c.snapshots)
+	c.mu.Unlock()
+	return cp
+}
+
 // Summary returns aggregated stats for all windows grouped by model.
 func (c *Collector) Summary() map[string][]Aggregate {
-	c.Prune()
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	snapshots := c.snapshotsAfterPrune()
 
 	now := time.Now()
 	result := make(map[string][]Aggregate)
@@ -103,9 +118,8 @@ func (c *Collector) Summary() map[string][]Aggregate {
 	for _, w := range c.windows {
 		cutoff := now.Add(-w.Duration)
 
-		// Group by model.
 		byModel := make(map[string][]Snapshot)
-		for _, s := range c.snapshots {
+		for _, s := range snapshots {
 			if s.Timestamp.After(cutoff) {
 				byModel[s.ModelID] = append(byModel[s.ModelID], s)
 			}
@@ -121,9 +135,7 @@ func (c *Collector) Summary() map[string][]Aggregate {
 
 // SummaryByProvider returns aggregated stats for all windows grouped by provider.
 func (c *Collector) SummaryByProvider() map[string][]Aggregate {
-	c.Prune()
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	snapshots := c.snapshotsAfterPrune()
 
 	now := time.Now()
 	result := make(map[string][]Aggregate)
@@ -132,7 +144,7 @@ func (c *Collector) SummaryByProvider() map[string][]Aggregate {
 		cutoff := now.Add(-w.Duration)
 
 		byProvider := make(map[string][]Snapshot)
-		for _, s := range c.snapshots {
+		for _, s := range snapshots {
 			if s.Timestamp.After(cutoff) {
 				byProvider[s.ProviderID] = append(byProvider[s.ProviderID], s)
 			}
@@ -148,9 +160,7 @@ func (c *Collector) SummaryByProvider() map[string][]Aggregate {
 
 // Global returns aggregate stats across all models and providers.
 func (c *Collector) Global() []Aggregate {
-	c.Prune()
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	snapshots := c.snapshotsAfterPrune()
 
 	now := time.Now()
 	var result []Aggregate
@@ -158,7 +168,7 @@ func (c *Collector) Global() []Aggregate {
 	for _, w := range c.windows {
 		cutoff := now.Add(-w.Duration)
 		var snaps []Snapshot
-		for _, s := range c.snapshots {
+		for _, s := range snapshots {
 			if s.Timestamp.After(cutoff) {
 				snaps = append(snaps, s)
 			}

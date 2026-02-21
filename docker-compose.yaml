@@ -1,6 +1,6 @@
 services:
   tokenhub:
-    image: tokenhub:v0.2.6
+    image: tokenhub:v0.2.5-4-g81d19d1-dirty
     ports:
       - "8090:8080"
     environment:
@@ -9,7 +9,7 @@ services:
       - TOKENHUB_VAULT_ENABLED=true
       - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
       - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
-      - TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000
+      - TOKENHUB_VLLM_ENDPOINTS=http://ollama-server.hrd.nvidia.com:8000
       - TOKENHUB_ADMIN_TOKEN=${TOKENHUB_ADMIN_TOKEN}
       - TOKENHUB_CORS_ORIGINS=${TOKENHUB_CORS_ORIGINS}
       - TOKENHUB_RATE_LIMIT_RPS=${TOKENHUB_RATE_LIMIT_RPS:-60}

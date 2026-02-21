@@ -261,6 +261,35 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
+// ModelsListPublicHandler returns an OpenAI-compatible GET /v1/models response
+// listing all enabled models visible to the authenticated API key.
+func ModelsListPublicHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		models := d.Engine.ListModels()
+		type modelObj struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			OwnedBy string `json:"owned_by"`
+		}
+		var data []modelObj
+		for _, m := range models {
+			if !m.Enabled {
+				continue
+			}
+			data = append(data, modelObj{
+				ID:      m.ID,
+				Object:  "model",
+				OwnedBy: m.ProviderID,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data":   data,
+		})
+	}
+}
+
 // buildCompletionsResponse constructs an OpenAI-compatible response from the
 // raw provider response. If the provider already returns OpenAI format (with
 // a "choices" array), the choices are passed through. Otherwise, a single

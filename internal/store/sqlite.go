@@ -10,6 +10,22 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// parseTime parses a timestamp string, trying RFC3339Nano first (which
+// preserves sub-second precision from Go's time.Now()) then falling back
+// to plain RFC3339, and finally SQLite's CURRENT_TIMESTAMP format.
+func parseTime(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
 // SQLiteStore implements Store using modernc.org/sqlite (pure-Go, no CGO).
 type SQLiteStore struct {
 	db *sql.DB
@@ -354,7 +370,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 			&l.InputTokens, &l.OutputTokens, &l.TotalTokens); err != nil {
 			return nil, err
 		}
-		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		l.Timestamp = parseTime(ts)
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()
@@ -403,7 +419,7 @@ func (s *SQLiteStore) ListAuditLogs(ctx context.Context, limit int, offset int) 
 		if err := rows.Scan(&l.ID, &ts, &l.Action, &l.Resource, &l.Detail, &l.RequestID); err != nil {
 			return nil, err
 		}
-		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		l.Timestamp = parseTime(ts)
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()
@@ -468,13 +484,13 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 	if err != nil {
 		return nil, err
 	}
-	k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	k.CreatedAt = parseTime(createdAt)
 	if lastUsed.Valid {
-		t, _ := time.Parse(time.RFC3339, lastUsed.String)
+		t := parseTime(lastUsed.String)
 		k.LastUsedAt = &t
 	}
 	if expires.Valid {
-		t, _ := time.Parse(time.RFC3339, expires.String)
+		t := parseTime(expires.String)
 		k.ExpiresAt = &t
 	}
 	k.Enabled = enabledInt != 0
@@ -500,13 +516,13 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
 			return nil, err
 		}
-		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		k.CreatedAt = parseTime(createdAt)
 		if lastUsed.Valid {
-			t, _ := time.Parse(time.RFC3339, lastUsed.String)
+			t := parseTime(lastUsed.String)
 			k.LastUsedAt = &t
 		}
 		if expires.Valid {
-			t, _ := time.Parse(time.RFC3339, expires.String)
+			t := parseTime(expires.String)
 			k.ExpiresAt = &t
 		}
 		k.Enabled = enabledInt != 0
@@ -534,13 +550,13 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
 			return nil, err
 		}
-		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		k.CreatedAt = parseTime(createdAt)
 		if lastUsed.Valid {
-			t, _ := time.Parse(time.RFC3339, lastUsed.String)
+			t := parseTime(lastUsed.String)
 			k.LastUsedAt = &t
 		}
 		if expires.Valid {
-			t, _ := time.Parse(time.RFC3339, expires.String)
+			t := parseTime(expires.String)
 			k.ExpiresAt = &t
 		}
 		k.Enabled = enabledInt != 0
@@ -576,13 +592,13 @@ func (s *SQLiteStore) ListExpiredRotationKeys(ctx context.Context) ([]APIKeyReco
 			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
 			return nil, err
 		}
-		k.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		k.CreatedAt = parseTime(createdAt)
 		if lastUsed.Valid {
-			t, _ := time.Parse(time.RFC3339, lastUsed.String)
+			t := parseTime(lastUsed.String)
 			k.LastUsedAt = &t
 		}
 		if expires.Valid {
-			t, _ := time.Parse(time.RFC3339, expires.String)
+			t := parseTime(expires.String)
 			k.ExpiresAt = &t
 		}
 		k.Enabled = enabledInt != 0
@@ -642,7 +658,7 @@ func (s *SQLiteStore) ListRewards(ctx context.Context, limit int, offset int) ([
 			&l.CostUSD, &successInt, &l.ErrorClass, &l.Reward); err != nil {
 			return nil, err
 		}
-		l.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		l.Timestamp = parseTime(ts)
 		l.Success = successInt != 0
 		logs = append(logs, l)
 	}

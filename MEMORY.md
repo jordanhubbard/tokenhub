@@ -315,10 +315,10 @@ All adapters implement `router.Sender` (and optionally `router.StreamSender`, `r
    - `normLatency` — normalized historical avg latency (lower is better)
    - `normFailure` — normalized failure rate (lower is better)
 3. Apply mode-specific weights to produce final score:
-   - `cheap`: cost=0.6, weight=0.1, latency=0.15, quality=0.15
-   - `normal`: cost=0.25, weight=0.3, latency=0.25, quality=0.2
-   - `high_confidence`: cost=0.05, weight=0.5, latency=0.15, quality=0.3
-   - `planning`: cost=0.1, weight=0.4, latency=0.1, quality=0.4
+   - `cheap`: cost=0.7, weight=0.1, latency=0.1, failure=0.1
+   - `normal`: cost=0.25, weight=0.25, latency=0.25, failure=0.25
+   - `high_confidence`: cost=0.05, weight=0.7, latency=0.1, failure=0.15
+   - `planning`: cost=0.1, weight=0.6, latency=0.1, failure=0.2
    - `thompson`: Uses Thompson Sampling (Beta distribution draws)
 4. Sort by score descending, attempt top model first
 5. On failure: classify error (rate_limited, transient, context_overflow, fatal), failover to next model
@@ -366,6 +366,7 @@ type Store interface {
 |--------|------|---------|
 | POST | `/v1/chat` | Native TokenHub chat (policy hints, orchestration) |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
+| GET | `/v1/models` | OpenAI-compatible model listing |
 | POST | `/v1/plan` | Multi-model orchestration |
 
 ### Admin endpoints (require admin token)
@@ -530,6 +531,22 @@ docker compose down tokenhub && docker compose up -d tokenhub
 # Or use the Makefile build for faster iteration (creates bin/tokenhub)
 make build
 ```
+
+## Past Bug Fixes (for context)
+
+### v0.2.6+ audit fixes
+
+1. **`extractUsage` false positive on OpenAI format**: The OpenAI JSON parser would succeed even when the `usage` block had zero-valued `prompt_tokens`/`completion_tokens` fields, preventing fallthrough to the Anthropic parser. Fixed by requiring at least one token count to be non-zero before accepting a parse. Same fix applied to the duplicate `extractProviderUsage` in `internal/temporal/activities.go`.
+
+2. **Stats collector lock gap**: `Summary()`, `Global()`, and `SummaryByProvider()` called `Prune()` (write lock), released it, then acquired a read lock — creating a window where data could change. Fixed with `snapshotsAfterPrune()` that atomically prunes and copies the snapshot slice under a single write lock.
+
+3. **Missing `/v1/models` endpoint**: OpenAI SDK clients expect `GET /v1/models`. The scope mapping existed in `routeToScope()` but no handler was mounted. Added `ModelsListPublicHandler` returning an OpenAI-compatible model list.
+
+4. **Missing `Content-Type` on `/healthz`**: The health endpoint returned JSON without the `application/json` Content-Type header.
+
+5. **Timestamp precision loss**: `ListRequestLogs` and other SQLite read paths used `time.Parse(time.RFC3339, ...)` which truncates sub-second precision. Go's `time.Now()` produces nanosecond timestamps stored as RFC3339Nano strings. Added `parseTime()` helper that tries RFC3339Nano first.
+
+6. **docker-compose vLLM endpoint mismatch**: The compose file had `TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000` (mock nginx) while the real endpoint was `http://ollama-server.hrd.nvidia.com:8000`. Since the adapter is created from the env var at startup, the prober was probing the wrong host. Updated compose to use the real endpoint.
 
 ## Architecture Decisions
 

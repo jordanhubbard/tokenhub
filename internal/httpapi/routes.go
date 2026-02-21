@@ -88,9 +88,9 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	})
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		// Verify the system can actually route requests.
 		modelCount := len(d.Engine.ListModels())
 		adapterCount := len(d.Engine.ListAdapterIDs())
+		w.Header().Set("Content-Type", "application/json")
 		if adapterCount == 0 || modelCount == 0 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -175,6 +175,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		}
 		r.Post("/chat", ChatHandler(d))
 		r.Post("/chat/completions", ChatCompletionsHandler(d))
+		r.Get("/models", ModelsListPublicHandler(d))
 		r.Post("/plan", PlanHandler(d))
 	})
 

@@ -26,28 +26,32 @@ func extractUsage(raw json.RawMessage) tokenUsage {
 	if len(raw) == 0 {
 		return tokenUsage{}
 	}
-	var oai struct {
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
+	var envelope struct {
+		Usage json.RawMessage `json:"usage"`
 	}
-	if err := json.Unmarshal(raw, &oai); err == nil && oai.Usage != nil {
+	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Usage) == 0 {
+		return tokenUsage{}
+	}
+	// Try OpenAI format first.
+	var oai struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	}
+	if json.Unmarshal(envelope.Usage, &oai) == nil && (oai.PromptTokens > 0 || oai.CompletionTokens > 0) {
 		return tokenUsage{
-			InputTokens:  oai.Usage.PromptTokens,
-			OutputTokens: oai.Usage.CompletionTokens,
+			InputTokens:  oai.PromptTokens,
+			OutputTokens: oai.CompletionTokens,
 		}
 	}
+	// Try Anthropic format.
 	var ant struct {
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
 	}
-	if err := json.Unmarshal(raw, &ant); err == nil && ant.Usage != nil {
+	if json.Unmarshal(envelope.Usage, &ant) == nil && (ant.InputTokens > 0 || ant.OutputTokens > 0) {
 		return tokenUsage{
-			InputTokens:  ant.Usage.InputTokens,
-			OutputTokens: ant.Usage.OutputTokens,
+			InputTokens:  ant.InputTokens,
+			OutputTokens: ant.OutputTokens,
 		}
 	}
 	return tokenUsage{}

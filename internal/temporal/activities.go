@@ -393,28 +393,32 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 type providerUsage struct{ input, output int }
 
 // extractProviderUsage parses token counts from a raw provider response,
-// supporting both OpenAI and Anthropic response formats.
+// supporting both OpenAI and Anthropic response formats. It requires at
+// least one token count to be non-zero to avoid false positives when the
+// JSON structure matches but the fields aren't populated.
 func extractProviderUsage(raw json.RawMessage) providerUsage {
 	if len(raw) == 0 {
 		return providerUsage{}
 	}
-	var oai struct {
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
+	var envelope struct {
+		Usage json.RawMessage `json:"usage"`
 	}
-	if err := json.Unmarshal(raw, &oai); err == nil && oai.Usage != nil {
-		return providerUsage{input: oai.Usage.PromptTokens, output: oai.Usage.CompletionTokens}
+	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Usage) == 0 {
+		return providerUsage{}
+	}
+	var oai struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	}
+	if json.Unmarshal(envelope.Usage, &oai) == nil && (oai.PromptTokens > 0 || oai.CompletionTokens > 0) {
+		return providerUsage{input: oai.PromptTokens, output: oai.CompletionTokens}
 	}
 	var ant struct {
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
 	}
-	if err := json.Unmarshal(raw, &ant); err == nil && ant.Usage != nil {
-		return providerUsage{input: ant.Usage.InputTokens, output: ant.Usage.OutputTokens}
+	if json.Unmarshal(envelope.Usage, &ant) == nil && (ant.InputTokens > 0 || ant.OutputTokens > 0) {
+		return providerUsage{input: ant.InputTokens, output: ant.OutputTokens}
 	}
 	return providerUsage{}
 }
