@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -20,15 +21,15 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/idempotency"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
-	"github.com/jordanhubbard/tokenhub/internal/ratelimit"
-	"github.com/jordanhubbard/tokenhub/internal/stats"
-	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
-	"github.com/jordanhubbard/tokenhub/internal/tracing"
 	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
 	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
+	"github.com/jordanhubbard/tokenhub/internal/ratelimit"
 	"github.com/jordanhubbard/tokenhub/internal/router"
+	"github.com/jordanhubbard/tokenhub/internal/stats"
 	"github.com/jordanhubbard/tokenhub/internal/store"
+	temporalpkg "github.com/jordanhubbard/tokenhub/internal/temporal"
+	"github.com/jordanhubbard/tokenhub/internal/tracing"
 	"github.com/jordanhubbard/tokenhub/internal/tsdb"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
@@ -38,17 +39,17 @@ type Server struct {
 
 	r *chi.Mux
 
-	vault      *vault.Vault
-	engine     *router.Engine
-	store      store.Store
-	logger     *slog.Logger
-	temporal   *temporalpkg.Manager        // nil when Temporal disabled
-	prober     *health.Prober              // nil when no probeable adapters
+	vault            *vault.Vault
+	engine           *router.Engine
+	store            store.Store
+	logger           *slog.Logger
+	temporal         *temporalpkg.Manager // nil when Temporal disabled
+	prober           *health.Prober       // nil when no probeable adapters
 	rateLimiter      *ratelimit.Limiter
-	idempotencyCache *idempotency.Cache        // nil when idempotency disabled
+	idempotencyCache *idempotency.Cache          // nil when idempotency disabled
 	otelShutdown     func(context.Context) error // nil when OTel disabled
-	stopBandit       func()                    // nil when Thompson Sampling disabled
-	tsdb             *tsdb.Store               // nil when TSDB failed to init
+	stopBandit       func()                      // nil when Thompson Sampling disabled
+	tsdb             *tsdb.Store                 // nil when TSDB failed to init
 
 	stopPrune    chan struct{} // signals TSDB prune goroutine to stop
 	stopLogPrune chan struct{} // signals log prune goroutine to stop
@@ -142,18 +143,25 @@ func NewServer(cfg Config) (*Server, error) {
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second
 	registerProviders(eng, timeout, logger)
 
-	// Start health check prober for registered adapters.
-	var probeTargets []health.Probeable
-	for _, id := range eng.ListAdapterIDs() {
-		if p, ok := eng.GetAdapter(id).(health.Probeable); ok {
-			probeTargets = append(probeTargets, p)
-		}
-	}
+	// Load additional providers from credentials file (~/.tokenhub/credentials).
+	loadCredentialsFile(cfg.CredentialsFile, eng, timeout, logger)
+
+	// Start health check prober for registered adapters (disable with TOKENHUB_HEALTH_PROBE_DISABLED=true).
 	var prober *health.Prober
-	if len(probeTargets) > 0 {
-		prober = health.NewProber(health.DefaultProberConfig(), ht, probeTargets, logger)
-		prober.Start()
-		logger.Info("health prober started", slog.Int("targets", len(probeTargets)))
+	if os.Getenv("TOKENHUB_HEALTH_PROBE_DISABLED") != "true" {
+		var probeTargets []health.Probeable
+		for _, id := range eng.ListAdapterIDs() {
+			if p, ok := eng.GetAdapter(id).(health.Probeable); ok {
+				probeTargets = append(probeTargets, p)
+			}
+		}
+		if len(probeTargets) > 0 {
+			prober = health.NewProber(health.DefaultProberConfig(), ht, probeTargets, logger)
+			prober.Start()
+			logger.Info("health prober started", slog.Int("targets", len(probeTargets)))
+		}
+	} else {
+		logger.Info("health probing disabled via TOKENHUB_HEALTH_PROBE_DISABLED")
 	}
 
 	// Register default models, then load any persisted models from DB.
@@ -484,6 +492,129 @@ func registerProviders(eng *router.Engine, timeout time.Duration, logger *slog.L
 			logger.Info("registered provider", slog.String("provider", "vllm"), slog.Int("endpoints", len(eps)))
 		}
 	}
+
+	// TOKENHUB_EXTRA_PROVIDERS: JSON array of additional OpenAI-compatible
+	// providers. Each entry: {"id":"...","endpoint":"...","api_key":"..."}.
+	// This allows registering multiple providers with custom endpoints
+	// (e.g. NVIDIA NIM, Azure OpenAI, etc.) without code changes.
+	if extra := os.Getenv("TOKENHUB_EXTRA_PROVIDERS"); extra != "" {
+		type extraProvider struct {
+			ID       string `json:"id"`
+			Endpoint string `json:"endpoint"`
+			APIKey   string `json:"api_key"`
+		}
+		var providers []extraProvider
+		if err := json.Unmarshal([]byte(extra), &providers); err != nil {
+			logger.Warn("failed to parse TOKENHUB_EXTRA_PROVIDERS", slog.String("error", err.Error()))
+		} else {
+			for _, p := range providers {
+				if p.ID == "" || p.Endpoint == "" || p.APIKey == "" {
+					logger.Warn("skipping extra provider: id, endpoint, and api_key required", slog.String("id", p.ID))
+					continue
+				}
+				eng.RegisterAdapter(openai.New(p.ID, p.APIKey, p.Endpoint, openai.WithTimeout(timeout)))
+				logger.Info("registered extra provider", slog.String("provider", p.ID), slog.String("endpoint", p.Endpoint))
+			}
+		}
+	}
+}
+
+// loadCredentialsFile reads a JSON credentials file (similar to ~/.netrc) and
+// registers any providers and models it contains. The file is optional; if it
+// does not exist the function silently returns. The file must be owner-readable
+// only (mode 0600 or 0400) to prevent accidental secret exposure.
+func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration, logger *slog.Logger) {
+	if path == "" {
+		return
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		logger.Warn("credentials file stat error", slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+
+	// Enforce restrictive permissions (owner-only read/write).
+	if mode := info.Mode().Perm(); mode&0077 != 0 {
+		logger.Warn("credentials file has insecure permissions, skipping",
+			slog.String("path", path),
+			slog.String("mode", fmt.Sprintf("%04o", mode)),
+			slog.String("required", "0600 or stricter"),
+		)
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		logger.Warn("failed to read credentials file", slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+
+	type credProvider struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Endpoint string `json:"endpoint"`
+		APIKey   string `json:"api_key"`
+	}
+	type credModel struct {
+		ID               string  `json:"id"`
+		ProviderID       string  `json:"provider_id"`
+		Weight           int     `json:"weight"`
+		MaxContextTokens int     `json:"max_context_tokens"`
+		InputPer1K       float64 `json:"input_per_1k"`
+		OutputPer1K      float64 `json:"output_per_1k"`
+		Enabled          bool    `json:"enabled"`
+	}
+	type credFile struct {
+		Providers []credProvider `json:"providers"`
+		Models    []credModel    `json:"models"`
+	}
+
+	var creds credFile
+	if err := json.Unmarshal(data, &creds); err != nil {
+		logger.Warn("failed to parse credentials file", slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+
+	for _, p := range creds.Providers {
+		if p.ID == "" || p.Endpoint == "" || p.APIKey == "" {
+			logger.Warn("skipping credentials provider: id, endpoint, and api_key required", slog.String("id", p.ID))
+			continue
+		}
+		switch p.Type {
+		case "anthropic":
+			eng.RegisterAdapter(anthropic.New(p.ID, p.APIKey, p.Endpoint, anthropic.WithTimeout(timeout)))
+		default:
+			eng.RegisterAdapter(openai.New(p.ID, p.APIKey, p.Endpoint, openai.WithTimeout(timeout)))
+		}
+		logger.Info("registered provider from credentials file", slog.String("provider", p.ID), slog.String("endpoint", p.Endpoint))
+	}
+
+	for _, m := range creds.Models {
+		if m.ID == "" || m.ProviderID == "" {
+			logger.Warn("skipping credentials model: id and provider_id required", slog.String("id", m.ID))
+			continue
+		}
+		eng.RegisterModel(router.Model{
+			ID:               m.ID,
+			ProviderID:       m.ProviderID,
+			Weight:           m.Weight,
+			MaxContextTokens: m.MaxContextTokens,
+			InputPer1K:       m.InputPer1K,
+			OutputPer1K:      m.OutputPer1K,
+			Enabled:          m.Enabled,
+		})
+		logger.Info("registered model from credentials file", slog.String("model", m.ID), slog.String("provider", m.ProviderID))
+	}
+
+	logger.Info("loaded credentials file",
+		slog.String("path", path),
+		slog.Int("providers", len(creds.Providers)),
+		slog.Int("models", len(creds.Models)),
+	)
 }
 
 func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger) {

@@ -13,49 +13,31 @@
     .header h1 { font-size: 18px; color: #fff; }
     .header .status { font-size: 12px; color: #4caf50; }
     .header .status.disconnected { color: #f44336; }
-    .dashboard { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr auto; gap: 16px; padding: 16px; min-height: calc(100vh - 52px); }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
     .panel { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 8px; padding: 16px; overflow: hidden; }
     .panel h2 { font-size: 14px; color: #8a8d9a; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .panel.graph { grid-row: 1 / 3; }
-    .panel.audit { grid-column: 1 / 3; max-height: 350px; }
-    .audit-table-wrap { max-height: 280px; overflow-y: auto; }
-    .audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .audit-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; position: sticky; top: 0; background: #1a1d29; }
-    .audit-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; font-family: monospace; font-size: 12px; }
-    .audit-action { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-    .audit-action.create-update { background: #1b3a1b; color: #4caf50; }
-    .audit-action.delete { background: #3a1b1b; color: #f44336; }
-    .audit-action.vault { background: #1b2a3a; color: #64b5f6; }
-    .audit-action.other { background: #2a2a2a; color: #8a8d9a; }
-    #cy { width: 100%; height: calc(100% - 30px); }
-    #cost-chart { width: 100%; height: calc(100% - 30px); }
-    .leaderboard table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .leaderboard th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; }
-    .leaderboard td { padding: 6px 8px; border-bottom: 1px solid #1f2233; }
-    .leaderboard .success { color: #4caf50; }
-    .leaderboard .error { color: #f44336; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
-    .badge.healthy { background: #1b3a1b; color: #4caf50; }
-    .badge.degraded { background: #3a3a1b; color: #ffc107; }
-    .badge.down { background: #3a1b1b; color: #f44336; }
+    .panel.full-width { grid-column: 1 / 3; }
+    .panel.graph { min-height: 420px; }
+    #cy { width: 100%; height: 380px; }
+    #trend-chart { width: 100%; height: 220px; }
     .stat-row { display: flex; gap: 16px; margin-bottom: 8px; }
     .stat-box { flex: 1; background: #12141d; border-radius: 6px; padding: 12px; text-align: center; }
     .stat-box .value { font-size: 24px; font-weight: 600; color: #fff; }
     .stat-box .label { font-size: 11px; color: #8a8d9a; margin-top: 4px; }
-    .events-log { max-height: 200px; overflow-y: auto; font-size: 12px; font-family: monospace; }
-    .events-log .event { padding: 3px 0; border-bottom: 1px solid #1f2233; }
-    .events-log .event .time { color: #666; }
-    .events-log .event .model { color: #64b5f6; }
-    .events-log .event .provider { color: #ce93d8; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .badge.healthy { background: #1b3a1b; color: #4caf50; }
+    .badge.degraded { background: #3a3a1b; color: #ffc107; }
+    .badge.down { background: #3a1b1b; color: #f44336; }
+    .leaderboard table, .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .leaderboard th, .admin-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; }
+    .leaderboard td, .admin-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; }
     .weight-slider { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-    .weight-slider label { min-width: 120px; font-size: 12px; }
+    .weight-slider label { min-width: 120px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .weight-slider input[type=range] { flex: 1; accent-color: #4caf50; }
     .weight-slider .weight-val { min-width: 30px; font-size: 12px; text-align: right; }
-    #trend-chart { width: 100%; height: calc(100% - 30px); }
     .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
     .tabs button { background: #12141d; border: 1px solid #2a2d3a; color: #8a8d9a; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
     .tabs button.active { background: #2a2d3a; color: #fff; }
-    .panel.full-width { grid-column: 1 / 3; }
     .vault-status { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .vault-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
     .vault-indicator.locked { background: #f44336; }
@@ -70,47 +52,21 @@
     .btn.danger { background: #b71c1c; border-color: #c62828; color: #fff; }
     .btn.danger:hover { background: #c62828; }
     .btn.sm { padding: 3px 10px; font-size: 11px; }
-    .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .admin-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; }
-    .admin-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .admin-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2d3a; }
-    .admin-form .field { display: flex; flex-direction: column; gap: 3px; }
-    .admin-form .field label { font-size: 11px; color: #8a8d9a; }
-    .admin-form .field input, .admin-form .field select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 5px 8px; border-radius: 4px; font-size: 12px; }
-    .admin-form .field select { min-width: 120px; }
-    .admin-form .field input { min-width: 140px; }
-    .health-row.healthy td { border-left: 3px solid #4caf50; }
-    .health-row.degraded td { border-left: 3px solid #ffc107; }
-    .health-row.unavailable td { border-left: 3px solid #f44336; }
-    .health-avail { font-weight: 500; }
-    .health-avail.yes { color: #4caf50; }
-    .health-avail.no { color: #f44336; }
-    .health-avail.degraded { color: #ffc107; }
+    .admin-form .field, .routing-form .field, .modal .field { display: flex; flex-direction: column; gap: 3px; }
+    .admin-form .field label, .routing-form .field label, .modal .field label { font-size: 11px; color: #8a8d9a; }
+    .admin-form .field input, .admin-form .field select, .routing-form .field input, .routing-form .field select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 5px 8px; border-radius: 4px; font-size: 12px; }
+    .admin-form .field select, .routing-form .field select { min-width: 120px; }
+    .admin-form .field input, .routing-form .field input { min-width: 100px; }
     .routing-form { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
-    .routing-form .field { display: flex; flex-direction: column; gap: 4px; }
-    .routing-form .field label { font-size: 11px; color: #8a8d9a; }
-    .routing-form .field input, .routing-form .field select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 13px; }
-    .routing-form .field select { min-width: 160px; }
-    .routing-form .field input { min-width: 120px; }
     .toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 18px; border-radius: 6px; font-size: 13px; color: #fff; z-index: 1000; opacity: 0; transition: opacity 0.3s; }
     .toast.success { background: #1b5e20; }
     .toast.error { background: #b71c1c; }
     .toast.visible { opacity: 1; }
-    .panel.request-log { grid-column: 1 / 3; max-height: 450px; }
-    .request-log-table-wrap { max-height: 340px; overflow-y: auto; }
-    .request-log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .request-log-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; position: sticky; top: 0; background: #1a1d29; }
-    .request-log-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; font-family: monospace; font-size: 12px; }
-    .status-ok { color: #4caf50; }
-    .status-err { color: #f44336; }
-    .latency-fast { color: #4caf50; }
-    .latency-med { color: #ffc107; }
-    .latency-slow { color: #f44336; }
-    .pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-    .pagination .page-info { font-size: 12px; color: #8a8d9a; margin-left: auto; }
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 100; display: none; align-items: center; justify-content: center; }
     .modal-overlay.visible { display: flex; }
-    .modal { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 8px; padding: 24px; min-width: 400px; max-width: 500px; }
+    .modal { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 8px; padding: 24px; min-width: 480px; max-width: 600px; max-height: 80vh; overflow-y: auto; }
     .modal h3 { font-size: 16px; margin-bottom: 16px; color: #fff; }
     .modal .field { margin-bottom: 12px; }
     .modal .field label { display: block; font-size: 11px; color: #8a8d9a; margin-bottom: 4px; }
@@ -121,85 +77,115 @@
     .scope-checks { display: flex; gap: 16px; }
     .scope-checks label { font-size: 13px; color: #e0e0e0; cursor: pointer; }
     .scope-checks input[type=checkbox] { accent-color: #4caf50; }
-    .toggle-switch { cursor: pointer; font-size: 18px; }
+    .wizard-steps { display: flex; gap: 4px; margin-bottom: 20px; }
+    .wizard-step { flex: 1; height: 4px; border-radius: 2px; background: #2a2d3a; }
+    .wizard-step.active { background: #4caf50; }
+    .wizard-step.done { background: #2e7d32; }
+    .wizard-body { min-height: 160px; }
+    .discover-list { max-height: 240px; overflow-y: auto; margin: 8px 0; }
+    .discover-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #1f2233; font-size: 13px; }
+    .discover-item input[type=checkbox] { accent-color: #4caf50; }
+    .discover-item .registered { color: #4caf50; font-size: 11px; }
+    .discover-item .model-id { flex: 1; font-family: monospace; }
+    .test-result { padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-top: 8px; }
+    .test-result.ok { background: #1b3a1b; color: #4caf50; }
+    .test-result.fail { background: #3a1b1b; color: #f44336; }
+    .live-feed { max-height: 320px; overflow-y: auto; font-size: 12px; font-family: monospace; line-height: 1.6; }
+    .live-feed .entry { padding: 3px 0; border-bottom: 1px solid #1a1d29; display: flex; gap: 8px; align-items: baseline; }
+    .live-feed .ts { color: #555; min-width: 70px; }
+    .live-feed .model { color: #64b5f6; }
+    .live-feed .provider { color: #ce93d8; }
+    .live-feed .latency { color: #ffc107; min-width: 60px; text-align: right; }
+    .live-feed .cost { color: #4caf50; min-width: 70px; text-align: right; }
+    .live-feed .reason { color: #666; }
+    .live-feed .err { color: #f44336; }
+    .live-feed .entry.error { background: rgba(244,67,54,0.05); }
+    .whatif-result { margin-top: 12px; }
+    .whatif-result table { width: 100%; }
+    .whatif-result .selected-row { background: rgba(76,175,80,0.1); }
+    .whatif-result .selected-row td:first-child::before { content: '\25B6 '; color: #4caf50; }
+    .health-row.healthy td { border-left: 3px solid #4caf50; }
+    .health-row.degraded td { border-left: 3px solid #ffc107; }
+    .health-row.unavailable td { border-left: 3px solid #f44336; }
+    .health-avail { font-weight: 500; }
+    .health-avail.yes { color: #4caf50; }
+    .health-avail.no { color: #f44336; }
+    .health-avail.degraded { color: #ffc107; }
     .wf-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
     .wf-badge.running { background: #1b2a3a; color: #64b5f6; }
     .wf-badge.completed { background: #1b3a1b; color: #4caf50; }
     .wf-badge.failed { background: #3a1b1b; color: #f44336; }
     .wf-badge.timed-out { background: #3a3a1b; color: #ffc107; }
     .wf-badge.canceled { background: #2a2a2a; color: #8a8d9a; }
-    .panel.apikeys { grid-column: 1 / 3; max-height: 450px; }
-    .apikeys-table-wrap { max-height: 300px; overflow-y: auto; }
-    .panel.workflows { grid-column: 1 / 3; max-height: 450px; }
-    .workflows-table-wrap { max-height: 300px; overflow-y: auto; }
-    .wf-filter { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-    .wf-filter select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.graph { grid-row: auto; min-height: 300px; } .panel.audit { grid-column: 1; } .panel.request-log { grid-column: 1; } .panel.full-width { grid-column: 1; } .panel.apikeys { grid-column: 1; } .panel.workflows { grid-column: 1; } }
+    .legend { display: flex; gap: 12px; margin-bottom: 8px; font-size: 11px; }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .audit-action { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .audit-action.create-update { background: #1b3a1b; color: #4caf50; }
+    .audit-action.delete { background: #3a1b1b; color: #f44336; }
+    .audit-action.vault { background: #1b2a3a; color: #64b5f6; }
+    .audit-action.other { background: #2a2a2a; color: #8a8d9a; }
+    .table-wrap { max-height: 300px; overflow-y: auto; }
+    .pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .pagination .page-info { font-size: 12px; color: #8a8d9a; margin-left: auto; }
+    .toggle-switch { cursor: pointer; font-size: 18px; }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.full-width { grid-column: 1; } }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>TokenHub</h1>
     <div style="display:flex;align-items:center;gap:16px;">
-      <a href="/docs/" target="_blank" style="color:#64b5f6;font-size:13px;text-decoration:none;">Documentation</a>
+      <a href="/docs/" target="_blank" style="color:#64b5f6;font-size:13px;text-decoration:none;">Docs</a>
       <span id="sse-status" class="status disconnected">Disconnected</span>
     </div>
   </div>
-
   <div id="toast" class="toast"></div>
 
+  <!-- ===== WIZARD MODAL ===== -->
+  <div id="wizard-modal" class="modal-overlay">
+    <div class="modal" style="min-width:520px">
+      <h3 id="wizard-title">Add Provider</h3>
+      <div class="wizard-steps" id="wizard-steps"></div>
+      <div class="wizard-body" id="wizard-body"></div>
+      <div class="actions" id="wizard-actions"></div>
+    </div>
+  </div>
+
+  <!-- ===== CREATE KEY MODAL ===== -->
   <div id="create-key-modal" class="modal-overlay">
     <div class="modal">
       <h3>Create API Key</h3>
-      <div class="field">
-        <label>Name</label>
-        <input type="text" id="new-key-name" placeholder="my-app-key">
-      </div>
-      <div class="field">
-        <label>Scopes</label>
-        <div class="scope-checks">
-          <label><input type="checkbox" id="scope-chat" checked> chat</label>
-          <label><input type="checkbox" id="scope-plan" checked> plan</label>
-        </div>
-      </div>
-      <div class="field">
-        <label>Rotation (days, 0 = manual)</label>
-        <select id="new-key-rotation">
-          <option value="0">Manual only</option>
-          <option value="7">7 days</option>
-          <option value="30">30 days</option>
-          <option value="90">90 days</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Expires at (optional)</label>
-        <input type="date" id="new-key-expiry">
-      </div>
-      <div class="field">
-        <label>Monthly Budget USD (0 = unlimited)</label>
-        <input type="number" id="new-key-budget" step="0.01" min="0" value="0" placeholder="0.00">
-      </div>
+      <div class="field"><label>Name</label><input type="text" id="new-key-name" placeholder="my-app-key"></div>
+      <div class="field"><label>Scopes</label><div class="scope-checks"><label><input type="checkbox" id="scope-chat" checked> chat</label><label><input type="checkbox" id="scope-plan" checked> plan</label></div></div>
+      <div class="field"><label>Rotation (days, 0 = manual)</label><select id="new-key-rotation"><option value="0">Manual only</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></div>
+      <div class="field"><label>Expires at (optional)</label><input type="date" id="new-key-expiry"></div>
+      <div class="field"><label>Monthly Budget USD (0 = unlimited)</label><input type="number" id="new-key-budget" step="0.01" min="0" value="0"></div>
       <div class="actions">
-        <button class="btn" onclick="hideCreateKeyModal()">Cancel</button>
+        <button class="btn" onclick="hideModal('create-key-modal')">Cancel</button>
         <button class="btn primary" onclick="createAPIKey()">Create</button>
       </div>
     </div>
   </div>
 
+  <!-- ===== KEY DISPLAY MODAL ===== -->
   <div id="key-display-modal" class="modal-overlay">
     <div class="modal">
       <h3>API Key Created</h3>
       <p style="font-size:13px;color:#8a8d9a;margin-bottom:8px">Copy this key now. It will not be shown again.</p>
       <div class="key-display" id="displayed-key"></div>
-      <p class="key-warning">This is the only time this key will be displayed. Store it securely.</p>
+      <p class="key-warning">This is the only time this key will be displayed.</p>
       <div class="actions">
-        <button class="btn" onclick="copyKey()">Copy</button>
-        <button class="btn primary" onclick="hideKeyDisplay()">Done</button>
+        <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('displayed-key').textContent).then(()=>showToast('Copied','success'))">Copy</button>
+        <button class="btn primary" onclick="hideModal('key-display-modal')">Done</button>
       </div>
     </div>
   </div>
 
+  <!-- ===== DASHBOARD ===== -->
   <div class="dashboard">
+
+    <!-- Vault -->
     <div class="panel full-width">
       <h2>Vault Status</h2>
       <div class="vault-status">
@@ -212,862 +198,843 @@
       </div>
     </div>
 
+    <!-- Topology Graph -->
     <div class="panel graph">
-      <h2>Request Flow</h2>
+      <h2>Request Flow <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0">(live)</span></h2>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#2196f3"></div> Gateway</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ce93d8"></div> Provider</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#4caf50"></div> Model</div>
+      </div>
       <div id="cy"></div>
     </div>
 
+    <!-- Overview + Trends -->
     <div class="panel">
       <h2>Overview</h2>
       <div class="stat-row">
-        <div class="stat-box"><div class="value" id="total-requests">0</div><div class="label">Total Requests</div></div>
-        <div class="stat-box"><div class="value" id="total-cost">$0.00</div><div class="label">Total Cost</div></div>
+        <div class="stat-box"><div class="value" id="total-requests">0</div><div class="label">Requests</div></div>
+        <div class="stat-box"><div class="value" id="total-cost">$0.00</div><div class="label">Cost</div></div>
         <div class="stat-box"><div class="value" id="avg-latency">0ms</div><div class="label">Avg Latency</div></div>
-        <div class="stat-box"><div class="value" id="error-rate">0%</div><div class="label">Error Rate</div></div>
+        <div class="stat-box"><div class="value" id="error-rate">0%</div><div class="label">Errors</div></div>
       </div>
       <h2 style="margin-top:12px">Trends</h2>
-      <div class="tabs">
-        <button class="active" onclick="switchTrend('cost')">Cost</button>
-        <button onclick="switchTrend('latency')">Latency</button>
+      <div class="tabs" id="trend-tabs">
+        <button class="active" onclick="switchTrend('cost',this)">Cost</button>
+        <button onclick="switchTrend('latency',this)">Latency</button>
       </div>
-      <div id="cost-chart"></div>
+      <div id="trend-chart"></div>
     </div>
 
+    <!-- Live Decision Feed -->
+    <div class="panel full-width">
+      <h2>Live Routing Decisions <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0" id="feed-count"></span></h2>
+      <div class="live-feed" id="live-feed"></div>
+    </div>
+
+    <!-- Model Leaderboard + Weights -->
     <div class="panel leaderboard">
       <h2>Model Leaderboard</h2>
-      <table>
-        <thead>
-          <tr><th>Model</th><th>Provider</th><th>Weight</th><th>Requests</th><th>Avg Latency</th><th>Cost</th><th>Status</th></tr>
-        </thead>
-        <tbody id="leaderboard-body"></tbody>
-      </table>
-      <h2 style="margin-top:16px">Weight Adjustment</h2>
+      <div class="table-wrap">
+        <table><thead><tr><th>Model</th><th>Provider</th><th>Wt</th><th>Reqs</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead>
+        <tbody id="leaderboard-body"></tbody></table>
+      </div>
+      <h2 style="margin-top:16px">Weights</h2>
       <div id="weight-sliders"></div>
     </div>
 
+    <!-- What-If Simulator -->
+    <div class="panel">
+      <h2>What-If Simulator</h2>
+      <div class="routing-form">
+        <div class="field"><label>Mode</label><select id="sim-mode"><option value="cheap">cheap</option><option value="normal" selected>normal</option><option value="high_confidence">high_confidence</option><option value="planning">planning</option><option value="thompson">thompson</option></select></div>
+        <div class="field"><label>Tokens</label><input type="number" id="sim-tokens" value="500" min="1" style="width:80px"></div>
+        <div class="field"><label>Budget $</label><input type="number" id="sim-budget" value="0.05" step="0.01" min="0" style="width:80px"></div>
+        <div class="field"><label>Min Weight</label><input type="number" id="sim-weight" value="0" min="0" max="10" style="width:60px"></div>
+        <button class="btn primary" onclick="runSimulation()">Simulate</button>
+      </div>
+      <div class="whatif-result" id="whatif-result"></div>
+    </div>
+
+    <!-- Provider Management -->
     <div class="panel full-width">
-      <h2>Provider Management</h2>
-      <table class="admin-table">
-        <thead>
-          <tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Enabled</th><th>Actions</th></tr>
-        </thead>
-        <tbody id="providers-body"></tbody>
-      </table>
-      <div class="admin-form" id="provider-form">
-        <div class="field">
-          <label>ID</label>
-          <input type="text" id="prov-id" placeholder="my-openai">
-        </div>
-        <div class="field">
-          <label>Type</label>
-          <select id="prov-type">
-            <option value="openai">openai</option>
-            <option value="anthropic">anthropic</option>
-            <option value="vllm">vllm</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Base URL</label>
-          <input type="text" id="prov-url" placeholder="https://api.openai.com">
-        </div>
-        <div class="field">
-          <label>API Key (optional)</label>
-          <input type="password" id="prov-apikey" placeholder="sk-...">
-        </div>
-        <button class="btn primary" onclick="addProvider()">Add Provider</button>
+      <h2>Providers <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="openWizard()">+ Add Provider</button></h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="providers-body"></tbody></table>
       </div>
     </div>
 
+    <!-- Model Management -->
+    <div class="panel full-width">
+      <h2>Models</h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Model ID</th><th>Provider</th><th>Weight</th><th>Context</th><th>In $/1K</th><th>Out $/1K</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="models-body"></tbody></table>
+      </div>
+      <div class="admin-form" id="model-form">
+        <div class="field"><label>Model ID</label><input type="text" id="mdl-id" placeholder="gpt-4o"></div>
+        <div class="field"><label>Provider</label><select id="mdl-provider"></select></div>
+        <div class="field"><label>Weight</label><input type="number" id="mdl-weight" value="5" min="0" max="10" style="width:60px"></div>
+        <div class="field"><label>Context</label><input type="number" id="mdl-ctx" value="128000" style="width:90px"></div>
+        <div class="field"><label>In $/1K</label><input type="number" id="mdl-in" value="0" step="0.0001" style="width:80px"></div>
+        <div class="field"><label>Out $/1K</label><input type="number" id="mdl-out" value="0" step="0.0001" style="width:80px"></div>
+        <button class="btn primary" onclick="addModel()">Add Model</button>
+      </div>
+    </div>
+
+    <!-- Routing Config + Health -->
     <div class="panel">
       <h2>Routing Config</h2>
       <div class="routing-form">
-        <div class="field">
-          <label>Default Mode</label>
-          <select id="route-mode">
-            <option value="cheap">cheap</option>
-            <option value="normal" selected>normal</option>
-            <option value="high_confidence">high_confidence</option>
-            <option value="planning">planning</option>
-            <option value="adversarial">adversarial</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Max Budget (USD)</label>
-          <input type="number" id="route-budget" step="0.01" min="0" value="0.05">
-        </div>
-        <div class="field">
-          <label>Max Latency (ms)</label>
-          <input type="number" id="route-latency" step="1000" min="0" value="20000">
-        </div>
+        <div class="field"><label>Default Mode</label><select id="route-mode"><option value="cheap">cheap</option><option value="normal" selected>normal</option><option value="high_confidence">high_confidence</option><option value="planning">planning</option><option value="adversarial">adversarial</option></select></div>
+        <div class="field"><label>Max Budget $</label><input type="number" id="route-budget" step="0.01" min="0" value="0.05" style="width:80px"></div>
+        <div class="field"><label>Max Latency ms</label><input type="number" id="route-latency" step="1000" min="0" value="20000" style="width:90px"></div>
         <button class="btn primary" onclick="saveRoutingConfig()">Save</button>
       </div>
     </div>
 
     <div class="panel">
       <h2>Health Status</h2>
-      <table class="admin-table">
-        <thead>
-          <tr><th>Provider</th><th>Available</th><th>Avg Latency</th><th>Error Rate</th><th>Consec Errors</th><th>State</th></tr>
-        </thead>
-        <tbody id="health-body"></tbody>
-      </table>
-    </div>
-
-    <div class="panel audit">
-      <h2>Audit Log</h2>
-      <div class="audit-table-wrap">
-        <table class="audit-table">
-          <thead>
-            <tr><th>Time</th><th>Action</th><th>Resource</th><th>Request ID</th></tr>
-          </thead>
-          <tbody id="audit-body"></tbody>
-        </table>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Provider</th><th>Available</th><th>Latency</th><th>Err Rate</th><th>Consec Err</th><th>State</th></tr></thead>
+        <tbody id="health-body"></tbody></table>
       </div>
     </div>
 
-    <div class="panel apikeys">
-      <h2>API Keys <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="showCreateKeyModal()">+ Create Key</button></h2>
-      <div class="apikeys-table-wrap">
-        <table class="admin-table">
-          <thead>
-            <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Expires</th><th>Rotation</th><th>Budget</th><th>Enabled</th><th>Actions</th></tr>
-          </thead>
-          <tbody id="apikeys-body"></tbody>
-        </table>
+    <!-- API Keys -->
+    <div class="panel full-width">
+      <h2>API Keys <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="showModal('create-key-modal')">+ Create Key</button></h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Budget</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="apikeys-body"></tbody></table>
       </div>
     </div>
 
-    <div class="panel workflows">
+    <!-- Workflows -->
+    <div class="panel full-width">
       <h2>Workflows</h2>
-      <div class="wf-filter">
-        <label style="font-size:12px;color:#8a8d9a">Status:</label>
-        <select id="wf-status-filter" onchange="fetchWorkflows()">
-          <option value="">All</option>
-          <option value="RUNNING">Running</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="FAILED">Failed</option>
-          <option value="TIMED_OUT">Timed Out</option>
-          <option value="CANCELED">Canceled</option>
-        </select>
-      </div>
-      <div class="workflows-table-wrap">
-        <table class="admin-table">
-          <thead>
-            <tr><th>Workflow ID</th><th>Type</th><th>Status</th><th>Started</th><th>Duration</th><th>Model</th><th>Client Key</th></tr>
-          </thead>
-          <tbody id="workflows-body"></tbody>
-        </table>
+      <div style="margin-bottom:8px"><select id="wf-status-filter" onchange="fetchWorkflows()" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:4px 8px;border-radius:4px;font-size:12px"><option value="">All</option><option value="RUNNING">Running</option><option value="COMPLETED">Completed</option><option value="FAILED">Failed</option></select></div>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Workflow ID</th><th>Type</th><th>Status</th><th>Started</th><th>Duration</th><th>Model</th></tr></thead>
+        <tbody id="workflows-body"></tbody></table>
       </div>
     </div>
 
-    <div class="panel request-log">
-      <h2>Request Log</h2>
-      <div class="request-log-table-wrap">
-        <table class="request-log-table">
-          <thead>
-            <tr><th>Time</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency (ms)</th><th>Cost (USD)</th><th>Status</th><th>Request ID</th></tr>
-          </thead>
-          <tbody id="request-log-body"></tbody>
-        </table>
+    <!-- Audit Log -->
+    <div class="panel full-width">
+      <h2>Audit Log</h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>Resource</th><th>Request ID</th></tr></thead>
+        <tbody id="audit-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Request Log (poll-based, kept for historical browsing) -->
+    <div class="panel full-width">
+      <h2>Request Log (Historical)</h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency</th><th>Cost</th><th>Status</th><th>Request ID</th></tr></thead>
+        <tbody id="request-log-body"></tbody></table>
       </div>
       <div class="pagination">
-        <button class="btn sm" id="req-log-prev" onclick="requestLogPrev()" disabled>Previous</button>
+        <button class="btn sm" id="req-log-prev" onclick="requestLogPrev()" disabled>Prev</button>
         <button class="btn sm" id="req-log-next" onclick="requestLogNext()">Next</button>
         <span class="page-info" id="req-log-page-info">Page 1</span>
       </div>
     </div>
   </div>
 
-  <script>
-    // ---- Cytoscape.js graph ----
-    const cy = cytoscape({
-      container: document.getElementById('cy'),
-      style: [
-        { selector: 'node', style: {
-          'label': 'data(label)', 'text-valign': 'center', 'color': '#e0e0e0',
-          'background-color': 'data(color)', 'width': 'data(size)', 'height': 'data(size)',
-          'font-size': '10px', 'text-outline-width': 1, 'text-outline-color': '#0f1117'
-        }},
-        { selector: 'edge', style: {
-          'width': 'data(width)', 'line-color': '#3a5a8a', 'target-arrow-color': '#3a5a8a',
-          'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'opacity': 0.7
-        }},
-        { selector: '.animated', style: { 'line-color': '#64b5f6', 'target-arrow-color': '#64b5f6', 'opacity': 1 }}
-      ],
-      layout: { name: 'cose', animate: false },
-      elements: [
-        { data: { id: 'tokenhub', label: 'TokenHub', color: '#2196f3', size: 50 } }
-      ]
+<script>
+// ============================
+// Cytoscape.js Enhanced Graph
+// ============================
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  style: [
+    { selector: 'node', style: {
+      'label': 'data(label)', 'text-valign': 'center', 'color': '#e0e0e0',
+      'background-color': 'data(color)', 'width': 'data(size)', 'height': 'data(size)',
+      'font-size': '10px', 'text-outline-width': 1, 'text-outline-color': '#0f1117',
+      'border-width': 'data(borderWidth)', 'border-color': 'data(borderColor)'
+    }},
+    { selector: 'edge', style: {
+      'width': 'data(width)', 'line-color': 'data(color)', 'target-arrow-color': 'data(color)',
+      'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'opacity': 'data(opacity)',
+      'label': 'data(edgeLabel)', 'font-size': '9px', 'color': '#666',
+      'text-rotation': 'autorotate', 'text-outline-width': 1, 'text-outline-color': '#0f1117'
+    }},
+    { selector: '.flash', style: { 'line-color': '#64b5f6', 'target-arrow-color': '#64b5f6', 'opacity': 1, 'width': 4 }}
+  ],
+  layout: { name: 'cose', animate: false },
+  elements: [{ data: { id: 'tokenhub', label: 'TokenHub', color: '#2196f3', size: 55, borderWidth: 0, borderColor: '#2196f3' } }]
+});
+
+const knownProviders = new Set();
+const knownModels = new Set();
+const edgeStats = {};
+const providerLatency = {};
+
+function latencyColor(ms) {
+  if (ms < 500) return '#4caf50';
+  if (ms < 2000) return '#ffc107';
+  return '#f44336';
+}
+
+function ensureNode(id, label, type) {
+  if ((type === 'provider' && knownProviders.has(id)) || (type === 'model' && knownModels.has(id))) return;
+  const color = type === 'provider' ? '#ce93d8' : '#4caf50';
+  cy.add({ data: { id, label: label.length > 20 ? label.slice(0,18)+'...' : label, color, size: type === 'provider' ? 40 : 30, borderWidth: 0, borderColor: color } });
+  if (type === 'provider') {
+    cy.add({ data: { id: 'th-'+id, source: 'tokenhub', target: id, width: 2, color: '#3a5a8a', opacity: 0.5, edgeLabel: '' } });
+    knownProviders.add(id);
+  } else {
+    knownModels.add(id);
+  }
+  cy.layout({ name: 'cose', animate: true, animationDuration: 300, nodeRepulsion: () => 8000 }).run();
+}
+
+function animateEdge(providerId, modelId, latencyMs, costUSD) {
+  const edgeId = `${providerId}-${modelId}`;
+  ensureNode(providerId, providerId, 'provider');
+  ensureNode(modelId, modelId, 'model');
+
+  if (!cy.getElementById(edgeId).length) {
+    cy.add({ data: { id: edgeId, source: providerId, target: modelId, width: 2, color: '#3a5a8a', opacity: 0.6, edgeLabel: '' } });
+    cy.layout({ name: 'cose', animate: true, animationDuration: 300, nodeRepulsion: () => 8000 }).run();
+  }
+
+  const s = edgeStats[edgeId] || { count: 0, totalLatency: 0 };
+  s.count++;
+  s.totalLatency += latencyMs || 0;
+  edgeStats[edgeId] = s;
+
+  const avgLat = s.totalLatency / s.count;
+  const edge = cy.getElementById(edgeId);
+  edge.data('width', Math.min(2 + Math.log2(s.count + 1) * 2, 12));
+  edge.data('color', latencyColor(avgLat));
+  edge.data('opacity', 0.9);
+  edge.data('edgeLabel', Math.round(avgLat) + 'ms');
+  edge.addClass('flash');
+  setTimeout(() => edge.removeClass('flash'), 400);
+
+  // Size provider node by throughput.
+  providerLatency[providerId] = (providerLatency[providerId] || 0) + 1;
+  const provNode = cy.getElementById(providerId);
+  if (provNode.length) {
+    provNode.data('size', Math.min(40 + Math.log2(providerLatency[providerId] + 1) * 5, 70));
+    provNode.data('borderWidth', 2);
+    provNode.data('borderColor', latencyColor(avgLat));
+  }
+}
+
+// ============================
+// D3.js Multi-Series Chart
+// ============================
+const trendData = {};
+const chartMargin = { top: 10, right: 80, bottom: 20, left: 50 };
+let chartSvg, chartG, xScale, yScale, chartW, chartH;
+let currentTrendMetric = 'cost';
+const seriesColors = ['#4caf50','#64b5f6','#ce93d8','#ffc107','#ff7043','#26a69a','#ab47bc','#ef5350'];
+
+function initChart() {
+  const container = document.getElementById('trend-chart');
+  const w = container.clientWidth || 400;
+  const h = 220;
+  chartW = w - chartMargin.left - chartMargin.right;
+  chartH = h - chartMargin.top - chartMargin.bottom;
+  chartSvg = d3.select('#trend-chart').append('svg').attr('width', w).attr('height', h);
+  chartG = chartSvg.append('g').attr('transform', `translate(${chartMargin.left},${chartMargin.top})`);
+  xScale = d3.scaleTime().range([0, chartW]);
+  yScale = d3.scaleLinear().range([chartH, 0]);
+  chartG.append('g').attr('class', 'x-axis').attr('transform', `translate(0,${chartH})`);
+  chartG.append('g').attr('class', 'y-axis');
+  chartG.append('g').attr('class', 'lines');
+  chartG.append('g').attr('class', 'chart-legend');
+}
+
+function updateChart() {
+  if (!chartSvg) return;
+  const allPoints = [];
+  const seriesKeys = Object.keys(trendData);
+  seriesKeys.forEach(k => trendData[k].forEach(p => allPoints.push(p)));
+  if (allPoints.length < 2) return;
+
+  xScale.domain(d3.extent(allPoints, d => d.time));
+  const maxVal = d3.max(allPoints, d => d.value) * 1.1 || 0.01;
+  yScale.domain([0, maxVal]);
+
+  const line = d3.line().x(d => xScale(d.time)).y(d => yScale(d.value)).curve(d3.curveMonotoneX);
+  const linesG = chartG.select('.lines');
+
+  seriesKeys.forEach((key, i) => {
+    const color = seriesColors[i % seriesColors.length];
+    let path = linesG.select('.line-' + CSS.escape(key));
+    if (path.empty()) {
+      path = linesG.append('path').attr('class', 'line-' + CSS.escape(key))
+        .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 1.5).attr('opacity', 0.8);
+    }
+    path.datum(trendData[key]).attr('d', line);
+  });
+
+  const fmt = currentTrendMetric === 'cost' ? d => `$${d.toFixed(3)}` : d => `${d.toFixed(0)}ms`;
+  chartG.select('.x-axis').call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat('%H:%M')).tickSize(3));
+  chartG.select('.y-axis').call(d3.axisLeft(yScale).ticks(4).tickFormat(fmt).tickSize(3));
+  chartG.selectAll('.tick text').attr('fill', '#666').attr('font-size', '10px');
+  chartG.selectAll('.tick line').attr('stroke', '#333');
+  chartG.selectAll('.domain').attr('stroke', '#333');
+
+  // Legend.
+  const legendG = chartG.select('.chart-legend');
+  legendG.selectAll('*').remove();
+  seriesKeys.forEach((key, i) => {
+    const color = seriesColors[i % seriesColors.length];
+    const y = i * 14;
+    legendG.append('rect').attr('x', chartW + 8).attr('y', y).attr('width', 8).attr('height', 8).attr('fill', color).attr('rx', 2);
+    legendG.append('text').attr('x', chartW + 20).attr('y', y + 8).attr('fill', '#888').attr('font-size', '9px')
+      .text(key.length > 12 ? key.slice(0,10)+'..' : key);
+  });
+}
+
+function fetchTrend(metric) {
+  const start = new Date(Date.now() - 3600000).toISOString();
+  fetch(`/admin/v1/tsdb/query?metric=${metric}&start=${start}&step=60000`)
+    .then(r => r.json())
+    .then(data => {
+      // Clear old trend data.
+      for (const k of Object.keys(trendData)) delete trendData[k];
+      if (!data.series || data.series.length === 0) return;
+      data.series.forEach(s => {
+        const key = s.model_id || s.provider_id || metric;
+        trendData[key] = (s.points || []).map(p => ({ time: new Date(p.t), value: p.v }));
+      });
+      updateChart();
+    }).catch(() => {});
+}
+
+function switchTrend(metric, btn) {
+  currentTrendMetric = metric;
+  document.querySelectorAll('#trend-tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  fetchTrend(metric);
+}
+
+// ============================
+// SSE + Live Decision Feed
+// ============================
+let cumulativeCost = 0, totalRequests = 0, totalErrors = 0, totalLatency = 0;
+let feedEntries = 0;
+const perModelCost = {};
+
+function connectSSE() {
+  const status = document.getElementById('sse-status');
+  const es = new EventSource('/admin/v1/events');
+  es.addEventListener('connected', () => { status.textContent = 'Connected'; status.className = 'status'; });
+  es.addEventListener('route_success', (e) => {
+    const d = JSON.parse(e.data);
+    totalRequests++; totalLatency += d.latency_ms || 0; cumulativeCost += d.cost_usd || 0;
+    perModelCost[d.model_id] = (perModelCost[d.model_id] || 0) + (d.cost_usd || 0);
+    animateEdge(d.provider_id, d.model_id, d.latency_ms, d.cost_usd);
+    appendFeedEntry(d, false);
+    refreshStats();
+
+    // Push into per-model trend data for live chart.
+    const key = d.model_id || 'unknown';
+    if (!trendData[key]) trendData[key] = [];
+    const val = currentTrendMetric === 'cost' ? (d.cost_usd || 0) : (d.latency_ms || 0);
+    trendData[key].push({ time: new Date(d.timestamp || Date.now()), value: val });
+    if (trendData[key].length > 200) trendData[key].shift();
+    updateChart();
+  });
+  es.addEventListener('route_error', (e) => {
+    const d = JSON.parse(e.data);
+    totalRequests++; totalErrors++; totalLatency += d.latency_ms || 0;
+    appendFeedEntry(d, true);
+    refreshStats();
+  });
+  es.addEventListener('health_change', (e) => { fetchHealthStatus(); });
+  es.onerror = () => { status.textContent = 'Disconnected'; status.className = 'status disconnected'; };
+}
+
+function appendFeedEntry(d, isErr) {
+  const feed = document.getElementById('live-feed');
+  const ts = new Date(d.timestamp || Date.now()).toLocaleTimeString();
+  const lat = d.latency_ms ? Math.round(d.latency_ms) + 'ms' : '-';
+  const cost = d.cost_usd ? '$' + d.cost_usd.toFixed(4) : '-';
+  const cls = isErr ? 'entry error' : 'entry';
+  const detail = isErr
+    ? `<span class="err">${d.error_class || 'error'}: ${(d.error_msg||'').slice(0,60)}</span>`
+    : `<span class="reason">${d.reason || ''}</span>`;
+  const html = `<div class="${cls}"><span class="ts">${ts}</span><span class="model">${d.model_id||'-'}</span><span class="provider">${d.provider_id||'-'}</span><span class="latency">${lat}</span><span class="cost">${cost}</span>${detail}</div>`;
+  feed.insertAdjacentHTML('afterbegin', html);
+  feedEntries++;
+  if (feedEntries > 200) feed.lastElementChild?.remove();
+  document.getElementById('feed-count').textContent = `(${feedEntries})`;
+}
+
+function refreshStats() {
+  document.getElementById('total-requests').textContent = totalRequests;
+  document.getElementById('total-cost').textContent = `$${cumulativeCost.toFixed(4)}`;
+  document.getElementById('avg-latency').textContent = totalRequests > 0 ? `${Math.round(totalLatency / totalRequests)}ms` : '0ms';
+  document.getElementById('error-rate').textContent = totalRequests > 0 ? `${(totalErrors / totalRequests * 100).toFixed(1)}%` : '0%';
+}
+
+// ============================
+// Setup Wizard
+// ============================
+let wizardState = { step: 0, type: 'openai', id: '', url: '', key: '', discovered: [] };
+const wizardStepNames = ['Type', 'Endpoint', 'Credentials', 'Test', 'Discover'];
+
+function openWizard() {
+  wizardState = { step: 0, type: 'openai', id: '', url: '', key: '', discovered: [] };
+  renderWizard();
+  showModal('wizard-modal');
+}
+
+function renderWizard() {
+  const steps = document.getElementById('wizard-steps');
+  steps.innerHTML = wizardStepNames.map((name, i) =>
+    `<div class="wizard-step ${i < wizardState.step ? 'done' : ''} ${i === wizardState.step ? 'active' : ''}" title="${name}"></div>`
+  ).join('');
+
+  const body = document.getElementById('wizard-body');
+  const actions = document.getElementById('wizard-actions');
+  const s = wizardState;
+
+  switch (s.step) {
+    case 0: // Type
+      body.innerHTML = `<div class="field"><label>Provider Type</label><select id="wiz-type" style="width:100%" onchange="wizardState.type=this.value"><option value="openai" ${s.type==='openai'?'selected':''}>OpenAI (or compatible)</option><option value="anthropic" ${s.type==='anthropic'?'selected':''}>Anthropic</option><option value="vllm" ${s.type==='vllm'?'selected':''}>vLLM (local)</option></select></div><div class="field"><label>Provider ID (unique name)</label><input id="wiz-id" value="${s.id}" placeholder="e.g. my-openai" style="width:100%" oninput="wizardState.id=this.value"></div>`;
+      actions.innerHTML = `<button class="btn" onclick="hideModal('wizard-modal')">Cancel</button><button class="btn primary" onclick="wizardNext()">Next</button>`;
+      break;
+    case 1: // Endpoint
+      const defaults = { openai: 'https://api.openai.com', anthropic: 'https://api.anthropic.com', vllm: 'http://localhost:8000' };
+      if (!s.url) s.url = defaults[s.type] || '';
+      body.innerHTML = `<div class="field"><label>Base URL</label><input id="wiz-url" value="${s.url}" placeholder="${defaults[s.type]}" style="width:100%" oninput="wizardState.url=this.value"></div><p style="font-size:12px;color:#666;margin-top:8px">For local vLLM/Ollama, use your machine's LAN address (e.g. http://192.168.1.50:8000)</p>`;
+      actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" onclick="wizardNext()">Next</button>`;
+      break;
+    case 2: // Credentials
+      body.innerHTML = `<div class="field"><label>API Key ${s.type==='vllm' ? '(optional for local)' : ''}</label><input type="password" id="wiz-key" value="${s.key}" placeholder="${s.type==='vllm'?'Leave blank for no auth':'sk-...'}" style="width:100%" oninput="wizardState.key=this.value"></div><p style="font-size:12px;color:#666;margin-top:8px">${s.type==='vllm' ? 'Most local vLLM instances need no key.' : 'The key will be stored in the encrypted vault.'}</p>`;
+      actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" onclick="wizardNext()">Next</button>`;
+      break;
+    case 3: // Test connection
+      body.innerHTML = `<p style="margin-bottom:12px">Testing connection to <strong>${s.url}</strong>...</p><div id="wiz-test-result"></div>`;
+      actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" id="wiz-test-next" disabled onclick="wizardNext()">Next</button>`;
+      wizardTestConnection();
+      break;
+    case 4: // Discover models
+      body.innerHTML = `<p style="margin-bottom:8px">Select models to register from <strong>${s.id}</strong>:</p><div class="discover-list" id="wiz-discover-list"><div style="color:#666;padding:12px">Loading...</div></div>`;
+      actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" onclick="wizardFinish()">Register Selected</button>`;
+      wizardDiscoverModels();
+      break;
+  }
+}
+
+function wizardNext() {
+  if (wizardState.step === 0 && !wizardState.id.trim()) { showToast('Provider ID is required', 'error'); return; }
+  if (wizardState.step === 1 && !wizardState.url.trim()) { showToast('Base URL is required', 'error'); return; }
+  wizardState.step++;
+  renderWizard();
+}
+
+function wizardBack() {
+  if (wizardState.step > 0) { wizardState.step--; renderWizard(); }
+}
+
+function wizardTestConnection() {
+  const el = document.getElementById('wiz-test-result');
+  // First register the provider (so discover can use it).
+  const body = { id: wizardState.id, type: wizardState.type, base_url: wizardState.url, enabled: true };
+  if (wizardState.key) body.api_key = wizardState.key;
+  fetch('/admin/v1/providers', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(r => { if (!r.ok) throw new Error('Failed to register'); return r.json(); })
+    .then(() => {
+      // Test by hitting healthz on the provider (or /v1/models).
+      return fetch(`/admin/v1/providers/${encodeURIComponent(wizardState.id)}/discover`);
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      el.innerHTML = `<div class="test-result ok">Connected! Found ${data.total || 0} models.</div>`;
+      document.getElementById('wiz-test-next').disabled = false;
+    })
+    .catch(err => {
+      el.innerHTML = `<div class="test-result fail">Connection failed: ${err.message}</div><p style="font-size:12px;color:#666;margin-top:8px">The provider was registered but could not be reached. You can still proceed and add models manually.</p>`;
+      document.getElementById('wiz-test-next').disabled = false;
     });
+}
 
-    // Track known providers and models.
-    const knownProviders = new Set();
-    const knownModels = new Set();
-    const edgeCounts = {};
-
-    function ensureNode(id, label, type) {
-      if ((type === 'provider' && knownProviders.has(id)) || (type === 'model' && knownModels.has(id))) return;
-      const color = type === 'provider' ? '#ce93d8' : '#4caf50';
-      cy.add({ data: { id, label, color, size: 35 } });
-      if (type === 'provider') {
-        cy.add({ data: { source: 'tokenhub', target: id, width: 2 } });
-        knownProviders.add(id);
-      } else {
-        knownModels.add(id);
+function wizardDiscoverModels() {
+  fetch(`/admin/v1/providers/${encodeURIComponent(wizardState.id)}/discover`)
+    .then(r => r.json())
+    .then(data => {
+      const list = document.getElementById('wiz-discover-list');
+      const models = data.models || [];
+      if (models.length === 0) {
+        list.innerHTML = '<div style="color:#666;padding:12px">No models discovered. You can add models manually after closing this wizard.</div>';
+        return;
       }
-      cy.layout({ name: 'cose', animate: true, animationDuration: 300 }).run();
-    }
-
-    function animateEdge(providerId, modelId) {
-      const edgeId = `${providerId}-${modelId}`;
-      if (!cy.getElementById(edgeId).length) {
-        ensureNode(providerId, providerId, 'provider');
-        ensureNode(modelId, modelId, 'model');
-        cy.add({ data: { id: edgeId, source: providerId, target: modelId, width: 2 } });
-        cy.layout({ name: 'cose', animate: true, animationDuration: 300 }).run();
-      }
-      edgeCounts[edgeId] = (edgeCounts[edgeId] || 0) + 1;
-      const edge = cy.getElementById(edgeId);
-      edge.addClass('animated');
-      edge.data('width', Math.min(2 + edgeCounts[edgeId], 10));
-      setTimeout(() => edge.removeClass('animated'), 500);
-    }
-
-    // ---- D3.js cost chart ----
-    const costData = [];
-    const chartMargin = { top: 10, right: 20, bottom: 20, left: 40 };
-    let chartSvg, xScale, yScale, line;
-
-    function initChart() {
-      const container = document.getElementById('cost-chart');
-      const w = container.clientWidth;
-      const h = container.clientHeight || 150;
-      chartSvg = d3.select('#cost-chart').append('svg').attr('width', w).attr('height', h);
-      const gw = w - chartMargin.left - chartMargin.right;
-      const gh = h - chartMargin.top - chartMargin.bottom;
-      const g = chartSvg.append('g').attr('transform', `translate(${chartMargin.left},${chartMargin.top})`);
-      xScale = d3.scaleTime().range([0, gw]);
-      yScale = d3.scaleLinear().range([gh, 0]);
-      line = d3.line().x(d => xScale(d.time)).y(d => yScale(d.cost)).curve(d3.curveMonotoneX);
-      g.append('path').attr('class', 'cost-line').attr('fill', 'none').attr('stroke', '#4caf50').attr('stroke-width', 2);
-      g.append('g').attr('class', 'x-axis').attr('transform', `translate(0,${gh})`);
-      g.append('g').attr('class', 'y-axis');
-    }
-
-    function updateChart() {
-      if (!chartSvg || costData.length < 2) return;
-      const g = chartSvg.select('g');
-      xScale.domain(d3.extent(costData, d => d.time));
-      yScale.domain([0, d3.max(costData, d => d.cost) * 1.1 || 0.01]);
-      g.select('.cost-line').datum(costData).attr('d', line);
-      g.select('.x-axis').call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat('%H:%M')).tickSize(3));
-      g.select('.y-axis').call(d3.axisLeft(yScale).ticks(4).tickFormat(d => `$${d.toFixed(3)}`).tickSize(3));
-      g.selectAll('.tick text').attr('fill', '#666').attr('font-size', '10px');
-      g.selectAll('.tick line').attr('stroke', '#333');
-      g.selectAll('.domain').attr('stroke', '#333');
-    }
-
-    // ---- SSE connection ----
-    let cumulativeCost = 0;
-    let totalRequests = 0;
-    let totalErrors = 0;
-    let totalLatency = 0;
-
-    function connectSSE() {
-      const status = document.getElementById('sse-status');
-      const es = new EventSource('/admin/v1/events');
-      es.addEventListener('connected', () => {
-        status.textContent = 'Connected';
-        status.className = 'status';
-      });
-      es.addEventListener('route_success', (e) => {
-        const data = JSON.parse(e.data);
-        totalRequests++;
-        totalLatency += data.latency_ms || 0;
-        cumulativeCost += data.cost_usd || 0;
-        costData.push({ time: new Date(data.timestamp), cost: cumulativeCost });
-        if (costData.length > 200) costData.shift();
-        animateEdge(data.provider_id, data.model_id);
-        refreshStats();
-        updateChart();
-        updateLeaderboard();
-      });
-      es.addEventListener('route_error', (e) => {
-        const data = JSON.parse(e.data);
-        totalRequests++;
-        totalErrors++;
-        totalLatency += data.latency_ms || 0;
-        refreshStats();
-      });
-      es.onerror = () => {
-        status.textContent = 'Disconnected';
-        status.className = 'status disconnected';
-      };
-    }
-
-    function refreshStats() {
-      document.getElementById('total-requests').textContent = totalRequests;
-      document.getElementById('total-cost').textContent = `$${cumulativeCost.toFixed(4)}`;
-      document.getElementById('avg-latency').textContent = totalRequests > 0 ? `${Math.round(totalLatency / totalRequests)}ms` : '0ms';
-      document.getElementById('error-rate').textContent = totalRequests > 0 ? `${(totalErrors / totalRequests * 100).toFixed(1)}%` : '0%';
-    }
-
-    // ---- Trend switching ----
-    let currentTrend = 'cost';
-    function switchTrend(metric) {
-      currentTrend = metric;
-      document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
-      fetchTrend(metric);
-    }
-
-    function fetchTrend(metric) {
-      const start = new Date(Date.now() - 3600000).toISOString(); // last hour
-      fetch(`/admin/v1/tsdb/query?metric=${metric}&start=${start}&step=60000`)
-        .then(r => r.json())
-        .then(data => {
-          if (!data.series || data.series.length === 0) return;
-          costData.length = 0;
-          data.series[0].points.forEach(p => {
-            costData.push({ time: new Date(p.t), cost: p.v });
-          });
-          updateChart();
-        }).catch(() => {});
-    }
-
-    // ---- Leaderboard ----
-    let modelWeights = {};
-    function updateLeaderboard() {
-      // Fetch models for weight info.
-      fetch('/admin/v1/models').then(r => r.json()).then(models => {
-        if (Array.isArray(models)) {
-          models.forEach(m => { modelWeights[m.id] = m.weight; });
-          renderWeightSliders(models);
-        }
-      }).catch(() => {});
-
-      fetch('/admin/v1/stats').then(r => r.json()).then(data => {
-        const tbody = document.getElementById('leaderboard-body');
-        const models = (data.by_model && data.by_model['1m']) || [];
-        tbody.innerHTML = models.map(m => `
-          <tr>
-            <td>${m.model_id}</td>
-            <td>${m.provider_id || '-'}</td>
-            <td>${modelWeights[m.model_id] || '-'}</td>
-            <td>${m.request_count}</td>
-            <td>${Math.round(m.avg_latency_ms)}ms</td>
-            <td>$${(m.total_cost_usd || 0).toFixed(4)}</td>
-            <td><span class="badge ${m.error_rate > 0.5 ? 'down' : m.error_rate > 0.1 ? 'degraded' : 'healthy'}">${(m.error_rate * 100).toFixed(0)}% err</span></td>
-          </tr>
-        `).join('');
-      }).catch(() => {});
-    }
-
-    // ---- Weight sliders ----
-    function renderWeightSliders(models) {
-      const container = document.getElementById('weight-sliders');
-      container.innerHTML = models.map(m => `
-        <div class="weight-slider">
-          <label>${m.id}</label>
-          <input type="range" min="1" max="10" value="${m.weight}" data-model-id="${m.id}" onchange="updateWeight(this)">
-          <span class="weight-val">${m.weight}</span>
-        </div>
-      `).join('');
-    }
-
-    function updateWeight(el) {
-      const modelId = el.dataset.modelId;
-      const newWeight = parseInt(el.value);
-      el.nextElementSibling.textContent = newWeight;
-      fetch(`/admin/v1/models/${encodeURIComponent(modelId)}`, {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ weight: newWeight })
-      }).catch(() => {});
-    }
-
-    // ---- Audit Log ----
-    function classifyAction(action) {
-      if (/create|upsert|update|add|register/i.test(action)) return 'create-update';
-      if (/delete|remove|revoke/i.test(action)) return 'delete';
-      if (/vault|secret|key|encrypt|decrypt/i.test(action)) return 'vault';
-      return 'other';
-    }
-
-    function formatAuditTime(ts) {
-      try {
-        const d = new Date(ts);
-        return d.toLocaleTimeString();
-      } catch { return ts; }
-    }
-
-    function fetchAuditLog() {
-      fetch('/admin/v1/audit?limit=50')
-        .then(r => r.json())
-        .then(data => {
-          const tbody = document.getElementById('audit-body');
-          const logs = data.logs || [];
-          tbody.innerHTML = logs.map(entry => {
-            const cls = classifyAction(entry.action);
-            return `<tr>
-              <td>${formatAuditTime(entry.timestamp)}</td>
-              <td><span class="audit-action ${cls}">${entry.action}</span></td>
-              <td>${entry.resource || '-'}</td>
-              <td>${entry.request_id || '-'}</td>
-            </tr>`;
-          }).join('');
-        }).catch(() => {});
-    }
-
-    // ---- Toast notification ----
-    function showToast(msg, type) {
-      const toast = document.getElementById('toast');
-      toast.textContent = msg;
-      toast.className = 'toast ' + type + ' visible';
-      setTimeout(() => { toast.className = 'toast'; }, 3000);
-    }
-
-    // ---- Vault Status ----
-    function fetchVaultStatus() {
-      fetch('/admin/api/info')
-        .then(r => r.json())
-        .then(data => {
-          const locked = data.vault_locked;
-          const indicator = document.getElementById('vault-indicator');
-          const label = document.getElementById('vault-label');
-          const controls = document.getElementById('vault-controls');
-          indicator.className = 'vault-indicator ' + (locked ? 'locked' : 'unlocked');
-          label.textContent = locked ? 'Locked' : 'Unlocked';
-          if (locked) {
-            controls.innerHTML = '<input type="password" id="vault-password" placeholder="Admin password">' +
-              ' <button class="btn primary" onclick="vaultUnlock()">Unlock</button>';
-          } else {
-            controls.innerHTML = '<button class="btn danger" onclick="vaultLock()">Lock</button>';
-          }
-        }).catch(() => {});
-    }
-
-    function vaultUnlock() {
-      const pw = document.getElementById('vault-password');
-      if (!pw || !pw.value) return;
-      fetch('/admin/v1/vault/unlock', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ admin_password: pw.value })
-      }).then(r => {
-        if (!r.ok) throw new Error('Unlock failed');
-        return r.json();
-      }).then(() => {
-        showToast('Vault unlocked', 'success');
-        fetchVaultStatus();
-      }).catch(() => {
-        showToast('Unlock failed - check password', 'error');
-      });
-    }
-
-    function vaultLock() {
-      fetch('/admin/v1/vault/lock', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'}
-      }).then(r => r.json()).then(() => {
-        showToast('Vault locked', 'success');
-        fetchVaultStatus();
-      }).catch(() => {
-        showToast('Lock failed', 'error');
-      });
-    }
-
-    // ---- Provider Management ----
-    function fetchProviders() {
-      fetch('/admin/v1/providers')
-        .then(r => r.json())
-        .then(providers => {
-          const tbody = document.getElementById('providers-body');
-          if (!Array.isArray(providers) || providers.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center;">No providers configured</td></tr>';
-            return;
-          }
-          tbody.innerHTML = providers.map(p => `
-            <tr>
-              <td>${p.id}</td>
-              <td>${p.type}</td>
-              <td style="font-family:monospace;font-size:12px">${p.base_url || '-'}</td>
-              <td>${p.cred_store || 'none'}</td>
-              <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
-              <td><button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button></td>
-            </tr>
-          `).join('');
-        }).catch(() => {});
-    }
-
-    function addProvider() {
-      const id = document.getElementById('prov-id').value.trim();
-      const type = document.getElementById('prov-type').value;
-      const baseURL = document.getElementById('prov-url').value.trim();
-      const apiKey = document.getElementById('prov-apikey').value.trim();
-      if (!id) { showToast('Provider ID is required', 'error'); return; }
-      const body = { id: id, type: type, base_url: baseURL, enabled: true };
-      if (apiKey) body.api_key = apiKey;
-      fetch('/admin/v1/providers', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(() => {
-        showToast('Provider added', 'success');
-        document.getElementById('prov-id').value = '';
-        document.getElementById('prov-url').value = '';
-        document.getElementById('prov-apikey').value = '';
-        fetchProviders();
-      }).catch(() => {
-        showToast('Failed to add provider', 'error');
-      });
-    }
-
-    function deleteProvider(id) {
-      if (!confirm('Delete provider "' + id + '"?')) return;
-      fetch('/admin/v1/providers/' + encodeURIComponent(id), {
-        method: 'DELETE'
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(() => {
-        showToast('Provider deleted', 'success');
-        fetchProviders();
-      }).catch(() => {
-        showToast('Failed to delete provider', 'error');
-      });
-    }
-
-    // ---- Routing Config ----
-    function fetchRoutingConfig() {
-      fetch('/admin/v1/routing-config')
-        .then(r => r.json())
-        .then(cfg => {
-          if (cfg.default_mode) document.getElementById('route-mode').value = cfg.default_mode;
-          if (cfg.default_max_budget_usd !== undefined) document.getElementById('route-budget').value = cfg.default_max_budget_usd;
-          if (cfg.default_max_latency_ms !== undefined) document.getElementById('route-latency').value = cfg.default_max_latency_ms;
-        }).catch(() => {});
-    }
-
-    function saveRoutingConfig() {
-      const cfg = {
-        default_mode: document.getElementById('route-mode').value,
-        default_max_budget_usd: parseFloat(document.getElementById('route-budget').value) || 0,
-        default_max_latency_ms: parseInt(document.getElementById('route-latency').value) || 0
-      };
-      fetch('/admin/v1/routing-config', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(cfg)
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(() => {
-        showToast('Routing config saved', 'success');
-      }).catch(() => {
-        showToast('Failed to save routing config', 'error');
-      });
-    }
-
-    // ---- Health Status ----
-    function fetchHealthStatus() {
-      fetch('/admin/v1/health')
-        .then(r => r.json())
-        .then(data => {
-          const tbody = document.getElementById('health-body');
-          const providers = data.providers || [];
-          if (providers.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center;">No provider health data</td></tr>';
-            return;
-          }
-          tbody.innerHTML = providers.map(p => {
-            const errorRate = p.total_requests > 0 ? (p.total_errors / p.total_requests * 100).toFixed(1) : '0.0';
-            const state = (p.state || 'healthy').toLowerCase();
-            const available = state === 'healthy' ? 'yes' : (state === 'degraded' ? 'degraded' : 'no');
-            const availClass = state === 'healthy' ? 'yes' : (state === 'degraded' ? 'degraded' : 'no');
-            const rowClass = state === 'healthy' ? 'healthy' : (state === 'degraded' ? 'degraded' : 'unavailable');
-            return `<tr class="health-row ${rowClass}">
-              <td>${p.provider_id}</td>
-              <td><span class="health-avail ${availClass}">${available}</span></td>
-              <td>${Math.round(p.avg_latency_ms || 0)}ms</td>
-              <td>${errorRate}%</td>
-              <td>${p.consec_errors || 0}</td>
-              <td><span class="badge ${state === 'healthy' ? 'healthy' : (state === 'degraded' ? 'degraded' : 'down')}">${state}</span></td>
-            </tr>`;
-          }).join('');
-        }).catch(() => {});
-    }
-
-    // ---- Request Log ----
-    let requestLogOffset = 0;
-    const requestLogLimit = 50;
-
-    function formatRequestLogTime(ts) {
-      try {
-        const d = new Date(ts);
-        return d.toLocaleTimeString();
-      } catch { return ts; }
-    }
-
-    function statusClass(code) {
-      return code === 200 ? 'status-ok' : 'status-err';
-    }
-
-    function latencyClass(ms) {
-      if (ms < 1000) return 'latency-fast';
-      if (ms <= 5000) return 'latency-med';
-      return 'latency-slow';
-    }
-
-    function fetchRequestLogs() {
-      fetch(`/admin/v1/logs?limit=${requestLogLimit}&offset=${requestLogOffset}`)
-        .then(r => r.json())
-        .then(data => {
-          const tbody = document.getElementById('request-log-body');
-          const logs = data.logs || [];
-          if (logs.length === 0 && requestLogOffset === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="color:#8a8d9a;text-align:center;">No request logs</td></tr>';
-          } else {
-            tbody.innerHTML = logs.map(entry => {
-              return `<tr>
-                <td>${formatRequestLogTime(entry.timestamp)}</td>
-                <td>${entry.model_id || '-'}</td>
-                <td>${entry.provider_id || '-'}</td>
-                <td>${entry.mode || '-'}</td>
-                <td><span class="${latencyClass(entry.latency_ms)}">${entry.latency_ms}</span></td>
-                <td>$${(entry.estimated_cost_usd || 0).toFixed(6)}</td>
-                <td><span class="${statusClass(entry.status_code)}">${entry.status_code}</span></td>
-                <td>${entry.request_id || '-'}</td>
-              </tr>`;
-            }).join('');
-          }
-          const page = Math.floor(requestLogOffset / requestLogLimit) + 1;
-          document.getElementById('req-log-page-info').textContent = `Page ${page}`;
-          document.getElementById('req-log-prev').disabled = requestLogOffset === 0;
-          document.getElementById('req-log-next').disabled = logs.length < requestLogLimit;
-        }).catch(() => {});
-    }
-
-    function requestLogPrev() {
-      if (requestLogOffset >= requestLogLimit) {
-        requestLogOffset -= requestLogLimit;
-      } else {
-        requestLogOffset = 0;
-      }
-      fetchRequestLogs();
-    }
-
-    function requestLogNext() {
-      requestLogOffset += requestLogLimit;
-      fetchRequestLogs();
-    }
-
-    // ---- API Keys ----
-    function fetchAPIKeys() {
-      fetch('/admin/v1/apikeys')
-        .then(r => r.json())
-        .then(data => {
-          const keys = data.keys || [];
-          const tbody = document.getElementById('apikeys-body');
-          if (keys.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" style="color:#8a8d9a;text-align:center;">No API keys</td></tr>';
-            return;
-          }
-          tbody.innerHTML = keys.map(k => {
-            const scopes = k.scopes || '[]';
-            const created = k.created_at ? new Date(k.created_at).toLocaleDateString() : '-';
-            const lastUsed = k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'never';
-            const expires = k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'never';
-            const rotation = k.rotation_days > 0 ? k.rotation_days + 'd' : 'manual';
-            const budget = k.monthly_budget_usd > 0 ? '$' + k.monthly_budget_usd.toFixed(2) : 'unlimited';
-            const enabledIcon = k.enabled ? '✓' : '✗';
-            const enabledColor = k.enabled ? '#4caf50' : '#f44336';
-            return `<tr>
-              <td>${k.name}</td>
-              <td style="font-family:monospace;font-size:12px">${k.key_prefix}...</td>
-              <td>${scopes}</td>
-              <td>${created}</td>
-              <td>${lastUsed}</td>
-              <td>${expires}</td>
-              <td>${rotation}</td>
-              <td>${budget}</td>
-              <td style="color:${enabledColor};font-weight:500">${enabledIcon}</td>
-              <td>
-                <button class="btn sm" onclick="rotateKey('${k.id}')">Rotate</button>
-                <button class="btn sm" onclick="toggleKey('${k.id}', ${!k.enabled})">${k.enabled ? 'Disable' : 'Enable'}</button>
-                <button class="btn danger sm" onclick="revokeKey('${k.id}')">Revoke</button>
-              </td>
-            </tr>`;
-          }).join('');
-        }).catch(() => {});
-    }
-
-    function showCreateKeyModal() {
-      document.getElementById('create-key-modal').classList.add('visible');
-    }
-
-    function hideCreateKeyModal() {
-      document.getElementById('create-key-modal').classList.remove('visible');
-    }
-
-    function createAPIKey() {
-      const name = document.getElementById('new-key-name').value.trim();
-      if (!name) { showToast('Name is required', 'error'); return; }
-      const scopes = [];
-      if (document.getElementById('scope-chat').checked) scopes.push('chat');
-      if (document.getElementById('scope-plan').checked) scopes.push('plan');
-      const rotation = parseInt(document.getElementById('new-key-rotation').value) || 0;
-      const budget = parseFloat(document.getElementById('new-key-budget').value) || 0;
-      const expiryVal = document.getElementById('new-key-expiry').value;
-      const body = { name, scopes: JSON.stringify(scopes), rotation_days: rotation, monthly_budget_usd: budget };
-      if (expiryVal) body.expires_at = new Date(expiryVal).toISOString();
-      fetch('/admin/v1/apikeys', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(data => {
-        hideCreateKeyModal();
-        showKeyDisplay(data.key);
-        fetchAPIKeys();
-      }).catch(() => {
-        showToast('Failed to create key', 'error');
-      });
-    }
-
-    function showKeyDisplay(key) {
-      document.getElementById('displayed-key').textContent = key;
-      document.getElementById('key-display-modal').classList.add('visible');
-    }
-
-    function hideKeyDisplay() {
-      document.getElementById('key-display-modal').classList.remove('visible');
-    }
-
-    function copyKey() {
-      const key = document.getElementById('displayed-key').textContent;
-      navigator.clipboard.writeText(key).then(() => {
-        showToast('Key copied to clipboard', 'success');
-      }).catch(() => {
-        showToast('Failed to copy', 'error');
-      });
-    }
-
-    function rotateKey(id) {
-      if (!confirm('Rotate this key? The old key will stop working immediately.')) return;
-      fetch('/admin/v1/apikeys/' + encodeURIComponent(id) + '/rotate', {
-        method: 'POST'
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(data => {
-        showKeyDisplay(data.key);
-        fetchAPIKeys();
-      }).catch(() => {
-        showToast('Failed to rotate key', 'error');
-      });
-    }
-
-    function toggleKey(id, enabled) {
-      fetch('/admin/v1/apikeys/' + encodeURIComponent(id), {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ enabled })
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(() => {
-        showToast(enabled ? 'Key enabled' : 'Key disabled', 'success');
-        fetchAPIKeys();
-      }).catch(() => {
-        showToast('Failed to update key', 'error');
-      });
-    }
-
-    function revokeKey(id) {
-      if (!confirm('Permanently revoke this key?')) return;
-      fetch('/admin/v1/apikeys/' + encodeURIComponent(id), {
-        method: 'DELETE'
-      }).then(r => {
-        if (!r.ok) throw new Error('Failed');
-        return r.json();
-      }).then(() => {
-        showToast('Key revoked', 'success');
-        fetchAPIKeys();
-      }).catch(() => {
-        showToast('Failed to revoke key', 'error');
-      });
-    }
-
-    // ---- Workflows ----
-    function fetchWorkflows() {
-      const status = document.getElementById('wf-status-filter').value;
-      const qs = status ? `?status=${status}&limit=50` : '?limit=50';
-      fetch('/admin/v1/workflows' + qs)
-        .then(r => {
-          if (r.status === 503) return { workflows: [], disabled: true };
-          return r.json();
-        })
-        .then(data => {
-          const tbody = document.getElementById('workflows-body');
-          if (data.disabled) {
-            tbody.innerHTML = '<tr><td colspan="7" style="color:#8a8d9a;text-align:center;">Temporal not enabled</td></tr>';
-            return;
-          }
-          const workflows = data.workflows || [];
-          if (workflows.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="color:#8a8d9a;text-align:center;">No workflows</td></tr>';
-            return;
-          }
-          tbody.innerHTML = workflows.map(w => {
-            const statusLower = (w.status || '').toLowerCase().replace(/_/g, '-');
-            const started = w.start_time ? new Date(w.start_time).toLocaleString() : '-';
-            const duration = w.duration_ms ? w.duration_ms + 'ms' : '-';
-            return `<tr>
-              <td style="font-family:monospace;font-size:12px">${w.workflow_id || '-'}</td>
-              <td>${w.workflow_type || '-'}</td>
-              <td><span class="wf-badge ${statusLower}">${w.status || '-'}</span></td>
-              <td>${started}</td>
-              <td>${duration}</td>
-              <td>${w.model_id || '-'}</td>
-              <td>${w.api_key_name || '-'}</td>
-            </tr>`;
-          }).join('');
-        }).catch(() => {});
-    }
-
-    // ---- Init ----
-    document.addEventListener('DOMContentLoaded', () => {
-      initChart();
-      connectSSE();
-      // Fetch initial stats and health.
-      updateLeaderboard();
-      fetchAuditLog();
-      fetchVaultStatus();
-      fetchProviders();
-      fetchRoutingConfig();
-      fetchHealthStatus();
-      fetchRequestLogs();
-      fetchAPIKeys();
-      fetchWorkflows();
-      setInterval(fetchRequestLogs, 10000);
-      setInterval(fetchAuditLog, 10000);
-      setInterval(fetchProviders, 30000);
-      setInterval(fetchHealthStatus, 10000);
-      setInterval(fetchVaultStatus, 15000);
-      setInterval(fetchAPIKeys, 15000);
-      setInterval(fetchWorkflows, 5000);
-      fetch('/admin/v1/health').then(r => r.json()).then(data => {
-        (data.providers || []).forEach(p => {
-          ensureNode(p.provider_id, p.provider_id, 'provider');
-        });
-      }).catch(() => {});
+      wizardState.discovered = models;
+      list.innerHTML = models.map((m, i) => `<div class="discover-item"><input type="checkbox" id="wiz-m-${i}" ${m.registered ? 'checked disabled' : ''}><span class="model-id">${m.id}</span>${m.registered ? '<span class="registered">registered</span>' : ''}${m.owned_by ? '<span style="color:#666;font-size:11px">'+m.owned_by+'</span>' : ''}</div>`).join('');
+    })
+    .catch(() => {
+      document.getElementById('wiz-discover-list').innerHTML = '<div style="color:#666;padding:12px">Could not discover models. Add them manually from the Models panel.</div>';
     });
-  </script>
+}
+
+function wizardFinish() {
+  const models = wizardState.discovered || [];
+  let registered = 0;
+  const promises = models.map((m, i) => {
+    const cb = document.getElementById('wiz-m-' + i);
+    if (!cb || !cb.checked || m.registered) return Promise.resolve();
+    registered++;
+    return fetch('/admin/v1/models', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ id: m.id, provider_id: wizardState.id, weight: 5, max_context_tokens: 0, input_per_1k: 0, output_per_1k: 0, enabled: true })
+    });
+  });
+  Promise.all(promises).then(() => {
+    showToast(`Provider added, ${registered} model(s) registered`, 'success');
+    hideModal('wizard-modal');
+    fetchProviders(); fetchModels(); fetchHealthStatus();
+  }).catch(() => showToast('Error registering models', 'error'));
+}
+
+// ============================
+// What-If Simulator
+// ============================
+function runSimulation() {
+  const body = {
+    mode: document.getElementById('sim-mode').value,
+    token_count: parseInt(document.getElementById('sim-tokens').value) || 500,
+    max_budget_usd: parseFloat(document.getElementById('sim-budget').value) || 0,
+    min_weight: parseInt(document.getElementById('sim-weight').value) || 0
+  };
+  fetch('/admin/v1/routing/simulate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('whatif-result');
+      if (data.error) { el.innerHTML = `<div style="color:#f44336;padding:8px">${data.error}</div>`; return; }
+      const models = data.eligible || [];
+      if (models.length === 0) { el.innerHTML = '<div style="color:#666;padding:8px">No eligible models for these constraints.</div>'; return; }
+      el.innerHTML = `<p style="font-size:12px;color:#8a8d9a;margin-bottom:4px">Winner: <strong style="color:#4caf50">${data.decision?.model_id}</strong> (${data.decision?.reason})</p>` +
+        '<table class="admin-table"><thead><tr><th>Rank</th><th>Model</th><th>Provider</th><th>Weight</th><th>Context</th><th>Cost est.</th></tr></thead><tbody>' +
+        models.map((m, i) => {
+          const estCost = ((body.token_count / 1000) * m.input_per_1k + (512/1000) * m.output_per_1k).toFixed(5);
+          return `<tr class="${m.selected ? 'selected-row' : ''}"><td>${i+1}</td><td>${m.id}</td><td>${m.provider_id}</td><td>${m.weight}</td><td>${m.max_context_tokens||'-'}</td><td>$${estCost}</td></tr>`;
+        }).join('') + '</tbody></table>';
+    })
+    .catch(() => showToast('Simulation failed', 'error'));
+}
+
+// ============================
+// Provider + Model Management
+// ============================
+function fetchProviders() {
+  fetch('/admin/v1/providers').then(r => r.json()).then(data => {
+    const items = data.items || data || [];
+    const providers = Array.isArray(items) ? items : [];
+    const tbody = document.getElementById('providers-body');
+    if (providers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center">No providers</td></tr>';
+    } else {
+      tbody.innerHTML = providers.map(p => `<tr>
+        <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px">${p.base_url||'-'}</td><td>${p.cred_store||'none'}</td>
+        <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
+        <td><button class="btn sm" onclick="discoverModels('${p.id}')">Discover</button> <button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button></td>
+      </tr>`).join('');
+    }
+    // Update model form provider dropdown.
+    const sel = document.getElementById('mdl-provider');
+    const cur = sel.value;
+    const adapterIds = providers.map(p => p.id);
+    // Also include runtime adapters.
+    fetch('/admin/v1/engine/models').then(r=>r.json()).then(d => {
+      (d.adapters || []).forEach(a => { if (!adapterIds.includes(a)) adapterIds.push(a); });
+      sel.innerHTML = adapterIds.map(id => `<option value="${id}" ${id===cur?'selected':''}>${id}</option>`).join('');
+    }).catch(() => {
+      sel.innerHTML = adapterIds.map(id => `<option value="${id}" ${id===cur?'selected':''}>${id}</option>`).join('');
+    });
+  }).catch(() => {});
+}
+
+function deleteProvider(id) {
+  if (!confirm('Delete provider "' + id + '"?')) return;
+  fetch('/admin/v1/providers/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => { showToast('Deleted', 'success'); fetchProviders(); })
+    .catch(() => showToast('Failed', 'error'));
+}
+
+function discoverModels(provId) {
+  wizardState = { step: 4, type: '', id: provId, url: '', key: '', discovered: [] };
+  document.getElementById('wizard-title').textContent = 'Discover Models: ' + provId;
+  renderWizard();
+  showModal('wizard-modal');
+}
+
+function fetchModels() {
+  fetch('/admin/v1/models').then(r => r.json()).then(data => {
+    const items = data.items || data || [];
+    const models = Array.isArray(items) ? items : [];
+    const tbody = document.getElementById('models-body');
+    if (models.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="color:#8a8d9a;text-align:center">No models</td></tr>';
+    } else {
+      tbody.innerHTML = models.map(m => `<tr>
+        <td style="font-family:monospace;font-size:12px">${m.id}</td><td>${m.provider_id}</td><td>${m.weight}</td><td>${m.max_context_tokens||'-'}</td>
+        <td>${m.input_per_1k}</td><td>${m.output_per_1k}</td>
+        <td><span class="toggle-switch" onclick="toggleModel('${m.id}',${!m.enabled})">${m.enabled?'&#9989;':'&#10060;'}</span></td>
+        <td><button class="btn danger sm" onclick="deleteModel('${m.id}')">Delete</button></td>
+      </tr>`).join('');
+    }
+  }).catch(() => {});
+}
+
+function addModel() {
+  const id = document.getElementById('mdl-id').value.trim();
+  if (!id) { showToast('Model ID required', 'error'); return; }
+  const body = {
+    id, provider_id: document.getElementById('mdl-provider').value,
+    weight: parseInt(document.getElementById('mdl-weight').value) || 5,
+    max_context_tokens: parseInt(document.getElementById('mdl-ctx').value) || 0,
+    input_per_1k: parseFloat(document.getElementById('mdl-in').value) || 0,
+    output_per_1k: parseFloat(document.getElementById('mdl-out').value) || 0,
+    enabled: true
+  };
+  fetch('/admin/v1/models', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => { showToast('Model added', 'success'); document.getElementById('mdl-id').value = ''; fetchModels(); })
+    .catch(() => showToast('Failed', 'error'));
+}
+
+function deleteModel(id) {
+  if (!confirm('Delete model "' + id + '"?')) return;
+  fetch('/admin/v1/models/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => { showToast('Deleted', 'success'); fetchModels(); })
+    .catch(() => showToast('Failed', 'error'));
+}
+
+function toggleModel(id, enabled) {
+  fetch('/admin/v1/models/' + encodeURIComponent(id), { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => fetchModels())
+    .catch(() => showToast('Failed', 'error'));
+}
+
+// ============================
+// Leaderboard + Weights
+// ============================
+let modelWeights = {};
+
+function updateLeaderboard() {
+  fetch('/admin/v1/models').then(r => r.json()).then(data => {
+    const items = data.items || data || [];
+    if (Array.isArray(items)) {
+      items.forEach(m => { modelWeights[m.id] = m.weight; });
+      renderWeightSliders(items);
+    }
+  }).catch(() => {});
+  fetch('/admin/v1/stats').then(r => r.json()).then(data => {
+    const tbody = document.getElementById('leaderboard-body');
+    const models = (data.by_model && data.by_model['1m']) || [];
+    tbody.innerHTML = models.map(m => `<tr>
+      <td>${m.model_id}</td><td>${m.provider_id||'-'}</td><td>${modelWeights[m.model_id]||'-'}</td><td>${m.request_count}</td>
+      <td>${Math.round(m.avg_latency_ms)}ms</td><td>$${(m.total_cost_usd||0).toFixed(4)}</td>
+      <td><span class="badge ${m.error_rate>0.5?'down':m.error_rate>0.1?'degraded':'healthy'}">${(m.error_rate*100).toFixed(0)}%</span></td>
+    </tr>`).join('');
+  }).catch(() => {});
+}
+
+function renderWeightSliders(models) {
+  document.getElementById('weight-sliders').innerHTML = models.map(m => `<div class="weight-slider"><label title="${m.id}">${m.id}</label><input type="range" min="1" max="10" value="${m.weight}" data-model-id="${m.id}" onchange="updateWeight(this)"><span class="weight-val">${m.weight}</span></div>`).join('');
+}
+
+function updateWeight(el) {
+  const modelId = el.dataset.modelId;
+  el.nextElementSibling.textContent = el.value;
+  fetch(`/admin/v1/models/${encodeURIComponent(modelId)}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ weight: parseInt(el.value) }) }).catch(() => {});
+}
+
+// ============================
+// Vault, Routing, Health, Audit, Logs, Keys, Workflows
+// ============================
+function fetchVaultStatus() {
+  fetch('/admin/api/info').then(r=>r.json()).then(data => {
+    const locked = data.vault_locked;
+    document.getElementById('vault-indicator').className = 'vault-indicator ' + (locked ? 'locked' : 'unlocked');
+    document.getElementById('vault-label').textContent = locked ? 'Locked' : 'Unlocked';
+    document.getElementById('vault-controls').innerHTML = locked
+      ? '<input type="password" id="vault-password" placeholder="Admin password"> <button class="btn primary" onclick="vaultUnlock()">Unlock</button>'
+      : '<button class="btn danger" onclick="vaultLock()">Lock</button>';
+  }).catch(() => {});
+}
+function vaultUnlock() {
+  const pw = document.getElementById('vault-password');
+  if (!pw?.value) return;
+  fetch('/admin/v1/vault/unlock', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({admin_password:pw.value}) })
+    .then(r => { if (!r.ok) throw 0; showToast('Unlocked','success'); fetchVaultStatus(); })
+    .catch(() => showToast('Failed','error'));
+}
+function vaultLock() {
+  fetch('/admin/v1/vault/lock', { method:'POST', headers:{'Content-Type':'application/json'} })
+    .then(() => { showToast('Locked','success'); fetchVaultStatus(); }).catch(() => showToast('Failed','error'));
+}
+
+function fetchRoutingConfig() {
+  fetch('/admin/v1/routing-config').then(r=>r.json()).then(cfg => {
+    if (cfg.default_mode) document.getElementById('route-mode').value = cfg.default_mode;
+    if (cfg.default_max_budget_usd !== undefined) document.getElementById('route-budget').value = cfg.default_max_budget_usd;
+    if (cfg.default_max_latency_ms !== undefined) document.getElementById('route-latency').value = cfg.default_max_latency_ms;
+  }).catch(() => {});
+}
+function saveRoutingConfig() {
+  fetch('/admin/v1/routing-config', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+    default_mode: document.getElementById('route-mode').value,
+    default_max_budget_usd: parseFloat(document.getElementById('route-budget').value)||0,
+    default_max_latency_ms: parseInt(document.getElementById('route-latency').value)||0
+  })}).then(r => { if (!r.ok) throw 0; showToast('Saved','success'); }).catch(() => showToast('Failed','error'));
+}
+
+function fetchHealthStatus() {
+  fetch('/admin/v1/health').then(r=>r.json()).then(data => {
+    const tbody = document.getElementById('health-body');
+    const providers = data.providers || [];
+    if (providers.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center">No data</td></tr>'; return; }
+    tbody.innerHTML = providers.map(p => {
+      const er = p.total_requests > 0 ? (p.total_errors/p.total_requests*100).toFixed(1) : '0.0';
+      const st = (p.state||'healthy').toLowerCase();
+      const av = st==='healthy'?'yes':(st==='degraded'?'degraded':'no');
+      return `<tr class="health-row ${st==='healthy'?'healthy':st==='degraded'?'degraded':'unavailable'}"><td>${p.provider_id}</td><td><span class="health-avail ${av}">${av}</span></td><td>${Math.round(p.avg_latency_ms||0)}ms</td><td>${er}%</td><td>${p.consec_errors||0}</td><td><span class="badge ${st==='healthy'?'healthy':st==='degraded'?'degraded':'down'}">${st}</span></td></tr>`;
+    }).join('');
+    // Ensure all providers are on the graph.
+    providers.forEach(p => ensureNode(p.provider_id, p.provider_id, 'provider'));
+  }).catch(() => {});
+}
+
+function classifyAction(a) {
+  if (/create|upsert|update|add|register/i.test(a)) return 'create-update';
+  if (/delete|remove|revoke/i.test(a)) return 'delete';
+  if (/vault|secret|key|encrypt/i.test(a)) return 'vault';
+  return 'other';
+}
+function fetchAuditLog() {
+  fetch('/admin/v1/audit?limit=50').then(r=>r.json()).then(data => {
+    document.getElementById('audit-body').innerHTML = (data.logs||[]).map(e =>
+      `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td><span class="audit-action ${classifyAction(e.action)}">${e.action}</span></td><td>${e.resource||'-'}</td><td>${e.request_id||'-'}</td></tr>`
+    ).join('');
+  }).catch(() => {});
+}
+
+let requestLogOffset = 0;
+function fetchRequestLogs() {
+  fetch(`/admin/v1/logs?limit=50&offset=${requestLogOffset}`).then(r=>r.json()).then(data => {
+    const logs = data.logs || [];
+    const tbody = document.getElementById('request-log-body');
+    tbody.innerHTML = logs.length === 0 && requestLogOffset === 0
+      ? '<tr><td colspan="8" style="color:#8a8d9a;text-align:center">No logs</td></tr>'
+      : logs.map(e => {
+        const latCls = e.latency_ms < 1000 ? 'color:#4caf50' : e.latency_ms <= 5000 ? 'color:#ffc107' : 'color:#f44336';
+        const stCls = e.status_code === 200 ? 'color:#4caf50' : 'color:#f44336';
+        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.model_id||'-'}</td><td>${e.provider_id||'-'}</td><td>${e.mode||'-'}</td><td style="${latCls}">${e.latency_ms}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${e.request_id||'-'}</td></tr>`;
+      }).join('');
+    document.getElementById('req-log-page-info').textContent = `Page ${Math.floor(requestLogOffset/50)+1}`;
+    document.getElementById('req-log-prev').disabled = requestLogOffset === 0;
+    document.getElementById('req-log-next').disabled = logs.length < 50;
+  }).catch(() => {});
+}
+function requestLogPrev() { requestLogOffset = Math.max(0, requestLogOffset - 50); fetchRequestLogs(); }
+function requestLogNext() { requestLogOffset += 50; fetchRequestLogs(); }
+
+function fetchAPIKeys() {
+  fetch('/admin/v1/apikeys').then(r=>r.json()).then(data => {
+    const keys = data.keys || [];
+    document.getElementById('apikeys-body').innerHTML = keys.length === 0
+      ? '<tr><td colspan="8" style="color:#8a8d9a;text-align:center">No keys</td></tr>'
+      : keys.map(k => {
+        const budget = k.monthly_budget_usd > 0 ? '$'+k.monthly_budget_usd.toFixed(2) : 'unlimited';
+        return `<tr><td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key_prefix}...</td><td>${k.scopes||'[]'}</td><td>${k.created_at?new Date(k.created_at).toLocaleDateString():'-'}</td><td>${k.last_used_at?new Date(k.last_used_at).toLocaleString():'never'}</td><td>${budget}</td><td style="color:${k.enabled?'#4caf50':'#f44336'}">${k.enabled?'yes':'no'}</td><td><button class="btn sm" onclick="rotateKey('${k.id}')">Rotate</button> <button class="btn sm" onclick="toggleKey('${k.id}',${!k.enabled})">${k.enabled?'Disable':'Enable'}</button> <button class="btn danger sm" onclick="revokeKey('${k.id}')">Revoke</button></td></tr>`;
+      }).join('');
+  }).catch(() => {});
+}
+function createAPIKey() {
+  const name = document.getElementById('new-key-name').value.trim();
+  if (!name) { showToast('Name required','error'); return; }
+  const scopes = [];
+  if (document.getElementById('scope-chat').checked) scopes.push('chat');
+  if (document.getElementById('scope-plan').checked) scopes.push('plan');
+  fetch('/admin/v1/apikeys', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+    name, scopes: JSON.stringify(scopes),
+    rotation_days: parseInt(document.getElementById('new-key-rotation').value)||0,
+    monthly_budget_usd: parseFloat(document.getElementById('new-key-budget').value)||0,
+    ...(document.getElementById('new-key-expiry').value ? { expires_at: new Date(document.getElementById('new-key-expiry').value).toISOString() } : {})
+  })}).then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(d => { hideModal('create-key-modal'); document.getElementById('displayed-key').textContent = d.key; showModal('key-display-modal'); fetchAPIKeys(); })
+    .catch(() => showToast('Failed','error'));
+}
+function rotateKey(id) {
+  if (!confirm('Rotate this key?')) return;
+  fetch('/admin/v1/apikeys/'+encodeURIComponent(id)+'/rotate', { method:'POST' })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(d => { document.getElementById('displayed-key').textContent = d.key; showModal('key-display-modal'); fetchAPIKeys(); })
+    .catch(() => showToast('Failed','error'));
+}
+function toggleKey(id, enabled) {
+  fetch('/admin/v1/apikeys/'+encodeURIComponent(id), { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled}) })
+    .then(r => { if (!r.ok) throw 0; showToast(enabled?'Enabled':'Disabled','success'); fetchAPIKeys(); })
+    .catch(() => showToast('Failed','error'));
+}
+function revokeKey(id) {
+  if (!confirm('Revoke this key permanently?')) return;
+  fetch('/admin/v1/apikeys/'+encodeURIComponent(id), { method:'DELETE' })
+    .then(r => { if (!r.ok) throw 0; showToast('Revoked','success'); fetchAPIKeys(); })
+    .catch(() => showToast('Failed','error'));
+}
+
+function fetchWorkflows() {
+  const status = document.getElementById('wf-status-filter').value;
+  const qs = status ? `?status=${status}&limit=50` : '?limit=50';
+  fetch('/admin/v1/workflows' + qs).then(r => r.status===503?{workflows:[],disabled:true}:r.json()).then(data => {
+    const tbody = document.getElementById('workflows-body');
+    if (data.disabled) { tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center">Temporal not enabled</td></tr>'; return; }
+    const wfs = data.workflows || [];
+    tbody.innerHTML = wfs.length === 0
+      ? '<tr><td colspan="6" style="color:#8a8d9a;text-align:center">No workflows</td></tr>'
+      : wfs.map(w => `<tr><td style="font-family:monospace;font-size:12px">${w.workflow_id||'-'}</td><td>${w.workflow_type||'-'}</td><td><span class="wf-badge ${(w.status||'').toLowerCase().replace(/_/g,'-')}">${w.status||'-'}</span></td><td>${w.start_time?new Date(w.start_time).toLocaleString():'-'}</td><td>${w.duration_ms?w.duration_ms+'ms':'-'}</td><td>${w.model_id||'-'}</td></tr>`).join('');
+  }).catch(() => {});
+}
+
+// ============================
+// Utilities
+// ============================
+function showModal(id) { document.getElementById(id).classList.add('visible'); }
+function hideModal(id) { document.getElementById(id).classList.remove('visible'); }
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast ' + type + ' visible';
+  setTimeout(() => { t.className = 'toast'; }, 3000);
+}
+
+// ============================
+// Init
+// ============================
+document.addEventListener('DOMContentLoaded', () => {
+  initChart();
+  connectSSE();
+  updateLeaderboard(); fetchAuditLog(); fetchVaultStatus(); fetchProviders();
+  fetchModels(); fetchRoutingConfig(); fetchHealthStatus(); fetchRequestLogs();
+  fetchAPIKeys(); fetchWorkflows(); fetchTrend('cost');
+  setInterval(fetchRequestLogs, 15000);
+  setInterval(fetchAuditLog, 10000);
+  setInterval(fetchProviders, 30000);
+  setInterval(fetchModels, 30000);
+  setInterval(fetchHealthStatus, 10000);
+  setInterval(fetchVaultStatus, 15000);
+  setInterval(fetchAPIKeys, 15000);
+  setInterval(fetchWorkflows, 5000);
+  setInterval(updateLeaderboard, 15000);
+});
+</script>
 </body>
 </html>

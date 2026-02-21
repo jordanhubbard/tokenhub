@@ -36,6 +36,9 @@ go.work.sum
 /tmp/
 docs/book/
 
+# Local bootstrap (contains API keys and local endpoints)
+bootstrap.local
+
 # Tool config
 .beads/
 .vibe/

@@ -1,0 +1,133 @@
+#!/bin/bash
+# Local provider bootstrap — copy to bootstrap.local and fill in your values.
+# bootstrap.local is gitignored and will not be committed.
+#
+# Runs automatically after: make run
+# Or manually via: make bootstrap, ./bootstrap.local
+#
+# This script configures a running TokenHub instance via its admin API.
+# It can register providers, models, API keys, and unlock the vault —
+# anything that requires secrets you don't want in env vars or git.
+
+set -e
+
+TOKENHUB_URL="${TOKENHUB_URL:-http://localhost:8080}"
+TOKENHUB_ADMIN_TOKEN="${TOKENHUB_ADMIN_TOKEN:-}"
+
+wait_for_service() {
+    local url="$1"
+    local name="$2"
+    local max_attempts=30
+    local attempt=0
+    echo "Waiting for $name at $url..."
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -sf "$url" > /dev/null 2>&1; then
+            echo "$name is ready."
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+    echo "ERROR: $name not reachable at $url after $max_attempts attempts"
+    return 1
+}
+
+th_admin() {
+    local method="${3:-POST}"
+    curl -sf -X "$method" "$TOKENHUB_URL/admin/v1/$1" \
+        ${TOKENHUB_ADMIN_TOKEN:+-H "Authorization: Bearer $TOKENHUB_ADMIN_TOKEN"} \
+        -H "Content-Type: application/json" \
+        -d "$2"
+}
+
+# ────────────────────────────────────────────────
+# Wait for TokenHub to be healthy
+# ────────────────────────────────────────────────
+
+wait_for_service "$TOKENHUB_URL/healthz" "TokenHub"
+
+# ────────────────────────────────────────────────
+# Phase 1 (optional): Unlock the vault
+# ────────────────────────────────────────────────
+
+# Uncomment to auto-unlock the vault on startup:
+# th_admin "vault/unlock" '{"admin_password":"your-vault-password-here"}'
+# echo " -> vault unlocked"
+
+# ────────────────────────────────────────────────
+# Phase 2: Register providers with API keys
+# ────────────────────────────────────────────────
+
+echo
+echo "=== Registering providers ==="
+
+# OpenAI-compatible provider example (also works for Azure OpenAI, NVIDIA NIM, etc.):
+# th_admin "providers" '{
+#     "id": "openai",
+#     "type": "openai",
+#     "endpoint": "https://api.openai.com",
+#     "api_key": "sk-..."
+# }' && echo " -> openai"
+
+# Anthropic provider example:
+# th_admin "providers" '{
+#     "id": "anthropic",
+#     "type": "anthropic",
+#     "endpoint": "https://api.anthropic.com",
+#     "api_key": "sk-ant-..."
+# }' && echo " -> anthropic"
+
+# ────────────────────────────────────────────────
+# Phase 3: Register models
+# ────────────────────────────────────────────────
+
+echo
+echo "=== Registering models ==="
+
+# th_admin "models" '{
+#     "id": "gpt-4o",
+#     "provider_id": "openai",
+#     "weight": 8,
+#     "max_context_tokens": 128000,
+#     "input_per_1k": 0.0025,
+#     "output_per_1k": 0.01,
+#     "enabled": true
+# }' && echo " -> gpt-4o"
+
+# th_admin "models" '{
+#     "id": "claude-opus-4-0520",
+#     "provider_id": "anthropic",
+#     "weight": 10,
+#     "max_context_tokens": 200000,
+#     "input_per_1k": 0.015,
+#     "output_per_1k": 0.075,
+#     "enabled": true
+# }' && echo " -> claude-opus-4-0520"
+
+# Local vLLM model example:
+# th_admin "models" '{
+#     "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+#     "provider_id": "vllm",
+#     "weight": 7,
+#     "max_context_tokens": 32000,
+#     "input_per_1k": 0.0,
+#     "output_per_1k": 0.0,
+#     "enabled": true
+# }' && echo " -> Qwen2.5-Coder-32B (vllm)"
+
+# ────────────────────────────────────────────────
+# Phase 4 (optional): Create an API key
+# ────────────────────────────────────────────────
+
+# KEY_JSON=$(th_admin "apikeys" '{"name":"my-app","scopes":"[\"chat\",\"plan\"]","monthly_budget_usd":50.0}')
+# API_KEY=$(echo "$KEY_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+# echo "API Key: ${API_KEY:0:20}..."
+
+# ────────────────────────────────────────────────
+# Done
+# ────────────────────────────────────────────────
+
+echo
+echo "=== Bootstrap complete ==="
+echo "Health: $(curl -sf "$TOKENHUB_URL/healthz")"
+echo "Admin:  $TOKENHUB_URL/admin"

@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release release-major release-minor release-patch builder setup
+.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release release-major release-minor release-patch builder setup bootstrap
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -37,7 +37,31 @@ build: builder
 # ──── Run ────
 
 run: docker
-	docker compose up
+	docker compose up -d
+	@$(MAKE) -s bootstrap
+	docker compose logs -f tokenhub
+
+# ──── Bootstrap ────
+
+bootstrap:
+	@if [ -f bootstrap.local ]; then \
+		max=50; attempt=0; \
+		while [ $$attempt -lt $$max ]; do \
+			if curl -sf http://localhost:8080/healthz > /dev/null 2>&1; then \
+				echo "TokenHub is healthy, running bootstrap.local..."; \
+				chmod +x bootstrap.local && ./bootstrap.local; \
+				break; \
+			fi; \
+			attempt=$$((attempt + 1)); \
+			sleep 2; \
+		done; \
+		if [ $$attempt -ge $$max ]; then \
+			echo "WARNING: TokenHub did not become healthy in 100s, skipping bootstrap.local"; \
+			echo "         Run 'make bootstrap' manually once TokenHub is ready."; \
+		fi; \
+	else \
+		echo "No bootstrap.local found (copy bootstrap.local.example to create one)"; \
+	fi
 
 # ──── Tests ────
 

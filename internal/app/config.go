@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -37,6 +38,9 @@ type Config struct {
 	TemporalHostPort  string
 	TemporalNamespace string
 	TemporalTaskQueue string
+
+	// External credentials file (~/.netrc analogue for provider tokens).
+	CredentialsFile string // TOKENHUB_CREDENTIALS_FILE, default ~/.tokenhub/credentials
 }
 
 func LoadConfig() (Config, error) {
@@ -65,6 +69,8 @@ func LoadConfig() (Config, error) {
 		TemporalHostPort:  getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),
 		TemporalNamespace: getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
 		TemporalTaskQueue: getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
+
+		CredentialsFile: getEnv("TOKENHUB_CREDENTIALS_FILE", defaultCredentialsPath()),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -143,4 +149,11 @@ func getEnvStringSlice(key string, def []string) []string {
 		}
 	}
 	return def
+}
+
+func defaultCredentialsPath() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".tokenhub", "credentials")
+	}
+	return ""
 }

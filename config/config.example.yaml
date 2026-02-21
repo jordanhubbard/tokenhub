@@ -30,6 +30,12 @@
 # TOKENHUB_ANTHROPIC_API_KEY=sk-ant-...   # Registers Anthropic provider adapter
 # TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000,http://vllm-2:8000  # Registers vLLM adapter
 
+# ──── External Credentials File (optional, ~/.netrc analogue) ────
+# TOKENHUB_CREDENTIALS_FILE=~/.tokenhub/credentials  # JSON file with providers/models
+# File must have mode 0600 or stricter. Format:
+# { "providers": [{"id":"...","type":"openai","endpoint":"...","api_key":"..."}],
+#   "models": [{"id":"...","provider_id":"...","weight":8,"enabled":true}] }
+
 # ──── Temporal Workflow Engine (optional) ────
 # TOKENHUB_TEMPORAL_ENABLED=false
 # TOKENHUB_TEMPORAL_HOST=localhost:7233
