@@ -5,9 +5,17 @@ FROM golang:1.24-alpine AS build
 ARG VERSION=dev
 WORKDIR /src
 
-# Install build dependencies: git, certificates, Rust/Cargo (for mdbook), golangci-lint.
-RUN apk add --no-cache git ca-certificates curl cargo && \
-    cargo install mdbook --locked --root /usr/local && \
+# Install build dependencies: git, certificates, mdbook (pre-built), golangci-lint.
+ARG TARGETARCH
+RUN apk add --no-cache git ca-certificates curl bash && \
+    MDBOOK_VERSION=0.4.44 && \
+    case "${TARGETARCH}" in \
+      amd64) MDBOOK_ARCH="x86_64-unknown-linux-musl" ;; \
+      arm64) MDBOOK_ARCH="aarch64-unknown-linux-musl" ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-${MDBOOK_ARCH}.tar.gz" \
+      | tar xz -C /usr/local/bin && \
     curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin
 
 # Download Go dependencies first (layer cache).
