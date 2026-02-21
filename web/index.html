@@ -198,6 +198,66 @@
       </div>
     </div>
 
+    <!-- Provider Management -->
+    <div class="panel full-width">
+      <h2>Providers <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="openWizard()">+ Add Provider</button></h2>
+      <div id="providers-empty" style="display:none;padding:16px;text-align:center;color:#8a8d9a">
+        <p style="font-size:14px;margin-bottom:8px">No providers configured yet.</p>
+        <p style="font-size:12px;margin-bottom:12px">Add your first LLM provider to get started. Supports OpenAI, Anthropic, vLLM, and any OpenAI-compatible API.</p>
+        <button class="btn primary" onclick="openWizard()">Add Your First Provider</button>
+      </div>
+      <div class="table-wrap" id="providers-table-wrap">
+        <table class="admin-table"><thead><tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="providers-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Model Management -->
+    <div class="panel full-width">
+      <h2>Models</h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Model ID</th><th>Provider</th><th>Weight</th><th>Context</th><th>In $/1K</th><th>Out $/1K</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="models-body"></tbody></table>
+      </div>
+      <div class="admin-form" id="model-form">
+        <div class="field"><label>Model ID</label><input type="text" id="mdl-id" placeholder="gpt-4o"></div>
+        <div class="field"><label>Provider</label><select id="mdl-provider"></select></div>
+        <div class="field"><label>Weight</label><input type="number" id="mdl-weight" value="5" min="0" max="10" style="width:60px"></div>
+        <div class="field"><label>Context</label><input type="number" id="mdl-ctx" value="128000" style="width:90px"></div>
+        <div class="field"><label>In $/1K</label><input type="number" id="mdl-in" value="0" step="0.0001" style="width:80px"></div>
+        <div class="field"><label>Out $/1K</label><input type="number" id="mdl-out" value="0" step="0.0001" style="width:80px"></div>
+        <button class="btn primary" onclick="addModel()">Add Model</button>
+      </div>
+    </div>
+
+    <!-- Routing Config + Health -->
+    <div class="panel">
+      <h2>Routing Config</h2>
+      <div class="routing-form">
+        <div class="field"><label>Default Mode</label><select id="route-mode"><option value="cheap">cheap</option><option value="normal" selected>normal</option><option value="high_confidence">high_confidence</option><option value="planning">planning</option><option value="adversarial">adversarial</option></select></div>
+        <div class="field"><label>Max Budget $</label><input type="number" id="route-budget" step="0.01" min="0" value="0.05" style="width:80px"></div>
+        <div class="field"><label>Max Latency ms</label><input type="number" id="route-latency" step="1000" min="0" value="20000" style="width:90px"></div>
+        <button class="btn primary" onclick="saveRoutingConfig()">Save</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Health Status</h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Provider</th><th>Available</th><th>Latency</th><th>Err Rate</th><th>Consec Err</th><th>State</th></tr></thead>
+        <tbody id="health-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- API Keys -->
+    <div class="panel full-width">
+      <h2>API Keys <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="showModal('create-key-modal')">+ Create Key</button></h2>
+      <div class="table-wrap">
+        <table class="admin-table"><thead><tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Budget</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="apikeys-body"></tbody></table>
+      </div>
+    </div>
+
     <!-- Topology Graph -->
     <div class="panel graph">
       <h2>Request Flow <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0">(live)</span></h2>
@@ -254,61 +314,6 @@
         <button class="btn primary" onclick="runSimulation()">Simulate</button>
       </div>
       <div class="whatif-result" id="whatif-result"></div>
-    </div>
-
-    <!-- Provider Management -->
-    <div class="panel full-width">
-      <h2>Providers <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="openWizard()">+ Add Provider</button></h2>
-      <div class="table-wrap">
-        <table class="admin-table"><thead><tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Enabled</th><th>Actions</th></tr></thead>
-        <tbody id="providers-body"></tbody></table>
-      </div>
-    </div>
-
-    <!-- Model Management -->
-    <div class="panel full-width">
-      <h2>Models</h2>
-      <div class="table-wrap">
-        <table class="admin-table"><thead><tr><th>Model ID</th><th>Provider</th><th>Weight</th><th>Context</th><th>In $/1K</th><th>Out $/1K</th><th>Enabled</th><th>Actions</th></tr></thead>
-        <tbody id="models-body"></tbody></table>
-      </div>
-      <div class="admin-form" id="model-form">
-        <div class="field"><label>Model ID</label><input type="text" id="mdl-id" placeholder="gpt-4o"></div>
-        <div class="field"><label>Provider</label><select id="mdl-provider"></select></div>
-        <div class="field"><label>Weight</label><input type="number" id="mdl-weight" value="5" min="0" max="10" style="width:60px"></div>
-        <div class="field"><label>Context</label><input type="number" id="mdl-ctx" value="128000" style="width:90px"></div>
-        <div class="field"><label>In $/1K</label><input type="number" id="mdl-in" value="0" step="0.0001" style="width:80px"></div>
-        <div class="field"><label>Out $/1K</label><input type="number" id="mdl-out" value="0" step="0.0001" style="width:80px"></div>
-        <button class="btn primary" onclick="addModel()">Add Model</button>
-      </div>
-    </div>
-
-    <!-- Routing Config + Health -->
-    <div class="panel">
-      <h2>Routing Config</h2>
-      <div class="routing-form">
-        <div class="field"><label>Default Mode</label><select id="route-mode"><option value="cheap">cheap</option><option value="normal" selected>normal</option><option value="high_confidence">high_confidence</option><option value="planning">planning</option><option value="adversarial">adversarial</option></select></div>
-        <div class="field"><label>Max Budget $</label><input type="number" id="route-budget" step="0.01" min="0" value="0.05" style="width:80px"></div>
-        <div class="field"><label>Max Latency ms</label><input type="number" id="route-latency" step="1000" min="0" value="20000" style="width:90px"></div>
-        <button class="btn primary" onclick="saveRoutingConfig()">Save</button>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Health Status</h2>
-      <div class="table-wrap">
-        <table class="admin-table"><thead><tr><th>Provider</th><th>Available</th><th>Latency</th><th>Err Rate</th><th>Consec Err</th><th>State</th></tr></thead>
-        <tbody id="health-body"></tbody></table>
-      </div>
-    </div>
-
-    <!-- API Keys -->
-    <div class="panel full-width">
-      <h2>API Keys <button class="btn primary sm" style="float:right;margin-top:-4px" onclick="showModal('create-key-modal')">+ Create Key</button></h2>
-      <div class="table-wrap">
-        <table class="admin-table"><thead><tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Budget</th><th>Enabled</th><th>Actions</th></tr></thead>
-        <tbody id="apikeys-body"></tbody></table>
-      </div>
     </div>
 
     <!-- Workflows -->
@@ -735,9 +740,14 @@ function fetchProviders() {
     const items = data.items || data || [];
     const providers = Array.isArray(items) ? items : [];
     const tbody = document.getElementById('providers-body');
+    const emptyEl = document.getElementById('providers-empty');
+    const tableEl = document.getElementById('providers-table-wrap');
     if (providers.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="color:#8a8d9a;text-align:center">No providers</td></tr>';
+      emptyEl.style.display = 'block';
+      tableEl.style.display = 'none';
     } else {
+      emptyEl.style.display = 'none';
+      tableEl.style.display = 'block';
       tbody.innerHTML = providers.map(p => `<tr>
         <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px">${p.base_url||'-'}</td><td>${p.cred_store||'none'}</td>
         <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
