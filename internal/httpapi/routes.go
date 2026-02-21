@@ -121,8 +121,9 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	// JSON API for programmatic access.
 	r.Get("/admin/api/info", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"tokenhub":     "admin",
-			"vault_locked": d.Vault.IsLocked(),
+			"tokenhub":          "admin",
+			"vault_locked":      d.Vault.IsLocked(),
+			"vault_initialized": d.Vault.Salt() != nil,
 		})
 	})
 

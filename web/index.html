@@ -860,21 +860,39 @@ function updateWeight(el) {
 // ============================
 // Vault, Routing, Health, Audit, Logs, Keys, Workflows
 // ============================
+let vaultInitialized = false;
 function fetchVaultStatus() {
   fetch('/admin/api/info').then(r=>r.json()).then(data => {
     const locked = data.vault_locked;
+    vaultInitialized = !!data.vault_initialized;
     document.getElementById('vault-indicator').className = 'vault-indicator ' + (locked ? 'locked' : 'unlocked');
-    document.getElementById('vault-label').textContent = locked ? 'Locked' : 'Unlocked';
-    document.getElementById('vault-controls').innerHTML = locked
-      ? '<input type="password" id="vault-password" placeholder="Admin password"> <button class="btn primary" onclick="vaultUnlock()">Unlock</button>'
-      : '<button class="btn danger" onclick="vaultLock()">Lock</button>';
+    if (!locked) {
+      document.getElementById('vault-label').textContent = 'Unlocked';
+      document.getElementById('vault-controls').innerHTML = '<button class="btn danger" onclick="vaultLock()">Lock</button>';
+    } else if (!vaultInitialized) {
+      document.getElementById('vault-label').textContent = 'First-Time Setup';
+      document.getElementById('vault-controls').innerHTML =
+        '<div style="max-width:420px">' +
+        '<p style="font-size:13px;color:#ffc107;margin-bottom:8px">The vault has not been initialized yet. Choose a master password (8+ characters) to encrypt your provider API keys and secrets.</p>' +
+        '<p style="font-size:12px;color:#8a8d9a;margin-bottom:10px">This password will be required each time you restart TokenHub. Store it somewhere safe.</p>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+        '<input type="password" id="vault-password" placeholder="Choose a master password (8+ chars)" style="flex:1;background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:4px;font-size:13px">' +
+        ' <button class="btn primary" onclick="vaultUnlock()">Initialize Vault</button>' +
+        '</div></div>';
+    } else {
+      document.getElementById('vault-label').textContent = 'Locked';
+      document.getElementById('vault-controls').innerHTML =
+        '<input type="password" id="vault-password" placeholder="Enter master password" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:4px;font-size:13px;width:220px">' +
+        ' <button class="btn primary" onclick="vaultUnlock()">Unlock</button>';
+    }
   }).catch(() => {});
 }
 function vaultUnlock() {
   const pw = document.getElementById('vault-password');
   if (!pw?.value) return;
+  if (pw.value.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
   fetch('/admin/v1/vault/unlock', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({admin_password:pw.value}) })
-    .then(r => { if (!r.ok) throw 0; showToast('Unlocked','success'); fetchVaultStatus(); })
+    .then(r => { if (!r.ok) throw 0; showToast(vaultInitialized ? 'Unlocked' : 'Vault initialized and unlocked', 'success'); fetchVaultStatus(); })
     .catch(() => showToast('Failed','error'));
 }
 function vaultLock() {
