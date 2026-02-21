@@ -8,9 +8,9 @@ TokenHub is configured entirely via environment variables. All variables are opt
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOKENHUB_LISTEN_ADDR` | `:8080` | HTTP server listen address |
+| `TOKENHUB_LISTEN_ADDR` | `:8080` | HTTP server listen address (binds all interfaces) |
 | `TOKENHUB_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-| `TOKENHUB_DB_DSN` | `file:/data/tokenhub.sqlite` | SQLite database path |
+| `TOKENHUB_DB_DSN` | `/data/tokenhub.sqlite` | SQLite database path |
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
 | `TOKENHUB_PROVIDER_TIMEOUT_SECS` | `30` | HTTP timeout for provider API calls |
 
@@ -38,6 +38,8 @@ TokenHub is configured entirely via environment variables. All variables are opt
 | `TOKENHUB_OPENAI_API_KEY` | — | OpenAI API key (registers OpenAI provider) |
 | `TOKENHUB_ANTHROPIC_API_KEY` | — | Anthropic API key (registers Anthropic provider) |
 | `TOKENHUB_VLLM_ENDPOINTS` | — | Comma-separated vLLM endpoint URLs |
+| `TOKENHUB_EXTRA_PROVIDERS` | — | JSON array of additional OpenAI-compatible providers |
+| `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
 
 At least one provider must be configured for TokenHub to route requests.
 
@@ -49,6 +51,55 @@ At least one provider must be configured for TokenHub to route requests.
 | `TOKENHUB_TEMPORAL_HOST` | `localhost:7233` | Temporal server host:port |
 | `TOKENHUB_TEMPORAL_NAMESPACE` | `tokenhub` | Temporal namespace |
 | `TOKENHUB_TEMPORAL_TASK_QUEUE` | `tokenhub-tasks` | Temporal task queue name |
+
+### OpenTelemetry (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `TOKENHUB_OTEL_ENDPOINT` | `localhost:4318` | OTLP exporter endpoint |
+| `TOKENHUB_OTEL_SERVICE_NAME` | `tokenhub` | Service name for traces |
+
+## External Credentials File
+
+The `~/.tokenhub/credentials` file provides a git-safe way to configure providers and models at startup. The file must have `0600` permissions.
+
+```json
+{
+  "providers": [
+    {
+      "id": "openai",
+      "type": "openai",
+      "endpoint": "https://api.openai.com",
+      "api_key": "sk-..."
+    }
+  ],
+  "models": [
+    {
+      "id": "gpt-4o",
+      "provider_id": "openai",
+      "weight": 8,
+      "max_context_tokens": 128000,
+      "input_per_1k": 0.0025,
+      "output_per_1k": 0.01,
+      "enabled": true
+    }
+  ]
+}
+```
+
+## Extra Providers (JSON)
+
+The `TOKENHUB_EXTRA_PROVIDERS` variable accepts a JSON array of OpenAI-compatible providers:
+
+```bash
+export TOKENHUB_EXTRA_PROVIDERS='[
+  {"id": "nvidia-nim", "endpoint": "https://integrate.api.nvidia.com", "api_key": "nvapi-..."},
+  {"id": "azure-openai", "endpoint": "https://mydeployment.openai.azure.com", "api_key": "..."}
+]'
+```
+
+Each entry requires `id`, `endpoint`, and `api_key`.
 
 ## Example Configuration
 
@@ -64,7 +115,7 @@ export TOKENHUB_OPENAI_API_KEY="sk-..."
 ```bash
 export TOKENHUB_LISTEN_ADDR=":8080"
 export TOKENHUB_LOG_LEVEL="info"
-export TOKENHUB_DB_DSN="file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+export TOKENHUB_DB_DSN="/data/tokenhub.sqlite"
 export TOKENHUB_VAULT_ENABLED="true"
 export TOKENHUB_PROVIDER_TIMEOUT_SECS="30"
 
@@ -88,30 +139,19 @@ export TOKENHUB_VLLM_ENDPOINTS="http://vllm-1:8000,http://vllm-2:8000"
 export TOKENHUB_TEMPORAL_ENABLED="true"
 export TOKENHUB_TEMPORAL_HOST="temporal:7233"
 
+# OpenTelemetry (optional)
+export TOKENHUB_OTEL_ENABLED="true"
+export TOKENHUB_OTEL_ENDPOINT="otel-collector:4318"
+
 ./bin/tokenhub
 ```
 
-## SQLite DSN Options
-
-The database DSN supports SQLite pragmas for tuning:
-
-```
-file:/path/to/db.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
-```
-
-| Pragma | Recommended | Description |
-|--------|-------------|-------------|
-| `busy_timeout` | 5000 | Wait ms for locks instead of failing |
-| `journal_mode` | WAL | Enables concurrent reads during writes |
-| `synchronous` | NORMAL | Balance durability and speed |
-| `cache_size` | -20000 | 20MB page cache |
-
 ## Runtime Configuration
 
-The following settings can be changed at runtime via the admin API without restarting:
+The following settings can be changed at runtime via the admin API or `tokenhubctl` without restarting:
 
-- **Routing defaults**: `PUT /admin/v1/routing-config`
-- **Models**: `POST/PATCH/DELETE /admin/v1/models`
-- **Providers**: `POST/DELETE /admin/v1/providers`
-- **API keys**: `POST/PATCH/DELETE /admin/v1/apikeys`
-- **TSDB retention**: `PUT /admin/v1/tsdb/retention`
+- **Routing defaults**: `PUT /admin/v1/routing-config` or `tokenhubctl routing set`
+- **Models**: `POST/PATCH/DELETE /admin/v1/models` or `tokenhubctl model add/edit/delete`
+- **Providers**: `POST/PATCH/DELETE /admin/v1/providers` or `tokenhubctl provider add/edit/delete`
+- **API keys**: `POST/PATCH/DELETE /admin/v1/apikeys` or `tokenhubctl apikey create/edit/delete`
+- **TSDB retention**: `PUT /admin/v1/tsdb/retention` or `tokenhubctl tsdb`

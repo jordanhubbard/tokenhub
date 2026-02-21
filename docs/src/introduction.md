@@ -50,6 +50,7 @@ TokenHub is an intelligent LLM routing proxy that sits between your applications
 | Send your first request | [Quick Start](quickstart.md) |
 | Configure providers | [Provider Management](admin/providers.md) |
 | Set up API keys | [API Key Management](admin/api-keys.md) |
+| Command-line admin | [tokenhubctl CLI](admin/tokenhubctl.md) |
 | Deploy with Docker | [Docker & Compose](deployment/docker.md) |
 | Full API reference | [API Reference](reference/api.md) |
 | Monitor the system | [Monitoring](admin/monitoring.md) |

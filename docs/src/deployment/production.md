@@ -121,6 +121,24 @@ TokenHub is a single-process application with SQLite. For higher throughput:
 
 For very high throughput (>1000 req/s), consider migrating the store to PostgreSQL (implement the `Store` interface for a new backend).
 
+## CLI Administration
+
+Use `tokenhubctl` for scriptable administration and health checks:
+
+```bash
+# Quick status check
+tokenhubctl status
+
+# Verify providers and models
+tokenhubctl provider list
+tokenhubctl model list
+
+# Watch for issues in real time
+tokenhubctl events
+```
+
+See [tokenhubctl CLI](../admin/tokenhubctl.md) for the full command reference.
+
 ## Environment Variables Summary
 
 See [Configuration Reference](configuration.md) for the complete list of all environment variables and their defaults.

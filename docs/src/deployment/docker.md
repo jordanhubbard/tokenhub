@@ -9,14 +9,14 @@ TokenHub provides a Dockerfile for container builds and a Docker Compose file fo
 ```bash
 make docker
 # or
-docker build -t tokenhub .
+docker buildx build --load -t tokenhub .
 ```
 
 The Dockerfile uses a multi-stage build:
-1. **Build stage**: `golang:1.24-alpine` — compiles the Go binary
-2. **Runtime stage**: `gcr.io/distroless/static:nonroot` — minimal secure runtime
+1. **Build stage**: `golang:1.24-alpine` — compiles the Go binary and builds mdbook documentation
+2. **Runtime stage**: `alpine:3.21` — lightweight runtime with curl for health checks
 
-The final image is ~15MB and runs as a non-root user.
+The final image runs as a non-root `tokenhub` user.
 
 ### Run
 
@@ -29,7 +29,7 @@ docker run -d \
 ```
 
 The container expects:
-- **Port 8080**: HTTP server
+- **Port 8080**: HTTP server (binds all interfaces by default)
 - **Volume `/data`**: SQLite database persistence
 
 ## Docker Compose
@@ -54,21 +54,23 @@ This starts:
 
 ```yaml
 tokenhub:
-  build: .
+  image: tokenhub:v0.2.3
   ports:
     - "8080:8080"
   environment:
-    - TOKENHUB_DB_DSN=file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+    - TOKENHUB_LISTEN_ADDR=:8080
+    - TOKENHUB_DB_DSN=/data/tokenhub.sqlite
+    - TOKENHUB_VAULT_ENABLED=true
     - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
     - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
     - TOKENHUB_VLLM_ENDPOINTS=${TOKENHUB_VLLM_ENDPOINTS}
-    - TOKENHUB_TEMPORAL_ENABLED=true
-    - TOKENHUB_TEMPORAL_HOST=temporal:7233
+    - TOKENHUB_ADMIN_TOKEN=${TOKENHUB_ADMIN_TOKEN}
   volumes:
     - tokenhub_data:/data
-  depends_on:
-    - temporal
+  restart: unless-stopped
 ```
+
+Note: The `TOKENHUB_DB_DSN` should be a plain path (e.g., `/data/tokenhub.sqlite`) when using `modernc.org/sqlite` (the pure-Go driver). SQLite pragmas are applied programmatically, not via DSN query parameters.
 
 #### Temporal
 
@@ -98,6 +100,7 @@ Create a `.env` file for sensitive values:
 TOKENHUB_OPENAI_API_KEY=sk-...
 TOKENHUB_ANTHROPIC_API_KEY=sk-ant-...
 TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000
+TOKENHUB_ADMIN_TOKEN=your-secret-admin-token
 ```
 
 ### Without Temporal
@@ -109,6 +112,16 @@ docker compose up -d tokenhub
 ```
 
 Or set `TOKENHUB_TEMPORAL_ENABLED=false`.
+
+### Bootstrap After Start
+
+The `make run` target starts the container, waits for it to become healthy, and then runs `bootstrap.local` (if present) to configure providers and models via the admin API:
+
+```bash
+cp bootstrap.local.example bootstrap.local
+# Edit with your secrets
+make run
+```
 
 ## Health Check
 

@@ -28,7 +28,7 @@ docker compose up -d tokenhub
 git clone https://github.com/jordanhubbard/tokenhub.git
 cd tokenhub
 
-# Build
+# Build (produces bin/tokenhub and bin/tokenhubctl)
 make build
 
 # Set your provider API keys
@@ -38,12 +38,18 @@ export TOKENHUB_OPENAI_API_KEY="sk-..."
 ./bin/tokenhub
 ```
 
-TokenHub starts on port 8080 by default.
+TokenHub starts on port 8080 by default, binding to all interfaces.
 
 ## Verify It's Running
 
 ```bash
 curl http://localhost:8080/healthz
+```
+
+Or:
+
+```bash
+tokenhubctl status
 ```
 
 Expected response:
@@ -60,6 +66,12 @@ TokenHub issues its own API keys to clients. Provider keys stay in the vault.
 curl -X POST http://localhost:8080/admin/v1/apikeys \
   -H "Content-Type: application/json" \
   -d '{"name": "my-first-key", "scopes": "[\"chat\",\"plan\"]"}'
+```
+
+Or with `tokenhubctl`:
+
+```bash
+tokenhubctl apikey create '{"name":"my-first-key","scopes":"[\"chat\",\"plan\"]"}'
 ```
 
 Save the returned `key` value. It is shown only once:
@@ -92,7 +104,7 @@ Response:
 
 ```json
 {
-  "negotiated_model": "gpt-4",
+  "negotiated_model": "gpt-4o",
   "estimated_cost_usd": 0.0023,
   "routing_reason": "routed-weight-8",
   "response": {
@@ -135,9 +147,23 @@ This runs a plan-critique-refine loop using multiple models.
 
 Navigate to [http://localhost:8080/admin](http://localhost:8080/admin) to access the built-in admin dashboard where you can manage providers, models, routing policies, and monitor request flow in real time.
 
+The setup wizard will guide you through adding your first provider if none are configured.
+
+## Check the System from the CLI
+
+```bash
+# See all registered providers and models
+tokenhubctl provider list
+tokenhubctl model list
+
+# Watch routing decisions in real time
+tokenhubctl events
+```
+
 ## Next Steps
 
 - [Chat API details](user/chat-api.md) for request options, policies, and parameters
 - [Provider Management](admin/providers.md) to configure additional providers
 - [Routing Configuration](admin/routing.md) to tune model selection behavior
+- [tokenhubctl CLI](admin/tokenhubctl.md) for command-line administration
 - [Docker deployment](deployment/docker.md) for production setup

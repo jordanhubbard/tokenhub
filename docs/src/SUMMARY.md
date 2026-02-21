@@ -23,6 +23,7 @@
 - [API Key Management](admin/api-keys.md)
 - [Monitoring & Observability](admin/monitoring.md)
 - [Admin UI](admin/ui.md)
+- [tokenhubctl CLI](admin/tokenhubctl.md)
 
 # Developer Guide
 

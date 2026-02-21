@@ -13,7 +13,7 @@ TokenHub registers these default models at startup:
 | `claude-opus` | anthropic | 10 | 200,000 | $0.015 | $0.075 |
 | `claude-sonnet` | anthropic | 7 | 200,000 | $0.003 | $0.015 |
 
-Defaults are overridden if persisted models exist in the database.
+Defaults are overridden if persisted models exist in the database or are registered via the credentials file.
 
 ## API Operations
 
@@ -33,6 +33,12 @@ curl -X POST http://localhost:8080/admin/v1/models \
   }'
 ```
 
+Or with `tokenhubctl`:
+
+```bash
+tokenhubctl model add '{"id":"gpt-4-turbo","provider_id":"openai","weight":7,"max_context_tokens":128000,"input_per_1k":0.01,"output_per_1k":0.03,"enabled":true}'
+```
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | Yes | Model identifier (must match provider's model name) |
@@ -43,18 +49,23 @@ curl -X POST http://localhost:8080/admin/v1/models \
 | `output_per_1k` | float | Yes | Cost per 1,000 output tokens in USD |
 | `enabled` | bool | Yes | Whether the model is available for routing |
 
+Model IDs can contain slashes (e.g., `Qwen/Qwen2.5-Coder-32B-Instruct`, `nvidia/openai/gpt-oss-20b`). The API handles them correctly.
+
 ### List Models
 
 ```bash
 curl http://localhost:8080/admin/v1/models
+tokenhubctl model list
 ```
+
+The `tokenhubctl model list` command merges models from both the persistent store and the runtime engine, so models registered via environment variables or the credentials file are also shown.
 
 ### Patch a Model
 
 Update individual fields without resending the full configuration:
 
 ```bash
-curl -X PATCH http://localhost:8080/admin/v1/models/gpt-4 \
+curl -X PATCH http://localhost:8080/admin/v1/models/gpt-4o \
   -H "Content-Type: application/json" \
   -d '{
     "weight": 9,
@@ -63,12 +74,30 @@ curl -X PATCH http://localhost:8080/admin/v1/models/gpt-4 \
   }'
 ```
 
-Patchable fields: `weight`, `enabled`, `input_per_1k`, `output_per_1k`.
+Or:
+
+```bash
+tokenhubctl model edit gpt-4o '{"weight":9}'
+```
+
+Patchable fields: `weight`, `enabled`, `input_per_1k`, `output_per_1k`, `max_context_tokens`.
+
+Runtime-only models (those registered via env vars or credentials file but not in the store) can also be patched. The first patch creates a store record seeded from the engine's runtime data.
+
+### Enable / Disable a Model
+
+Quick shortcuts via `tokenhubctl`:
+
+```bash
+tokenhubctl model enable gpt-4o
+tokenhubctl model disable gpt-4o-legacy
+```
 
 ### Delete a Model
 
 ```bash
 curl -X DELETE http://localhost:8080/admin/v1/models/gpt-4-legacy
+tokenhubctl model delete gpt-4-legacy
 ```
 
 ## Weight Guidelines

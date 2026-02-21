@@ -148,15 +148,27 @@ Create or update a provider.
 
 **Body**: `{"id": "string", "type": "openai|anthropic|vllm", "enabled": true, "base_url": "string", "cred_store": "env|vault|none", "api_key": "string"}`
 
-**Response**: `200 OK` → `{"ok": true}`
+**Response**: `200 OK` → `{"ok": true, "cred_store": "vault"}`
 
 ---
 
 ### GET /admin/v1/providers
 
-List all providers.
+List all providers (from the persistent store).
 
-**Response**: `200 OK` → `[{"id": "string", "type": "string", "enabled": true, "base_url": "string", "cred_store": "string"}]`
+**Query**: `?limit=N&offset=N`
+
+**Response**: `200 OK` → `{"items": [{provider objects}], "total": N, "limit": N, "offset": N}`
+
+---
+
+### PATCH /admin/v1/providers/{id}
+
+Partial update of a provider. Runtime-only providers (not in the store) are automatically created in the store when first patched.
+
+**Body**: `{"type": "string", "base_url": "string", "enabled": true, "api_key": "string", "cred_store": "string"}`
+
+**Response**: `200 OK` → `{"ok": true, "provider": {updated provider}}`
 
 ---
 
@@ -168,11 +180,19 @@ Delete a provider.
 
 ---
 
+### GET /admin/v1/providers/{id}/discover
+
+Discover models available from a provider by querying its `/v1/models` endpoint.
+
+**Response**: `200 OK` → `{"models": [{"id": "string", "registered": false}]}`
+
+---
+
 ## Admin - Models
 
 ### POST /admin/v1/models
 
-Create or update a model.
+Create or update a model. Registers the model in both the runtime engine and persistent store.
 
 **Body**: `{"id": "string", "provider_id": "string", "weight": 5, "max_context_tokens": 128000, "input_per_1k": 0.01, "output_per_1k": 0.03, "enabled": true}`
 
@@ -182,25 +202,27 @@ Create or update a model.
 
 ### GET /admin/v1/models
 
-List all models.
+List all models (from the persistent store).
 
-**Response**: `200 OK` → `[{model objects}]`
+**Query**: `?limit=N&offset=N`
+
+**Response**: `200 OK` → `{"items": [{model objects}], "total": N, "limit": N, "offset": N}`
 
 ---
 
 ### PATCH /admin/v1/models/{id}
 
-Partial model update.
+Partial model update. Model IDs can contain slashes (e.g., `Qwen/Qwen2.5-Coder-32B-Instruct`). Runtime-only models are automatically seeded into the store from engine data on first patch.
 
-**Body**: `{"weight": 7, "enabled": true, "input_per_1k": 0.015, "output_per_1k": 0.035}`
+**Body**: `{"weight": 7, "enabled": true, "input_per_1k": 0.015, "output_per_1k": 0.035, "max_context_tokens": 128000}`
 
-**Response**: `200 OK` → `{"ok": true}`
+**Response**: `200 OK` → `{"ok": true, "model": {updated model}}`
 
 ---
 
 ### DELETE /admin/v1/models/{id}
 
-Delete a model.
+Delete a model. Model IDs with slashes are supported.
 
 **Response**: `200 OK` → `{"ok": true}`
 
@@ -226,13 +248,23 @@ Set routing defaults.
 
 ---
 
+### POST /admin/v1/routing/simulate
+
+Run a what-if routing simulation without sending a real request.
+
+**Body**: `{"mode": "string", "token_count": 500, "max_budget_usd": 0.05, "min_weight": 0, "model_hint": "string"}`
+
+**Response**: `200 OK` → `{"decision": {decision object}, "eligible": [{model objects}]}`
+
+---
+
 ## Admin - API Keys
 
 ### POST /admin/v1/apikeys
 
 Create a new API key.
 
-**Body**: `{"name": "string", "scopes": "[\"chat\",\"plan\"]", "rotation_days": 0, "expires_in": "720h"}`
+**Body**: `{"name": "string", "scopes": "[\"chat\",\"plan\"]", "rotation_days": 0, "expires_in": "720h", "monthly_budget_usd": 50.0}`
 
 **Response**: `200 OK` → `{"ok": true, "key": "tokenhub_...", "id": "string", "prefix": "string", "warning": "string"}`
 
@@ -310,9 +342,20 @@ Paginated reward entries.
 
 ### GET /admin/v1/engine/models
 
-Runtime model registry and adapter list.
+Runtime model registry, adapter list, and adapter metadata.
 
-**Response**: `200 OK` → `{"models": [{model objects}], "adapters": ["string"]}`
+**Response**: `200 OK`
+```json
+{
+  "models": [{model objects}],
+  "total": 7,
+  "adapters": ["openai", "anthropic", "vllm"],
+  "adapter_info": [
+    {"id": "openai", "health_endpoint": "https://api.openai.com/v1/models"},
+    {"id": "vllm", "health_endpoint": "http://vllm-1:8000/health"}
+  ]
+}
+```
 
 ---
 
@@ -380,10 +423,19 @@ Server-Sent Events stream.
 
 ### GET /admin
 
-Serves the embedded admin SPA.
+Serves the embedded admin SPA. The root URL (`/`) redirects here.
 
 ### GET /admin/api/info
 
 Admin status information.
 
-**Response**: `200 OK` → `{"tokenhub": "admin", "vault_locked": true}`
+**Response**: `200 OK`
+```json
+{
+  "tokenhub": "admin",
+  "vault_locked": true,
+  "vault_initialized": false
+}
+```
+
+The `vault_initialized` field indicates whether the vault has ever been set up (salt exists). The UI uses this to distinguish first-time setup from a normal unlock prompt.

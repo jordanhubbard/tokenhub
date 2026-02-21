@@ -142,6 +142,42 @@
   </div>
   <div id="toast" class="toast"></div>
 
+  <!-- ===== EDIT PROVIDER MODAL ===== -->
+  <div id="edit-provider-modal" class="modal-overlay">
+    <div class="modal">
+      <h3 id="edit-provider-title">Edit Provider</h3>
+      <input type="hidden" id="edit-prov-id">
+      <div class="field"><label>Provider ID</label><input type="text" id="edit-prov-id-display" disabled></div>
+      <div class="field"><label>Type</label><select id="edit-prov-type"><option value="openai">OpenAI (or compatible)</option><option value="anthropic">Anthropic</option><option value="vllm">vLLM (local)</option></select></div>
+      <div class="field"><label>Base URL</label><input type="text" id="edit-prov-url" placeholder="https://api.openai.com"></div>
+      <div class="field"><label>API Key (leave blank to keep existing)</label><input type="password" id="edit-prov-key" placeholder="sk-..."></div>
+      <div class="field"><label>Enabled</label><select id="edit-prov-enabled"><option value="true">Yes</option><option value="false">No</option></select></div>
+      <div class="actions">
+        <button class="btn" onclick="hideModal('edit-provider-modal')">Cancel</button>
+        <button class="btn primary" onclick="saveProvider()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== EDIT MODEL MODAL ===== -->
+  <div id="edit-model-modal" class="modal-overlay">
+    <div class="modal">
+      <h3>Edit Model</h3>
+      <input type="hidden" id="edit-mdl-id">
+      <div class="field"><label>Model ID</label><input type="text" id="edit-mdl-id-display" disabled></div>
+      <div class="field"><label>Provider</label><input type="text" id="edit-mdl-provider" disabled></div>
+      <div class="field"><label>Weight (1-10)</label><input type="number" id="edit-mdl-weight" min="0" max="10"></div>
+      <div class="field"><label>Max Context Tokens</label><input type="number" id="edit-mdl-ctx" min="0"></div>
+      <div class="field"><label>Input $/1K tokens</label><input type="number" id="edit-mdl-in" step="0.0001" min="0"></div>
+      <div class="field"><label>Output $/1K tokens</label><input type="number" id="edit-mdl-out" step="0.0001" min="0"></div>
+      <div class="field"><label>Enabled</label><select id="edit-mdl-enabled"><option value="true">Yes</option><option value="false">No</option></select></div>
+      <div class="actions">
+        <button class="btn" onclick="hideModal('edit-model-modal')">Cancel</button>
+        <button class="btn primary" onclick="saveModel()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== WIZARD MODAL ===== -->
   <div id="wizard-modal" class="modal-overlay">
     <div class="modal" style="min-width:520px">
@@ -735,29 +771,47 @@ function runSimulation() {
 // ============================
 // Provider + Model Management
 // ============================
+let adapterInfoMap = {};
 function fetchProviders() {
-  // Merge store-persisted providers with engine-runtime providers so that
-  // env-var and credentials-file providers show up in the UI too.
   Promise.all([
     fetch('/admin/v1/providers').then(r => r.json()).catch(() => ({ items: [] })),
-    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ adapters: [], models: [] }))
+    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ adapters: [], models: [], adapter_info: [] }))
   ]).then(([storeData, engineData]) => {
     const storeProviders = Array.isArray(storeData.items) ? storeData.items : [];
-    const storeIds = new Set(storeProviders.map(p => p.id));
+    const storeMap = {};
+    storeProviders.forEach(p => { storeMap[p.id] = p; });
     const engineAdapters = engineData.adapters || [];
     const engineModels = engineData.models || [];
+    const adapterInfo = engineData.adapter_info || [];
 
-    // Derive runtime-only providers from engine models (not in store).
-    const runtimeProviderIds = new Set();
-    engineModels.forEach(m => { if (!storeIds.has(m.provider_id)) runtimeProviderIds.add(m.provider_id); });
-    engineAdapters.forEach(a => { if (!storeIds.has(a)) runtimeProviderIds.add(a); });
-
-    const runtimeProviders = [...runtimeProviderIds].map(id => {
-      const models = engineModels.filter(m => m.provider_id === id);
-      return { id, type: 'env', base_url: '', cred_store: 'env', enabled: true, _runtime: true, _modelCount: models.length };
+    // Build adapter info lookup (id -> health_endpoint -> derive base URL).
+    adapterInfoMap = {};
+    adapterInfo.forEach(a => {
+      let base = a.health_endpoint || '';
+      base = base.replace(/\/v1\/(models|messages)$/, '').replace(/\/health$/, '').replace(/\/v1$/, '');
+      adapterInfoMap[a.id] = base;
     });
 
-    const allProviders = [...storeProviders, ...runtimeProviders];
+    // Derive all unique provider IDs from engine models + adapters.
+    const allProviderIds = new Set([...Object.keys(storeMap), ...engineAdapters]);
+    engineModels.forEach(m => allProviderIds.add(m.provider_id));
+
+    const allProviders = [...allProviderIds].map(id => {
+      const sp = storeMap[id];
+      const models = engineModels.filter(m => m.provider_id === id);
+      const baseUrl = (sp && sp.base_url) || adapterInfoMap[id] || '';
+      const isRuntime = !sp;
+      return {
+        id,
+        type: sp ? sp.type : (engineAdapters.includes(id) ? 'openai' : 'env'),
+        base_url: baseUrl,
+        cred_store: sp ? (sp.cred_store || 'none') : 'env',
+        enabled: sp ? sp.enabled : true,
+        _runtime: isRuntime,
+        _modelCount: models.length
+      };
+    });
+
     const tbody = document.getElementById('providers-body');
     const emptyEl = document.getElementById('providers-empty');
     const tableEl = document.getElementById('providers-table-wrap');
@@ -768,24 +822,21 @@ function fetchProviders() {
       emptyEl.style.display = 'none';
       tableEl.style.display = 'block';
       tbody.innerHTML = allProviders.map(p => {
-        const src = p._runtime ? '<span style="color:#64b5f6;font-size:11px">runtime</span>' : p.cred_store || 'none';
-        const actions = p._runtime
-          ? `<span style="color:#666;font-size:11px">${p._modelCount} model(s)</span>`
-          : `<button class="btn sm" onclick="discoverModels('${p.id}')">Discover</button> <button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button>`;
+        const src = p._runtime ? '<span style="color:#64b5f6;font-size:11px">runtime</span>' : p.cred_store;
+        const urlDisplay = p.base_url ? p.base_url : '<span style="color:#666">-</span>';
         return `<tr>
-          <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px">${p.base_url||'-'}</td><td>${src}</td>
+          <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.base_url}">${urlDisplay}</td><td>${src}</td>
           <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
-          <td>${actions}</td>
+          <td><button class="btn sm" onclick="editProvider('${p.id}','${p.type}','${encodeURIComponent(p.base_url)}',${p.enabled})">Edit</button> <button class="btn sm" onclick="discoverModels('${p.id}')">Discover</button> <button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button></td>
         </tr>`;
       }).join('');
     }
     // Update model form provider dropdown.
     const sel = document.getElementById('mdl-provider');
     const cur = sel.value;
-    const allIds = allProviders.map(p => p.id);
-    sel.innerHTML = allIds.map(id => `<option value="${id}" ${id===cur?'selected':''}>${id}</option>`).join('');
+    sel.innerHTML = allProviders.map(p => `<option value="${p.id}" ${p.id===cur?'selected':''}>${p.id}</option>`).join('');
 
-    // Populate topology graph with known providers and models.
+    // Populate topology graph.
     allProviders.forEach(p => ensureNode(p.id, p.id, 'provider'));
     engineModels.forEach(m => {
       ensureNode(m.provider_id, m.provider_id, 'provider');
@@ -797,6 +848,32 @@ function fetchProviders() {
     });
     cy.layout({ name: 'cose', animate: true, animationDuration: 400, nodeRepulsion: () => 8000 }).run();
   });
+}
+
+function editProvider(id, type, encodedUrl, enabled) {
+  document.getElementById('edit-prov-id').value = id;
+  document.getElementById('edit-prov-id-display').value = id;
+  document.getElementById('edit-prov-type').value = type || 'openai';
+  document.getElementById('edit-prov-url').value = decodeURIComponent(encodedUrl || '');
+  document.getElementById('edit-prov-key').value = '';
+  document.getElementById('edit-prov-enabled').value = String(!!enabled);
+  document.getElementById('edit-provider-title').textContent = 'Edit Provider: ' + id;
+  showModal('edit-provider-modal');
+}
+
+function saveProvider() {
+  const id = document.getElementById('edit-prov-id').value;
+  const body = {
+    type: document.getElementById('edit-prov-type').value,
+    base_url: document.getElementById('edit-prov-url').value.trim(),
+    enabled: document.getElementById('edit-prov-enabled').value === 'true'
+  };
+  const key = document.getElementById('edit-prov-key').value.trim();
+  if (key) body.api_key = key;
+  fetch('/admin/v1/providers/' + encodeURIComponent(id), { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => { showToast('Provider updated', 'success'); hideModal('edit-provider-modal'); fetchProviders(); })
+    .catch(() => showToast('Failed to update provider', 'error'));
 }
 
 function deleteProvider(id) {
@@ -815,21 +892,31 @@ function discoverModels(provId) {
 }
 
 function fetchModels() {
-  fetch('/admin/v1/models').then(r => r.json()).then(data => {
-    const items = data.items || data || [];
-    const models = Array.isArray(items) ? items : [];
+  // Merge store models with engine models so runtime-registered models appear.
+  Promise.all([
+    fetch('/admin/v1/models').then(r => r.json()).catch(() => ({ items: [] })),
+    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ models: [] }))
+  ]).then(([storeData, engineData]) => {
+    const storeModels = Array.isArray(storeData.items) ? storeData.items : [];
+    const storeIds = new Set(storeModels.map(m => m.id));
+    const engineModels = engineData.models || [];
+
+    // Add engine-only models not in store.
+    const runtimeModels = engineModels.filter(m => !storeIds.has(m.id));
+    const allModels = [...storeModels, ...runtimeModels];
+
     const tbody = document.getElementById('models-body');
-    if (models.length === 0) {
+    if (allModels.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8" style="color:#8a8d9a;text-align:center">No models</td></tr>';
     } else {
-      tbody.innerHTML = models.map(m => `<tr>
+      tbody.innerHTML = allModels.map(m => `<tr>
         <td style="font-family:monospace;font-size:12px">${m.id}</td><td>${m.provider_id}</td><td>${m.weight}</td><td>${m.max_context_tokens||'-'}</td>
         <td>${m.input_per_1k}</td><td>${m.output_per_1k}</td>
         <td><span class="toggle-switch" onclick="toggleModel('${m.id}',${!m.enabled})">${m.enabled?'&#9989;':'&#10060;'}</span></td>
-        <td><button class="btn danger sm" onclick="deleteModel('${m.id}')">Delete</button></td>
+        <td><button class="btn sm" onclick="editModel('${m.id}','${m.provider_id}',${m.weight},${m.max_context_tokens||0},${m.input_per_1k},${m.output_per_1k},${m.enabled})">Edit</button> <button class="btn danger sm" onclick="deleteModel('${m.id}')">Delete</button></td>
       </tr>`).join('');
     }
-  }).catch(() => {});
+  });
 }
 
 function addModel() {
@@ -851,17 +938,44 @@ function addModel() {
 
 function deleteModel(id) {
   if (!confirm('Delete model "' + id + '"?')) return;
-  fetch('/admin/v1/models/' + encodeURIComponent(id), { method: 'DELETE' })
+  fetch('/admin/v1/models/' + id, { method: 'DELETE' })
     .then(r => { if (!r.ok) throw 0; return r.json(); })
     .then(() => { showToast('Deleted', 'success'); fetchModels(); })
     .catch(() => showToast('Failed', 'error'));
 }
 
 function toggleModel(id, enabled) {
-  fetch('/admin/v1/models/' + encodeURIComponent(id), { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) })
+  fetch('/admin/v1/models/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) })
     .then(r => { if (!r.ok) throw 0; return r.json(); })
     .then(() => fetchModels())
     .catch(() => showToast('Failed', 'error'));
+}
+
+function editModel(id, providerId, weight, ctx, inCost, outCost, enabled) {
+  document.getElementById('edit-mdl-id').value = id;
+  document.getElementById('edit-mdl-id-display').value = id;
+  document.getElementById('edit-mdl-provider').value = providerId;
+  document.getElementById('edit-mdl-weight').value = weight;
+  document.getElementById('edit-mdl-ctx').value = ctx || 0;
+  document.getElementById('edit-mdl-in').value = inCost;
+  document.getElementById('edit-mdl-out').value = outCost;
+  document.getElementById('edit-mdl-enabled').value = String(!!enabled);
+  showModal('edit-model-modal');
+}
+
+function saveModel() {
+  const id = document.getElementById('edit-mdl-id').value;
+  const body = {
+    weight: parseInt(document.getElementById('edit-mdl-weight').value) || 5,
+    max_context_tokens: parseInt(document.getElementById('edit-mdl-ctx').value) || 0,
+    input_per_1k: parseFloat(document.getElementById('edit-mdl-in').value) || 0,
+    output_per_1k: parseFloat(document.getElementById('edit-mdl-out').value) || 0,
+    enabled: document.getElementById('edit-mdl-enabled').value === 'true'
+  };
+  fetch('/admin/v1/models/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => { showToast('Model updated', 'success'); hideModal('edit-model-modal'); fetchModels(); })
+    .catch(() => showToast('Failed to update model', 'error'));
 }
 
 // ============================
@@ -895,7 +1009,7 @@ function renderWeightSliders(models) {
 function updateWeight(el) {
   const modelId = el.dataset.modelId;
   el.nextElementSibling.textContent = el.value;
-  fetch(`/admin/v1/models/${encodeURIComponent(modelId)}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ weight: parseInt(el.value) }) }).catch(() => {});
+  fetch(`/admin/v1/models/${modelId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ weight: parseInt(el.value) }) }).catch(() => {});
 }
 
 // ============================

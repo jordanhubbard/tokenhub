@@ -11,12 +11,14 @@ An LLM routing proxy that routes, arbitrates, and orchestrates requests across m
 - **API key management** -- generate, rotate, revoke, scope-based access control (`chat`, `plan`), per-key monthly budget enforcement
 - **Temporal workflow engine** -- optional durable execution with circuit breaker fallback to direct engine calls
 - **SSE streaming** -- native server-sent event streaming through all provider adapters
-- **Admin UI** -- single-page dashboard with real-time flow graph (Cytoscape.js), cost/latency charts (D3.js), model leaderboard, and management panels
+- **Admin UI** -- single-page dashboard with setup wizard, real-time flow graph (Cytoscape.js), cost/latency charts (D3.js), what-if simulator, live decision feed, and full CRUD management panels
+- **CLI tool** -- `tokenhubctl` for scriptable administration from the command line
 - **In-band directives** -- `@@tokenhub` annotations in messages to override routing policy per-request
 - **Output shaping** -- response format control (json/markdown/text), `<think>` block stripping, token truncation, and JSON schema validation
 - **Observability** -- Prometheus metrics, embedded TSDB, structured logging, health tracking, SSE event bus, audit logs, and request logs
 - **Idempotency** -- automatic request deduplication via `Idempotency-Key` header
 - **Hot reload** -- send SIGHUP to reload configuration without restarting
+- **External token injection** -- `bootstrap.local` scripts and `~/.tokenhub/credentials` file for git-safe secret management
 
 ## Architecture Overview
 
@@ -34,7 +36,9 @@ TokenHub sits between clients and LLM providers as a reverse proxy. Its core com
 
 **Event Bus** -- In-memory pub/sub system that broadcasts routing events (success, error, escalation, health changes, workflow lifecycle) to SSE subscribers and the admin UI in real time.
 
-**Admin UI** -- Embedded single-page application served at `/admin` with panels for vault management, provider configuration, model registry, routing policy, health status, request/audit logs, API key management, reward data, and Temporal workflow visibility.
+**Admin UI** -- Embedded single-page application served at `/admin` with panels for vault management, provider configuration, model registry, routing policy, health status, request/audit logs, API key management, reward data, and Temporal workflow visibility. Features a multi-step setup wizard, model discovery, what-if routing simulator, and real-time SSE decision feed.
+
+**tokenhubctl** -- Command-line interface for all admin operations. Covers vault, providers, models, routing, API keys, logs, events, and diagnostics. Useful for scripting, CI/CD pipelines, and `bootstrap.local` scripts.
 
 **TSDB** -- Lightweight embedded time-series database for latency, cost, and throughput metrics with configurable retention and pruning.
 
@@ -72,6 +76,21 @@ TokenHub will be available at `http://localhost:8080`. The admin UI is at `http:
 
 If Temporal is enabled, the Temporal UI is available at `http://localhost:8233`.
 
+### External Token Injection
+
+For secrets you don't want in environment variables or git:
+
+**Credentials file** (`~/.tokenhub/credentials`): A JSON file read at startup to register providers and models. Must have `0600` permissions. See the [Provider Management](docs/src/admin/providers.md) docs for the format.
+
+**bootstrap.local**: A git-ignored shell script that runs after `make run` to configure a live instance via the admin API. Copy `bootstrap.local.example` and fill in your values:
+
+```bash
+cp bootstrap.local.example bootstrap.local
+chmod +x bootstrap.local
+# Edit bootstrap.local with your provider keys and model configs
+make run
+```
+
 ### Unlock the Vault
 
 On first start with `TOKENHUB_VAULT_ENABLED=true`, the vault is locked. Unlock it via the admin UI or:
@@ -80,7 +99,13 @@ On first start with `TOKENHUB_VAULT_ENABLED=true`, the vault is locked. Unlock i
 curl -X POST http://localhost:8080/admin/v1/vault/unlock \
   -H "Authorization: Bearer $TOKENHUB_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"password": "your-vault-password"}'
+  -d '{"admin_password": "your-vault-password"}'
+```
+
+Or with `tokenhubctl`:
+
+```bash
+tokenhubctl vault unlock "your-vault-password"
 ```
 
 ### Send a Request
@@ -101,16 +126,15 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOKENHUB_LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `TOKENHUB_LISTEN_ADDR` | `:8080` | HTTP listen address (binds all interfaces by default) |
 | `TOKENHUB_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
-| `TOKENHUB_DB_DSN` | `file:/data/tokenhub.sqlite` | SQLite DSN (WAL mode recommended) |
+| `TOKENHUB_DB_DSN` | `/data/tokenhub.sqlite` | SQLite database path |
 
 ### Vault
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
-| `TOKENHUB_VAULT_KEY_DERIVATION` | `argon2id` | Key derivation function |
 
 ### Provider Keys
 
@@ -119,6 +143,8 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 | `TOKENHUB_OPENAI_API_KEY` | | OpenAI API key |
 | `TOKENHUB_ANTHROPIC_API_KEY` | | Anthropic API key |
 | `TOKENHUB_VLLM_ENDPOINTS` | | Comma-separated vLLM endpoint URLs |
+| `TOKENHUB_EXTRA_PROVIDERS` | | JSON array of additional OpenAI-compatible providers |
+| `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
 
 ### Routing Defaults
 
@@ -218,10 +244,12 @@ All `/admin/v1/*` endpoints require `Authorization: Bearer <TOKENHUB_ADMIN_TOKEN
 | `POST` | `/admin/v1/vault/rotate` | Rotate the vault password |
 | `POST` | `/admin/v1/providers` | Create or update a provider |
 | `GET` | `/admin/v1/providers` | List all providers |
+| `PATCH` | `/admin/v1/providers/{id}` | Update a provider (type, base_url, api_key, enabled) |
 | `DELETE` | `/admin/v1/providers/{id}` | Delete a provider |
+| `GET` | `/admin/v1/providers/{id}/discover` | Discover models from a provider's API |
 | `POST` | `/admin/v1/models` | Create or update a model |
 | `GET` | `/admin/v1/models` | List all models |
-| `PATCH` | `/admin/v1/models/{id}` | Update a model (e.g., weight, enabled) |
+| `PATCH` | `/admin/v1/models/{id}` | Update a model (weight, pricing, context, enabled) |
 | `DELETE` | `/admin/v1/models/{id}` | Delete a model |
 | `GET` | `/admin/v1/routing-config` | Get current routing policy defaults |
 | `PUT` | `/admin/v1/routing-config` | Update routing policy defaults |
@@ -238,7 +266,8 @@ All `/admin/v1/*` endpoints require `Authorization: Bearer <TOKENHUB_ADMIN_TOKEN
 | `GET` | `/admin/v1/logs` | Request logs |
 | `GET` | `/admin/v1/audit` | Audit trail |
 | `GET` | `/admin/v1/rewards` | Contextual bandit reward logs |
-| `GET` | `/admin/v1/engine/models` | Models as seen by the routing engine |
+| `GET` | `/admin/v1/engine/models` | Models as seen by the routing engine (includes adapter_info) |
+| `POST` | `/admin/v1/routing/simulate` | What-if routing simulation |
 | `GET` | `/admin/v1/tsdb/query` | Query the embedded time-series database |
 | `GET` | `/admin/v1/tsdb/metrics` | List available TSDB metrics |
 | `POST` | `/admin/v1/tsdb/prune` | Prune old TSDB data |
@@ -267,13 +296,17 @@ Supported keys: `mode`, `budget`, `latency`, `min_weight`, `output_schema`.
 
 ## Admin UI
 
-The admin dashboard is served at `/admin` as an embedded single-page application. It includes:
+The admin dashboard is served at `/admin` as an embedded single-page application. Accessing the root URL (`http://host:port/`) automatically redirects to `/admin/`. It includes:
 
-- **Flow Graph** -- Real-time visualization of request routing through providers (Cytoscape.js)
-- **Cost and Latency Charts** -- Trend lines for cost and latency over time (D3.js)
+- **Setup Wizard** -- Multi-step guided onboarding for adding new providers (type, endpoint, key, test connection, discover models)
+- **Flow Graph** -- Real-time visualization of request routing through providers (Cytoscape.js) with latency-colored edges and throughput-sized nodes
+- **Cost and Latency Charts** -- Multi-series D3.js trend charts broken down per model
+- **What-If Simulator** -- Test model selection with custom routing parameters without sending live requests
+- **SSE Decision Feed** -- Live log of every routing decision with model, provider, latency, cost, and reason
 - **Model Leaderboard** -- Sortable table of models with weight adjustment sliders
-- **Vault Panel** -- Lock/unlock vault, rotate password
-- **Providers Panel** -- Add, edit, and remove provider configurations
+- **Vault Panel** -- Lock/unlock vault, rotate password, with distinct first-time setup vs. unlock flows
+- **Providers Panel** -- Full CRUD: add via wizard, edit inline, discover models, delete. Shows both store-persisted and runtime-configured providers
+- **Models Panel** -- Full CRUD: add, edit (weight, pricing, context, enabled), delete. Shows both store and engine models
 - **Routing Config Panel** -- Adjust default routing mode, budget, and latency caps
 - **Health Panel** -- Provider health states, latency, error rates, cooldown timers
 - **Request Logs** -- Searchable history of all routed requests
@@ -282,14 +315,79 @@ The admin dashboard is served at `/admin` as an embedded single-page application
 - **Rewards Panel** -- Contextual bandit reward data for Thompson Sampling analysis
 - **Workflows Panel** -- Temporal workflow list and detail views (when Temporal is enabled)
 
+## tokenhubctl
+
+`tokenhubctl` is a command-line tool for managing TokenHub. It covers all admin API operations and is useful for scripting, automation, and quick diagnostics.
+
+### Installation
+
+```bash
+make build    # Builds both tokenhub and tokenhubctl to bin/
+```
+
+### Configuration
+
+```bash
+export TOKENHUB_URL="http://localhost:8080"       # default
+export TOKENHUB_ADMIN_TOKEN="your-admin-token"    # if admin auth is configured
+```
+
+### Usage
+
+```bash
+# Server status
+tokenhubctl status
+
+# Vault operations
+tokenhubctl vault unlock "my-password"
+tokenhubctl vault lock
+tokenhubctl vault rotate "old-password" "new-password"
+
+# Provider management
+tokenhubctl provider list
+tokenhubctl provider add '{"id":"openai","type":"openai","base_url":"https://api.openai.com","api_key":"sk-..."}'
+tokenhubctl provider edit openai '{"base_url":"https://api.openai.com/v2"}'
+tokenhubctl provider delete openai
+tokenhubctl provider discover openai
+
+# Model management
+tokenhubctl model list
+tokenhubctl model add '{"id":"gpt-4o","provider_id":"openai","weight":8,"max_context_tokens":128000,"input_per_1k":0.0025,"output_per_1k":0.01,"enabled":true}'
+tokenhubctl model edit gpt-4o '{"weight":9}'
+tokenhubctl model enable gpt-4o
+tokenhubctl model disable gpt-4o
+tokenhubctl model delete gpt-4o-legacy
+
+# Routing
+tokenhubctl routing get
+tokenhubctl routing set '{"default_mode":"cheap","default_max_budget_usd":0.02}'
+
+# API keys
+tokenhubctl apikey list
+tokenhubctl apikey create '{"name":"my-app","scopes":"[\"chat\",\"plan\"]"}'
+tokenhubctl apikey rotate <id>
+tokenhubctl apikey delete <id>
+
+# Observability
+tokenhubctl health
+tokenhubctl stats
+tokenhubctl logs --limit 20
+tokenhubctl audit --limit 20
+tokenhubctl engine models
+tokenhubctl events          # live SSE stream
+
+# Routing simulation
+tokenhubctl simulate '{"mode":"cheap","token_count":500}'
+```
+
 ## Build Targets
 
 All build operations run inside Docker containers via Make. No host Go installation is required.
 
 | Target | Description |
 |--------|-------------|
-| `make build` | Build binary to `bin/tokenhub` |
-| `make run` | Build Docker image and start via `docker compose up` |
+| `make build` | Build `tokenhub` and `tokenhubctl` to `bin/` |
+| `make run` | Build Docker image, start via `docker compose up`, run bootstrap |
 | `make test` | Run unit tests |
 | `make test-race` | Run tests with Go race detector |
 | `make test-coverage` | Run tests with coverage report (`coverage.out`) |
@@ -325,7 +423,7 @@ BATCH=yes make release
 No local Go installation is needed. All tools run in containers:
 
 ```bash
-make build    # Compile the binary
+make build    # Compile the binaries
 make test     # Run the test suite
 make lint     # Run linter
 ```
@@ -336,6 +434,7 @@ Requires Go 1.24+.
 
 ```bash
 go build -o bin/tokenhub ./cmd/tokenhub
+go build -o bin/tokenhubctl ./cmd/tokenhubctl
 go test ./...
 go vet ./...
 ```
@@ -343,7 +442,9 @@ go vet ./...
 ### Project Layout
 
 ```
-cmd/tokenhub/      Application entry point
+cmd/
+  tokenhub/        Application entry point
+  tokenhubctl/     CLI administration tool
 internal/
   app/             Server wiring and configuration
   httpapi/         HTTP handlers and route mounting

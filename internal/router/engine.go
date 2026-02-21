@@ -23,6 +23,12 @@ type Sender interface {
 	ClassifyError(err error) *ClassifiedError
 }
 
+// Describer is an optional interface that adapters can implement to expose
+// metadata like base URL and health endpoint for the admin UI.
+type Describer interface {
+	HealthEndpoint() string
+}
+
 // StreamSender is an optional interface for provider adapters that support SSE streaming.
 type StreamSender interface {
 	Sender
@@ -373,6 +379,27 @@ func (e *Engine) GetAdapter(providerID string) Sender {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.adapters[providerID]
+}
+
+// AdapterInfo holds metadata about a registered adapter for the admin UI.
+type AdapterInfo struct {
+	ID             string `json:"id"`
+	HealthEndpoint string `json:"health_endpoint,omitempty"`
+}
+
+// ListAdapterInfo returns metadata for all registered adapters.
+func (e *Engine) ListAdapterInfo() []AdapterInfo {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	infos := make([]AdapterInfo, 0, len(e.adapters))
+	for id, a := range e.adapters {
+		info := AdapterInfo{ID: id}
+		if d, ok := a.(Describer); ok {
+			info.HealthEndpoint = d.HealthEndpoint()
+		}
+		infos = append(infos, info)
+	}
+	return infos
 }
 
 // GetModel returns a registered model by ID.

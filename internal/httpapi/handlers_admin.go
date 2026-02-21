@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -301,9 +302,16 @@ func ModelsListHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
+// wildcardID extracts and URL-decodes the Chi wildcard parameter, stripping
+// the leading slash that Chi includes with "*" routes.
+func wildcardID(r *http.Request) string {
+	id := chi.URLParam(r, "*")
+	return strings.TrimPrefix(id, "/")
+}
+
 func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
+		id := wildcardID(r)
 		if id == "" {
 			jsonError(w, "model id required", http.StatusBadRequest)
 			return
@@ -326,10 +334,10 @@ func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
-// ModelsPatchHandler handles PATCH /admin/v1/models/{id} for partial updates (e.g. weight).
+// ModelsPatchHandler handles PATCH /admin/v1/models/* for partial updates (e.g. weight).
 func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
+		id := wildcardID(r)
 		if id == "" {
 			jsonError(w, "model id required", http.StatusBadRequest)
 			return
@@ -352,8 +360,21 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 		if existing == nil {
-			jsonError(w, "model not found", http.StatusNotFound)
-			return
+			// Try to find in engine (runtime-only model) and seed a store record.
+			for _, m := range d.Engine.ListModels() {
+				if m.ID == id {
+					existing = &store.ModelRecord{
+						ID: m.ID, ProviderID: m.ProviderID, Weight: m.Weight,
+						MaxContextTokens: m.MaxContextTokens, InputPer1K: m.InputPer1K,
+						OutputPer1K: m.OutputPer1K, Enabled: m.Enabled,
+					}
+					break
+				}
+			}
+			if existing == nil {
+				jsonError(w, "model not found", http.StatusNotFound)
+				return
+			}
 		}
 
 		// Validate patch values before applying.
@@ -401,6 +422,11 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 		if v, ok := patch["output_per_1k"]; ok {
 			if f, ok := v.(float64); ok {
 				existing.OutputPer1K = f
+			}
+		}
+		if v, ok := patch["max_context_tokens"]; ok {
+			if f, ok := v.(float64); ok {
+				existing.MaxContextTokens = int(f)
 			}
 		}
 
@@ -528,12 +554,97 @@ func EngineModelsHandler(d Dependencies) http.HandlerFunc {
 		limit, offset := parsePagination(r)
 		models = paginateSlice(models, offset, limit)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"models":   models,
-			"total":    total,
-			"limit":    limit,
-			"offset":   offset,
-			"adapters": d.Engine.ListAdapterIDs(),
+			"models":       models,
+			"total":        total,
+			"limit":        limit,
+			"offset":       offset,
+			"adapters":     d.Engine.ListAdapterIDs(),
+			"adapter_info": d.Engine.ListAdapterInfo(),
 		})
+	}
+}
+
+// ProvidersPatchHandler handles PATCH /admin/v1/providers/{id} for partial updates.
+func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		if id == "" {
+			jsonError(w, "provider id required", http.StatusBadRequest)
+			return
+		}
+		var patch map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			jsonError(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if d.Store == nil {
+			jsonError(w, "no store configured", http.StatusInternalServerError)
+			return
+		}
+		providers, err := d.Store.ListProviders(r.Context())
+		if err != nil {
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var existing *store.ProviderRecord
+		for i := range providers {
+			if providers[i].ID == id {
+				existing = &providers[i]
+				break
+			}
+		}
+		if existing == nil {
+			// Provider not in store; create from patch for runtime providers being edited.
+			existing = &store.ProviderRecord{ID: id, Enabled: true}
+		}
+		if v, ok := patch["type"]; ok {
+			if s, ok := v.(string); ok {
+				existing.Type = s
+			}
+		}
+		if v, ok := patch["base_url"]; ok {
+			if s, ok := v.(string); ok {
+				existing.BaseURL = s
+			}
+		}
+		if v, ok := patch["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				existing.Enabled = b
+			}
+		}
+		if v, ok := patch["cred_store"]; ok {
+			if s, ok := v.(string); ok {
+				existing.CredStore = s
+			}
+		}
+		// Handle API key update.
+		if v, ok := patch["api_key"]; ok {
+			if s, ok := v.(string); ok && s != "" && d.Vault != nil && !d.Vault.IsLocked() {
+				if err := d.Vault.Set("provider:"+id+":api_key", s); err != nil {
+					jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				existing.CredStore = "vault"
+				if d.Store != nil {
+					salt := d.Vault.Salt()
+					data := d.Vault.Export()
+					if salt != nil {
+						warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+					}
+				}
+			}
+		}
+		if err := d.Store.UpsertProvider(r.Context(), *existing); err != nil {
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			Timestamp: time.Now().UTC(),
+			Action:    "provider.patch",
+			Resource:  id,
+			RequestID: middleware.GetReqID(r.Context()),
+		}))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "provider": existing})
 	}
 }
 
