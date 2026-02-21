@@ -44,3 +44,6 @@ bootstrap.local
 .vibe/
 .mcp.json
 settings.json
+
+# Editor/IDE state
+.cursor/
