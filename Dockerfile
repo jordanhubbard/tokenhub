@@ -27,14 +27,16 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/tokenhub ./cmd/tokenhub
 RUN cd docs && mdbook build
 
-# --- Runtime stage: minimal image ---
-FROM gcr.io/distroless/static:nonroot
+# --- Runtime stage: Alpine for modernc.org/sqlite compatibility ---
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates curl && \
+    adduser -D tokenhub
 WORKDIR /
 COPY --from=build /out/tokenhub /tokenhub
 COPY --from=build /src/docs/book /docs/book
 COPY --from=build /src/config/config.example.yaml /config/config.yaml
-USER nonroot:nonroot
+USER tokenhub
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/tokenhub", "-healthcheck"]
+  CMD ["curl", "-sf", "http://localhost:8080/healthz"]
 ENTRYPOINT ["/tokenhub"]

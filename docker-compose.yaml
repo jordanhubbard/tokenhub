@@ -1,11 +1,11 @@
 services:
   tokenhub:
-    build: .
+    image: tokenhub:v0.2.3
     ports:
-      - "8080:8080"
+      - "8090:8080"
     environment:
       - TOKENHUB_LISTEN_ADDR=:8080
-      - TOKENHUB_DB_DSN=file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+      - TOKENHUB_DB_DSN=/data/tokenhub.sqlite
       - TOKENHUB_VAULT_ENABLED=true
       - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
       - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
