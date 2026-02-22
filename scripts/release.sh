@@ -207,8 +207,7 @@ main() {
 
     # Build Docker image
     info "Building Docker image..."
-    make -C "$(git rev-parse --show-toplevel)" docker VERSION="v$NEXT_VERSION"
-    docker tag "tokenhub:v$NEXT_VERSION" tokenhub:latest
+    make -C "$(git rev-parse --show-toplevel)" package VERSION="v$NEXT_VERSION"
     success "Docker image tokenhub:v$NEXT_VERSION built and tagged as latest"
 
     # Create release
