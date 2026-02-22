@@ -1,0 +1,3 @@
+# Keep beads directory structure
+!beads/
+beads/.gitkeep
