@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -294,6 +296,7 @@ func NewServer(cfg Config) (*Server, error) {
 		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — auto-generated token (set env var to use a fixed token)",
 			slog.String("token", cfg.AdminToken))
 	}
+	writeAdminTokenFile(cfg.DBDSN, cfg.AdminToken, logger)
 	if len(cfg.CORSOrigins) == 0 {
 		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")
 	}
@@ -710,6 +713,23 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 	}
 	if len(models) > 0 {
 		logger.Info("loaded persisted models", slog.Int("count", len(models)))
+	}
+}
+
+// writeAdminTokenFile persists the admin token to a well-known file next to
+// the database so that tokenhubctl can retrieve it without parsing logs.
+func writeAdminTokenFile(dbDSN, token string, logger *slog.Logger) {
+	dsn := strings.TrimPrefix(dbDSN, "file:")
+	if i := strings.IndexByte(dsn, '?'); i >= 0 {
+		dsn = dsn[:i]
+	}
+	if dsn == "" || dsn == ":memory:" {
+		return
+	}
+	dir := filepath.Dir(dsn)
+	tokenPath := filepath.Join(dir, ".admin-token")
+	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
+		logger.Warn("failed to write admin token file", slog.String("path", tokenPath), slog.String("error", err.Error()))
 	}
 }
 

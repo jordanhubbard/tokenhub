@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -25,6 +26,8 @@ func main() {
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("tokenhubctl %s\n", version)
+	case "admin-token":
+		doAdminToken()
 	case "status":
 		doStatus()
 	case "health":
@@ -76,6 +79,7 @@ Environment:
   TOKENHUB_ADMIN_TOKEN  Bearer token for admin endpoints
 
 Commands:
+  admin-token                 Print the admin token (env, file, or Docker)
   status                      Show server info and vault state
   health                      Show provider health stats
 
@@ -247,6 +251,39 @@ func parseLimit(args []string) int {
 }
 
 // --- Commands ---
+
+func doAdminToken() {
+	// 1. Environment variable.
+	if tok := os.Getenv("TOKENHUB_ADMIN_TOKEN"); tok != "" {
+		fmt.Println(tok)
+		return
+	}
+
+	// 2. Local token file (native deployment).
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		if data, err := os.ReadFile(home + "/.tokenhub/.admin-token"); err == nil {
+			if tok := strings.TrimSpace(string(data)); tok != "" {
+				fmt.Println(tok)
+				return
+			}
+		}
+	}
+
+	// 3. Docker container token file.
+	for _, name := range []string{"tokenhub-tokenhub-1", "tokenhub"} {
+		out, err := exec.Command("docker", "exec", name, "cat", "/data/.admin-token").Output()
+		if err == nil {
+			if tok := strings.TrimSpace(string(out)); tok != "" {
+				fmt.Println(tok)
+				return
+			}
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "admin token not found — set TOKENHUB_ADMIN_TOKEN or ensure the service is running")
+	os.Exit(1)
+}
 
 func doStatus() {
 	info := doGet("/admin/v1/info")
