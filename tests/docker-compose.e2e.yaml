@@ -37,7 +37,7 @@ services:
       - TOKENHUB_LISTEN_ADDR=:8080
       - TOKENHUB_DB_DSN=file:/tmp/tokenhub-e2e.sqlite
       - TOKENHUB_VAULT_ENABLED=false
-      - TOKENHUB_VLLM_ENDPOINTS=http://mock-provider:80
+      - TOKENHUB_ADMIN_TOKEN=e2e-test-token
       - TOKENHUB_TEMPORAL_ENABLED=true
       - TOKENHUB_TEMPORAL_HOST=temporal:7233
       - TOKENHUB_TEMPORAL_NAMESPACE=default

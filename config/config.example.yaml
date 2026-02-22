@@ -25,10 +25,10 @@
 # TOKENHUB_DEFAULT_MAX_BUDGET_USD=0.05
 # TOKENHUB_DEFAULT_MAX_LATENCY_MS=20000
 
-# ──── Provider API Keys ────
-# TOKENHUB_OPENAI_API_KEY=sk-...          # Registers OpenAI provider adapter
-# TOKENHUB_ANTHROPIC_API_KEY=sk-ant-...   # Registers Anthropic provider adapter
-# TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000,http://vllm-2:8000  # Registers vLLM adapter
+# ──── Provider Registration ────
+# Providers are registered at runtime via bootstrap.local, admin API, tokenhubctl, or UI.
+# Optionally load providers from a credentials file at startup:
+# TOKENHUB_CREDENTIALS_FILE=~/.tokenhub/credentials
 
 # ──── External Credentials File (optional, ~/.netrc analogue) ────
 # TOKENHUB_CREDENTIALS_FILE=~/.tokenhub/credentials  # JSON file with providers/models

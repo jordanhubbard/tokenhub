@@ -65,7 +65,7 @@ echo "=== Registering models ==="
 
 # $TOKENHUBCTL model add '{"id":"claude-opus-4","provider_id":"anthropic","weight":10,"max_context_tokens":200000,"input_per_1k":0.015,"output_per_1k":0.075,"enabled":true}'
 
-# Local vLLM model (provider comes from TOKENHUB_VLLM_ENDPOINTS env var):
+# Local vLLM model (register the vLLM provider first via admin API):
 # $TOKENHUBCTL model add '{"id":"Qwen/Qwen2.5-Coder-32B-Instruct","provider_id":"vllm","weight":7,"max_context_tokens":32000,"input_per_1k":0.0,"output_per_1k":0.0,"enabled":true}'
 
 # ────────────────────────────────────────────────

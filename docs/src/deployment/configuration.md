@@ -31,17 +31,13 @@ TokenHub is configured entirely via environment variables. All variables are opt
 | `TOKENHUB_RATE_LIMIT_RPS` | `60` | Max requests per second per IP |
 | `TOKENHUB_RATE_LIMIT_BURST` | `120` | Burst capacity per IP |
 
-### Provider API Keys
+### Credentials
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOKENHUB_OPENAI_API_KEY` | — | OpenAI API key (registers OpenAI provider) |
-| `TOKENHUB_ANTHROPIC_API_KEY` | — | Anthropic API key (registers Anthropic provider) |
-| `TOKENHUB_VLLM_ENDPOINTS` | — | Comma-separated vLLM endpoint URLs |
-| `TOKENHUB_EXTRA_PROVIDERS` | — | JSON array of additional OpenAI-compatible providers |
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
 
-At least one provider must be configured for TokenHub to route requests.
+Providers are registered at runtime via `bootstrap.local`, the admin API, `tokenhubctl`, the admin UI, or a credentials file. At least one provider must be registered for TokenHub to route requests.
 
 ### Temporal (Optional)
 
@@ -88,26 +84,13 @@ The `~/.tokenhub/credentials` file provides a git-safe way to configure provider
 }
 ```
 
-## Extra Providers (JSON)
-
-The `TOKENHUB_EXTRA_PROVIDERS` variable accepts a JSON array of OpenAI-compatible providers:
-
-```bash
-export TOKENHUB_EXTRA_PROVIDERS='[
-  {"id": "nvidia-nim", "endpoint": "https://integrate.api.nvidia.com", "api_key": "nvapi-..."},
-  {"id": "azure-openai", "endpoint": "https://mydeployment.openai.azure.com", "api_key": "..."}
-]'
-```
-
-Each entry requires `id`, `endpoint`, and `api_key`.
-
 ## Example Configuration
 
-### Minimal (OpenAI only)
+### Minimal
 
 ```bash
-export TOKENHUB_OPENAI_API_KEY="sk-..."
 ./bin/tokenhub
+# Then register providers via bootstrap.local, admin API, or UI.
 ```
 
 ### Full Production
@@ -130,11 +113,6 @@ export TOKENHUB_DEFAULT_MODE="normal"
 export TOKENHUB_DEFAULT_MAX_BUDGET_USD="0.10"
 export TOKENHUB_DEFAULT_MAX_LATENCY_MS="30000"
 
-# Providers
-export TOKENHUB_OPENAI_API_KEY="sk-..."
-export TOKENHUB_ANTHROPIC_API_KEY="sk-ant-..."
-export TOKENHUB_VLLM_ENDPOINTS="http://vllm-1:8000,http://vllm-2:8000"
-
 # Temporal (optional)
 export TOKENHUB_TEMPORAL_ENABLED="true"
 export TOKENHUB_TEMPORAL_HOST="temporal:7233"
@@ -144,6 +122,7 @@ export TOKENHUB_OTEL_ENABLED="true"
 export TOKENHUB_OTEL_ENDPOINT="otel-collector:4318"
 
 ./bin/tokenhub
+# Providers are registered at runtime via bootstrap.local, admin API, or UI.
 ```
 
 ## Runtime Configuration

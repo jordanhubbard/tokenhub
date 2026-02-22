@@ -135,14 +135,6 @@ func newTestConfig() Config {
 }
 
 func TestNewServer(t *testing.T) {
-	// Clear provider API key env vars so registerProviders doesn't try real APIs.
-	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
-	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
-	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
-
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)
 	if err != nil {
@@ -156,13 +148,6 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerHasRouter(t *testing.T) {
-	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
-	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
-	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
-
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)
 	if err != nil {
@@ -176,13 +161,6 @@ func TestNewServerHasRouter(t *testing.T) {
 }
 
 func TestServerClose(t *testing.T) {
-	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
-	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
-	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
-
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)
 	if err != nil {
@@ -196,13 +174,6 @@ func TestServerClose(t *testing.T) {
 }
 
 func TestServerReload(t *testing.T) {
-	t.Setenv("TOKENHUB_OPENAI_API_KEY", "")
-	t.Setenv("TOKENHUB_ANTHROPIC_API_KEY", "")
-	t.Setenv("TOKENHUB_VLLM_ENDPOINTS", "")
-	_ = os.Unsetenv("TOKENHUB_OPENAI_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_ANTHROPIC_API_KEY")
-	_ = os.Unsetenv("TOKENHUB_VLLM_ENDPOINTS")
-
 	cfg := newTestConfig()
 	srv, err := NewServer(cfg)
 	if err != nil {

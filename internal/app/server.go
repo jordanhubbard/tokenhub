@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -141,11 +140,9 @@ func NewServer(cfg Config) (*Server, error) {
 	ht := health.NewTracker(health.DefaultConfig())
 	eng.SetHealthChecker(ht)
 
-	// Register provider adapters from environment.
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second
-	registerProviders(eng, timeout, logger)
 
-	// Load additional providers from credentials file (~/.tokenhub/credentials).
+	// Load providers from credentials file (~/.tokenhub/credentials).
 	loadCredentialsFile(cfg.CredentialsFile, eng, timeout, logger)
 
 	// Load persisted providers from DB and register adapters so they're
@@ -170,8 +167,7 @@ func NewServer(cfg Config) (*Server, error) {
 		logger.Info("health probing disabled via TOKENHUB_HEALTH_PROBE_DISABLED")
 	}
 
-	// Register default models, then load any persisted models from DB.
-	registerDefaultModels(eng)
+	// Load persisted models from DB.
 	loadPersistedModels(eng, db, logger)
 	loadRoutingConfig(eng, db, logger)
 
@@ -179,7 +175,7 @@ func NewServer(cfg Config) (*Server, error) {
 	adapterIDs := eng.ListAdapterIDs()
 	modelList := eng.ListModels()
 	if len(adapterIDs) == 0 {
-		logger.Warn("NO PROVIDERS REGISTERED — set TOKENHUB_OPENAI_API_KEY, TOKENHUB_ANTHROPIC_API_KEY, or TOKENHUB_VLLM_ENDPOINTS")
+		logger.Warn("NO PROVIDERS REGISTERED — use bootstrap.local, the admin API, tokenhubctl, or the UI to add providers")
 	}
 	if len(modelList) == 0 {
 		logger.Warn("NO MODELS REGISTERED — requests will fail until models are configured")
@@ -478,61 +474,6 @@ func (s *Server) rotationEnforceLoop() {
 	}
 }
 
-func registerProviders(eng *router.Engine, timeout time.Duration, logger *slog.Logger) {
-	if key := os.Getenv("TOKENHUB_OPENAI_API_KEY"); key != "" {
-		eng.RegisterAdapter(openai.New("openai", key, "https://api.openai.com", openai.WithTimeout(timeout)))
-		logger.Info("registered provider", slog.String("provider", "openai"))
-	}
-
-	if key := os.Getenv("TOKENHUB_ANTHROPIC_API_KEY"); key != "" {
-		eng.RegisterAdapter(anthropic.New("anthropic", key, "https://api.anthropic.com", anthropic.WithTimeout(timeout)))
-		logger.Info("registered provider", slog.String("provider", "anthropic"))
-	}
-
-	if endpoints := os.Getenv("TOKENHUB_VLLM_ENDPOINTS"); endpoints != "" {
-		var eps []string
-		for _, ep := range strings.Split(endpoints, ",") {
-			ep = strings.TrimSpace(ep)
-			if ep != "" {
-				eps = append(eps, ep)
-			}
-		}
-		if len(eps) > 0 {
-			opts := []vllm.Option{vllm.WithTimeout(timeout)}
-			if len(eps) > 1 {
-				opts = append(opts, vllm.WithEndpoints(eps[1:]...))
-			}
-			eng.RegisterAdapter(vllm.New("vllm", eps[0], opts...))
-			logger.Info("registered provider", slog.String("provider", "vllm"), slog.Int("endpoints", len(eps)))
-		}
-	}
-
-	// TOKENHUB_EXTRA_PROVIDERS: JSON array of additional OpenAI-compatible
-	// providers. Each entry: {"id":"...","endpoint":"...","api_key":"..."}.
-	// This allows registering multiple providers with custom endpoints
-	// (e.g. NVIDIA NIM, Azure OpenAI, etc.) without code changes.
-	if extra := os.Getenv("TOKENHUB_EXTRA_PROVIDERS"); extra != "" {
-		type extraProvider struct {
-			ID       string `json:"id"`
-			Endpoint string `json:"endpoint"`
-			APIKey   string `json:"api_key"`
-		}
-		var providers []extraProvider
-		if err := json.Unmarshal([]byte(extra), &providers); err != nil {
-			logger.Warn("failed to parse TOKENHUB_EXTRA_PROVIDERS", slog.String("error", err.Error()))
-		} else {
-			for _, p := range providers {
-				if p.ID == "" || p.Endpoint == "" || p.APIKey == "" {
-					logger.Warn("skipping extra provider: id, endpoint, and api_key required", slog.String("id", p.ID))
-					continue
-				}
-				eng.RegisterAdapter(openai.New(p.ID, p.APIKey, p.Endpoint, openai.WithTimeout(timeout)))
-				logger.Info("registered extra provider", slog.String("provider", p.ID), slog.String("endpoint", p.Endpoint))
-			}
-		}
-	}
-}
-
 // loadCredentialsFile reads a JSON credentials file (similar to ~/.netrc) and
 // registers any providers and models it contains. The file is optional; if it
 // does not exist the function silently returns. The file must be owner-readable
@@ -711,14 +652,3 @@ func loadRoutingConfig(eng *router.Engine, db store.Store, logger *slog.Logger) 
 	}
 }
 
-func registerDefaultModels(eng *router.Engine) {
-	defaults := []router.Model{
-		{ID: "gpt-4o", ProviderID: "openai", Weight: 8, MaxContextTokens: 128000, InputPer1K: 0.0025, OutputPer1K: 0.01, Enabled: true},
-		{ID: "gpt-4o-mini", ProviderID: "openai", Weight: 3, MaxContextTokens: 128000, InputPer1K: 0.00015, OutputPer1K: 0.0006, Enabled: true},
-		{ID: "claude-opus-4-0520", ProviderID: "anthropic", Weight: 10, MaxContextTokens: 200000, InputPer1K: 0.015, OutputPer1K: 0.075, Enabled: true},
-		{ID: "claude-sonnet-4-5-20250929", ProviderID: "anthropic", Weight: 7, MaxContextTokens: 200000, InputPer1K: 0.003, OutputPer1K: 0.015, Enabled: true},
-	}
-	for _, m := range defaults {
-		eng.RegisterModel(m)
-	}
-}

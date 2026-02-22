@@ -23,7 +23,7 @@ The final image runs as a non-root `tokenhub` user.
 ```bash
 docker run -d \
   -p 8080:8080 \
-  -e TOKENHUB_OPENAI_API_KEY="sk-..." \
+  -e TOKENHUB_ADMIN_TOKEN="your-admin-token" \
   -v tokenhub_data:/data \
   tokenhub
 ```
@@ -54,21 +54,20 @@ This starts:
 
 ```yaml
 tokenhub:
-  image: tokenhub:v0.2.3
+  image: tokenhub:latest
   ports:
     - "8080:8080"
   environment:
     - TOKENHUB_LISTEN_ADDR=:8080
     - TOKENHUB_DB_DSN=/data/tokenhub.sqlite
     - TOKENHUB_VAULT_ENABLED=true
-    - TOKENHUB_OPENAI_API_KEY=${TOKENHUB_OPENAI_API_KEY}
-    - TOKENHUB_ANTHROPIC_API_KEY=${TOKENHUB_ANTHROPIC_API_KEY}
-    - TOKENHUB_VLLM_ENDPOINTS=${TOKENHUB_VLLM_ENDPOINTS}
     - TOKENHUB_ADMIN_TOKEN=${TOKENHUB_ADMIN_TOKEN}
   volumes:
     - tokenhub_data:/data
   restart: unless-stopped
 ```
+
+Providers are registered after startup via `bootstrap.local`, the admin API, `tokenhubctl`, or the admin UI.
 
 Note: The `TOKENHUB_DB_DSN` should be a plain path (e.g., `/data/tokenhub.sqlite`) when using `modernc.org/sqlite` (the pure-Go driver). SQLite pragmas are applied programmatically, not via DSN query parameters.
 
@@ -97,9 +96,6 @@ temporal-ui:
 Create a `.env` file for sensitive values:
 
 ```bash
-TOKENHUB_OPENAI_API_KEY=sk-...
-TOKENHUB_ANTHROPIC_API_KEY=sk-ant-...
-TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000
 TOKENHUB_ADMIN_TOKEN=your-secret-admin-token
 ```
 

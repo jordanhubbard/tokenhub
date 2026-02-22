@@ -4,29 +4,6 @@ Providers are the LLM services that TokenHub routes requests to. TokenHub ships 
 
 ## Registration Methods
 
-### Environment Variables
-
-The simplest way to register providers is via environment variables at startup:
-
-```bash
-# OpenAI
-export TOKENHUB_OPENAI_API_KEY="sk-..."
-
-# Anthropic
-export TOKENHUB_ANTHROPIC_API_KEY="sk-ant-..."
-
-# vLLM (one or more comma-separated endpoints)
-export TOKENHUB_VLLM_ENDPOINTS="http://vllm-1:8000,http://vllm-2:8000"
-```
-
-### Extra Providers (JSON)
-
-Register additional OpenAI-compatible providers (Azure OpenAI, NVIDIA NIM, etc.) without code changes:
-
-```bash
-export TOKENHUB_EXTRA_PROVIDERS='[{"id":"nvidia","endpoint":"https://integrate.api.nvidia.com","api_key":"nvapi-..."}]'
-```
-
 ### Credentials File
 
 The `~/.tokenhub/credentials` file is read at startup and can register providers and models. This is the recommended approach for managing secrets outside of environment variables. The file must have `0600` permissions.
@@ -161,8 +138,7 @@ This calls the provider's `/v1/models` endpoint (using the stored API key from t
 
 | `cred_store` | Description |
 |--------------|-------------|
-| `env` | API key is provided via environment variable (e.g., `TOKENHUB_OPENAI_API_KEY`) |
-| `vault` | API key is encrypted and stored in the vault |
+| `vault` | API key is encrypted and stored in the vault (recommended) |
 | `none` | No credentials needed (e.g., local vLLM without auth) |
 
 When using `vault`, the API key is encrypted with AES-256-GCM and only available when the vault is unlocked.

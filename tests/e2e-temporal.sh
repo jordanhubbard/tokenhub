@@ -19,6 +19,7 @@ IMAGE="tokenhub:e2e"
 
 export TOKENHUB_IMAGE="$IMAGE"
 export E2E_PORT="$PORT"
+ADMIN_TOKEN="e2e-test-token"
 
 # Detect docker-compose vs docker compose.
 if command -v docker-compose >/dev/null 2>&1; then
@@ -105,11 +106,25 @@ else
     fail "Temporal workflow engine not started (check logs)"
 fi
 
-# ──── Step 4: Register a model for the vLLM mock provider ────
+# ──── Step 4: Register mock provider and model via admin API ────
+echo ""
+echo "--- Registering mock provider ---"
+PROVIDER_RESP=$(curl -s -X POST "http://localhost:$PORT/admin/v1/providers" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -d '{"id":"vllm","type":"vllm","base_url":"http://mock-provider:80","enabled":true}')
+
+if echo "$PROVIDER_RESP" | grep -q '"ok"'; then
+    pass "Register mock vllm provider via admin API"
+else
+    fail "Register mock provider: $PROVIDER_RESP"
+fi
+
 echo ""
 echo "--- Registering mock model ---"
 MODEL_RESP=$(curl -s -X POST "http://localhost:$PORT/admin/v1/models" \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
     -d '{"id":"mock-model","provider_id":"vllm","weight":5,"max_context_tokens":4096,"enabled":true}')
 
 if echo "$MODEL_RESP" | grep -q '"ok"'; then
@@ -123,6 +138,7 @@ echo ""
 echo "--- Creating API key ---"
 KEY_RESP=$(curl -s -X POST "http://localhost:$PORT/admin/v1/apikeys" \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
     -d '{"name":"e2e-test","scopes":"[\"chat\",\"plan\"]"}')
 
 API_KEY=$(echo "$KEY_RESP" | grep -o '"key":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -163,7 +179,8 @@ echo "--- Verifying Temporal workflow execution ---"
 # Give Temporal a moment to index the workflow.
 sleep 2
 
-WORKFLOWS_RESP=$(curl -s "http://localhost:$PORT/admin/v1/workflows?limit=10")
+WORKFLOWS_RESP=$(curl -s "http://localhost:$PORT/admin/v1/workflows?limit=10" \
+    -H "Authorization: Bearer $ADMIN_TOKEN")
 
 # Check that at least one workflow was returned.
 if echo "$WORKFLOWS_RESP" | grep -q '"workflow_id"'; then
@@ -195,7 +212,8 @@ fi
 echo ""
 echo "--- Verifying observability ---"
 
-AUDIT_RESP=$(curl -s "http://localhost:$PORT/admin/v1/audit?limit=10")
+AUDIT_RESP=$(curl -s "http://localhost:$PORT/admin/v1/audit?limit=10" \
+    -H "Authorization: Bearer $ADMIN_TOKEN")
 if echo "$AUDIT_RESP" | grep -q '"logs"'; then
     pass "Audit logs endpoint returns data"
 else
@@ -203,7 +221,8 @@ else
 fi
 
 # Check request logs.
-LOGS_RESP=$(curl -s "http://localhost:$PORT/admin/v1/logs?limit=10")
+LOGS_RESP=$(curl -s "http://localhost:$PORT/admin/v1/logs?limit=10" \
+    -H "Authorization: Bearer $ADMIN_TOKEN")
 if echo "$LOGS_RESP" | grep -q '"logs"'; then
     pass "Request logs endpoint returns data"
 else

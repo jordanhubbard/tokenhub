@@ -106,8 +106,8 @@ To add support for a new provider:
 1. Create `internal/providers/{name}/adapter.go`
 2. Implement `router.Sender` (and optionally `router.StreamSender` and `health.Probeable`)
 3. Add an `Option` pattern for configuration (timeout, endpoints, etc.)
-4. Register in `internal/app/server.go` `registerProviders()` with an env var trigger
-5. Add default models for the provider in `registerDefaultModels()`
+4. Add a case for the new type in `registerProviderAdapter()` in `internal/httpapi/handlers_admin.go`
+5. Register providers and models at runtime via the admin API or `tokenhubctl`
 
 Example skeleton:
 

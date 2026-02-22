@@ -169,22 +169,6 @@ curl -X POST http://localhost:8090/admin/v1/models \
   }'
 ```
 
-### Option E: Environment variables (legacy)
-
-For backward compatibility, you can set provider API keys as environment
-variables before starting the server. This registers hardcoded provider
-IDs (`openai`, `anthropic`, `vllm`) with default endpoints:
-
-```bash
-export TOKENHUB_OPENAI_API_KEY="sk-..."
-export TOKENHUB_ANTHROPIC_API_KEY="sk-ant-..."
-export TOKENHUB_VLLM_ENDPOINTS="http://vllm-host:8000"
-```
-
-This approach is limited: it only supports three fixed provider IDs, uses
-default base URLs, and requires a restart to change. The methods above are
-preferred for any real deployment.
-
 > **Providers persist across restarts.** Once registered via the API,
 > `tokenhubctl`, or the UI, providers and models are stored in the database
 > and restored automatically on restart. You only need to configure them once.

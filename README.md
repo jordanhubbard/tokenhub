@@ -123,15 +123,13 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 |----------|---------|-------------|
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
 
-### Provider Keys
+### Credentials
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOKENHUB_OPENAI_API_KEY` | | OpenAI API key |
-| `TOKENHUB_ANTHROPIC_API_KEY` | | Anthropic API key |
-| `TOKENHUB_VLLM_ENDPOINTS` | | Comma-separated vLLM endpoint URLs |
-| `TOKENHUB_EXTRA_PROVIDERS` | | JSON array of additional OpenAI-compatible providers |
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
+
+Providers are registered at runtime via `bootstrap.local`, the admin API, `tokenhubctl`, or the admin UI. See [Provider Management](docs/src/admin/providers.md).
 
 ### Routing Defaults
 

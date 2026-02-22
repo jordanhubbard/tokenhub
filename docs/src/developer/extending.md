@@ -36,28 +36,20 @@ func (a *Adapter) SendStream(ctx context.Context, model string, req router.Reque
 func (a *Adapter) HealthEndpoint() string { return a.baseURL + "/health" }
 ```
 
-3. **Register in server.go**:
+3. **Register via the admin API** (providers and models are registered at runtime, not compiled in):
 
-```go
-// In registerProviders()
-if key := os.Getenv("TOKENHUB_NEWPROVIDER_API_KEY"); key != "" {
-    eng.RegisterAdapter(newprovider.New("newprovider", key, "https://api.newprovider.com"))
-    logger.Info("registered provider", slog.String("provider", "newprovider"))
-}
+```bash
+curl -X POST http://localhost:8080/admin/v1/providers \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"newprovider","type":"openai","base_url":"https://api.newprovider.com","api_key":"..."}'
 ```
 
-4. **Add default models**:
+4. **Add adapter construction in `registerProviderAdapter()`** in `handlers_admin.go`:
 
 ```go
-// In registerDefaultModels()
-{ID: "new-model", ProviderID: "newprovider", Weight: 6, MaxContextTokens: 32000, InputPer1K: 0.002, OutputPer1K: 0.006, Enabled: true},
-```
-
-5. **Add config**:
-
-```go
-// In config.go
-NewProviderAPIKey string `env:"TOKENHUB_NEWPROVIDER_API_KEY"`
+case "newprovider":
+    d.Engine.RegisterAdapter(newprovider.New(p.ID, apiKey, p.BaseURL, newprovider.WithTimeout(timeout)))
 ```
 
 ## Adding a New Routing Mode

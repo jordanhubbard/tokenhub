@@ -39,8 +39,8 @@ cmd/tokenhub/main.go
         ├── store.NewSQLite()
         ├── health.NewTracker()
         ├── health.NewProber()         → health.Tracker
-        ├── registerProviders()        → router.Engine
-        ├── registerDefaultModels()    → router.Engine
+        ├── loadCredentialsFile()      → router.Engine
+        ├── loadPersistedProviders()   → router.Engine
         ├── router.NewThompsonSampler()
         ├── apikey.NewManager()        → store.Store
         ├── metrics.New()

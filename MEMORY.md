@@ -161,10 +161,6 @@ All config is via environment variables (`TOKENHUB_*`). See `internal/app/config
 | `TOKENHUB_DB_DSN` | `file:/data/tokenhub.sqlite` | SQLite database path |
 | `TOKENHUB_ADMIN_TOKEN` | (auto-generated if empty) | Bearer token for `/admin/v1/*` endpoints |
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
-| `TOKENHUB_OPENAI_API_KEY` | — | Registers OpenAI provider adapter on startup |
-| `TOKENHUB_ANTHROPIC_API_KEY` | — | Registers Anthropic provider adapter on startup |
-| `TOKENHUB_VLLM_ENDPOINTS` | — | Comma-separated vLLM endpoints (round-robin) |
-| `TOKENHUB_EXTRA_PROVIDERS` | — | JSON array of `{id, endpoint, api_key}` for additional providers |
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | JSON file with providers/models (must be mode 0600) |
 | `TOKENHUB_TEMPORAL_ENABLED` | `false` | Enable Temporal workflow engine |
 | `TOKENHUB_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
@@ -459,7 +455,7 @@ curl http://localhost:8080/admin/v1/health
 
 5. **Model IDs with slashes fail on PATCH/DELETE**: Use the wildcard routes (`/admin/v1/models/*`) and do NOT URL-encode the slashes. The UI sends literal `/` characters.
 
-6. **Cost is $0 for all requests**: Check that models have `input_per_1k` and `output_per_1k` set to non-zero values. The default models registered in `registerDefaultModels()` have pricing, but models registered via `bootstrap.local` or credentials file may have 0.
+6. **Cost is $0 for all requests**: Check that models have `input_per_1k` and `output_per_1k` set to non-zero values. Models registered via `bootstrap.local`, credentials file, or admin API may have pricing set to 0 if not explicitly provided.
 
 7. **Vault is locked after restart**: The vault salt is persisted in the database, but the master password is not stored anywhere. You must unlock the vault via the UI or API after every restart.
 
@@ -546,9 +542,9 @@ make build
 
 5. **Timestamp precision loss**: `ListRequestLogs` and other SQLite read paths used `time.Parse(time.RFC3339, ...)` which truncates sub-second precision. Go's `time.Now()` produces nanosecond timestamps stored as RFC3339Nano strings. Added `parseTime()` helper that tries RFC3339Nano first.
 
-6. **docker-compose vLLM endpoint mismatch**: The compose file had `TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000` (mock nginx) while the real endpoint was `http://ollama-server.hrd.nvidia.com:8000`. Since the adapter is created from the env var at startup, the prober was probing the wrong host. Updated compose to pass through from host environment.
+6. **docker-compose vLLM endpoint mismatch**: The compose file had a mock vLLM endpoint while the real endpoint was different. Resolved by removing provider env vars entirely — providers are now registered at runtime via the admin API, `bootstrap.local`, `tokenhubctl`, or the UI.
 
-7. **Persisted providers not restored on restart**: Providers registered via the admin API or `bootstrap.local` had their DB records preserved but no runtime adapters were created at startup. Only env-var providers (`registerProviders`) got adapters. Added `loadPersistedProviders()` in `server.go` that reads provider records from the DB and creates adapters before the health prober starts, so persisted providers survive restarts.
+7. **Persisted providers not restored on restart**: Providers registered via the admin API or `bootstrap.local` had their DB records preserved but no runtime adapters were created at startup. Added `loadPersistedProviders()` in `server.go` that reads provider records from the DB and creates adapters before the health prober starts, so persisted providers survive restarts.
 
 8. **Makefile bootstrap health check wrong port**: The `make bootstrap` target checked `http://localhost:8080/healthz` but docker-compose maps host port 8090 to container port 8080. Made the port configurable via `TOKENHUB_PORT` (default 8090).
 

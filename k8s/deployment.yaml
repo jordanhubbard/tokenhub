@@ -24,23 +24,11 @@ spec:
               value: ":8080"
             - name: TOKENHUB_DB_DSN
               value: "file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
-            - name: TOKENHUB_OPENAI_API_KEY
+            - name: TOKENHUB_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: tokenhub-secrets
-                  key: openai_api_key
-                  optional: true
-            - name: TOKENHUB_ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: tokenhub-secrets
-                  key: anthropic_api_key
-                  optional: true
-            - name: TOKENHUB_VLLM_ENDPOINTS
-              valueFrom:
-                configMapKeyRef:
-                  name: tokenhub-config
-                  key: vllm_endpoints
+                  key: admin_token
                   optional: true
           volumeMounts:
             - name: data
