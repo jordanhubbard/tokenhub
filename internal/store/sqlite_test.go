@@ -31,6 +31,11 @@ func TestModelsCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
+	// Provider must exist before inserting models (FK constraint).
+	if err := s.UpsertProvider(ctx, ProviderRecord{ID: "openai", Type: "openai", Enabled: true}); err != nil {
+		t.Fatalf("upsert provider failed: %v", err)
+	}
+
 	// Insert
 	m := ModelRecord{
 		ID: "gpt-4", ProviderID: "openai", Weight: 8,

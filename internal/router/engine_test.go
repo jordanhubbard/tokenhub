@@ -482,14 +482,14 @@ func TestScoreModels(t *testing.T) {
 		{ID: "cheapo", Weight: 3, InputPer1K: 0.001, OutputPer1K: 0.003},
 	}
 
-	scores := eng.scoreModels(models, 100, "cheap")
+	scores := eng.scoreModels(models, 100, 512, "cheap")
 	// In cheap mode, cost is heavily weighted. Cheapo should have lower score.
 	if scores["cheapo"] >= scores["expensive"] {
 		t.Errorf("cheap mode: cheapo score (%.4f) should be lower than expensive (%.4f)",
 			scores["cheapo"], scores["expensive"])
 	}
 
-	scores2 := eng.scoreModels(models, 100, "high_confidence")
+	scores2 := eng.scoreModels(models, 100, 512, "high_confidence")
 	// In high_confidence mode, weight is heavily weighted. Expensive (weight=10) should win.
 	if scores2["expensive"] >= scores2["cheapo"] {
 		t.Errorf("high_confidence mode: expensive score (%.4f) should be lower than cheapo (%.4f)",

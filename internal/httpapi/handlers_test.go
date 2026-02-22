@@ -1453,6 +1453,11 @@ func TestModelsListPagination(t *testing.T) {
 	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
 	eng.RegisterAdapter(mock)
 
+	// Create the "p1" provider so model FK constraints are satisfied.
+	provBody, _ := json.Marshal(map[string]any{"id": "p1", "type": "openai", "enabled": true})
+	resp0, _ := http.Post(ts.URL+"/admin/v1/providers", "application/json", bytes.NewReader(provBody))
+	_ = resp0.Body.Close()
+
 	// Create 5 models via the admin API.
 	for i := range 5 {
 		model := router.Model{

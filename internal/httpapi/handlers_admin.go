@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/store"
+	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
 
 // registerProviderAdapter constructs and registers a runtime adapter for the
@@ -34,14 +36,19 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+	var adapter router.Sender
 	switch p.Type {
 	case "anthropic":
-		d.Engine.RegisterAdapter(anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout)))
+		adapter = anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout))
 	case "vllm":
-		d.Engine.RegisterAdapter(vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout)))
+		adapter = vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout))
+	case "openai", "":
+		adapter = openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout))
 	default:
-		d.Engine.RegisterAdapter(openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout)))
+		slog.Warn("unknown provider type, adapter not registered", slog.String("provider", p.ID), slog.String("type", p.Type))
+		return
 	}
+	d.Engine.RegisterAdapter(adapter)
 	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
 }
 
@@ -53,7 +60,7 @@ func VaultLockHandler(d Dependencies) http.HandlerFunc {
 		}
 		d.Vault.Lock()
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "vault.lock",
 				RequestID: middleware.GetReqID(r.Context()),
@@ -82,11 +89,11 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 			salt := d.Vault.Salt()
 			data := d.Vault.Export()
 			if salt != nil {
-				warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+				d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
 			}
 		}
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "vault.unlock",
 				RequestID: middleware.GetReqID(r.Context()),
@@ -114,8 +121,10 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 
 		if err := d.Vault.RotatePassword([]byte(req.OldPassword), []byte(req.NewPassword)); err != nil {
 			// Distinguish validation errors from internal errors.
-			switch err.Error() {
-			case "vault is locked", "vault is not enabled", "new password too short":
+			switch {
+			case errors.Is(err, vault.ErrVaultLocked),
+				errors.Is(err, vault.ErrVaultNotEnabled),
+				errors.Is(err, vault.ErrNewPasswordTooShort):
 				jsonError(w, err.Error(), http.StatusBadRequest)
 			default:
 				jsonError(w, "rotation failed: "+err.Error(), http.StatusInternalServerError)
@@ -137,7 +146,7 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 
 		// Log audit entry.
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "vault.rotate",
 				RequestID: middleware.GetReqID(r.Context()),
@@ -179,7 +188,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 				salt := d.Vault.Salt()
 				data := d.Vault.Export()
 				if salt != nil {
-					warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+					d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
 				}
 			}
 		}
@@ -192,7 +201,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 		}
 		registerProviderAdapter(d, req.ProviderRecord, req.APIKey)
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "provider.upsert",
 				Resource:  req.ID,
@@ -243,7 +252,7 @@ func ProvidersDeleteHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "provider.delete",
 				Resource:  id,
@@ -288,7 +297,7 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 		d.Engine.RegisterModel(m)
 		// Persist to store.
 		if d.Store != nil {
-			warnOnErr("upsert_model", d.Store.UpsertModel(r.Context(), store.ModelRecord{
+			rec := store.ModelRecord{
 				ID:               m.ID,
 				ProviderID:       m.ProviderID,
 				Weight:           m.Weight,
@@ -296,10 +305,15 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 				InputPer1K:       m.InputPer1K,
 				OutputPer1K:      m.OutputPer1K,
 				Enabled:          m.Enabled,
-			}))
+				PricingSource:    m.PricingSource,
+			}
+			if rec.PricingSource == "" {
+				rec.PricingSource = "manual"
+			}
+			d.warnOnErr("upsert_model", d.Store.UpsertModel(r.Context(), rec))
 		}
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "model.upsert",
 				Resource:  m.ID,
@@ -357,7 +371,7 @@ func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "model.delete",
 				Resource:  id,
@@ -401,6 +415,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 						ID: m.ID, ProviderID: m.ProviderID, Weight: m.Weight,
 						MaxContextTokens: m.MaxContextTokens, InputPer1K: m.InputPer1K,
 						OutputPer1K: m.OutputPer1K, Enabled: m.Enabled,
+						PricingSource: m.PricingSource,
 					}
 					break
 				}
@@ -448,20 +463,28 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 				existing.Enabled = b
 			}
 		}
+		pricingPatched := false
 		if v, ok := patch["input_per_1k"]; ok {
 			if f, ok := v.(float64); ok {
 				existing.InputPer1K = f
+				pricingPatched = true
 			}
 		}
 		if v, ok := patch["output_per_1k"]; ok {
 			if f, ok := v.(float64); ok {
 				existing.OutputPer1K = f
+				pricingPatched = true
 			}
 		}
 		if v, ok := patch["max_context_tokens"]; ok {
 			if f, ok := v.(float64); ok {
 				existing.MaxContextTokens = int(f)
 			}
+		}
+		// When the user explicitly sets pricing, mark source as "manual" so
+		// the auto-refresh won't silently overwrite their values.
+		if pricingPatched {
+			existing.PricingSource = "manual"
 		}
 
 		// Update store and engine.
@@ -477,9 +500,10 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			InputPer1K:       existing.InputPer1K,
 			OutputPer1K:      existing.OutputPer1K,
 			Enabled:          existing.Enabled,
+			PricingSource:    existing.PricingSource,
 		})
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "model.patch",
 				Resource:  id,
@@ -542,7 +566,7 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 		// Apply to engine.
 		d.Engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudgetUSD, cfg.DefaultMaxLatencyMs)
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "routing-config.update",
 				RequestID: middleware.GetReqID(r.Context()),
@@ -663,7 +687,7 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 					salt := d.Vault.Salt()
 					data := d.Vault.Export()
 					if salt != nil {
-						warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+						d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
 					}
 				}
 			}
@@ -680,7 +704,7 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		registerProviderAdapter(d, *existing, apiKeyOverride)
-		warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+		d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 			Timestamp: time.Now().UTC(),
 			Action:    "provider.patch",
 			Resource:  id,
@@ -697,9 +721,9 @@ func parseIntParam(s string) (int, error) {
 }
 
 // parsePagination extracts limit and offset from query parameters.
-// Defaults: limit=10000 (effectively all), offset=0. Max limit=1000 if explicitly set.
+// Default limit=1000, maximum limit=1000. Use explicit pagination for larger sets.
 func parsePagination(r *http.Request) (limit, offset int) {
-	limit = 10000
+	limit = 1000
 	offset = 0
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := parseIntParam(v); err == nil && n > 0 {

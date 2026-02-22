@@ -42,6 +42,13 @@ type Config struct {
 
 	// External credentials file (~/.netrc analogue for provider tokens).
 	CredentialsFile string // TOKENHUB_CREDENTIALS_FILE, default ~/.tokenhub/credentials
+
+	// Pricing refresh from LiteLLM pricing JSON.
+	PricingRefreshEnabled      bool // TOKENHUB_PRICING_REFRESH_ENABLED, default true
+	PricingRefreshIntervalSecs int  // TOKENHUB_PRICING_REFRESH_INTERVAL_SECS, default 3600
+
+	// Graceful shutdown drain timeout.
+	ShutdownDrainSecs int // TOKENHUB_SHUTDOWN_DRAIN_SECS, default 30
 }
 
 func LoadConfig() (Config, error) {
@@ -73,6 +80,11 @@ func LoadConfig() (Config, error) {
 		TemporalTaskQueue: getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
 
 		CredentialsFile: getEnv("TOKENHUB_CREDENTIALS_FILE", defaultCredentialsPath()),
+
+		PricingRefreshEnabled:      getEnvBool("TOKENHUB_PRICING_REFRESH_ENABLED", true),
+		PricingRefreshIntervalSecs: getEnvInt("TOKENHUB_PRICING_REFRESH_INTERVAL_SECS", 3600),
+
+		ShutdownDrainSecs: getEnvInt("TOKENHUB_SHUTDOWN_DRAIN_SECS", 30),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

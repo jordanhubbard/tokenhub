@@ -155,7 +155,7 @@ func recordObservability(d Dependencies, p observeParams) {
 		if !p.Success {
 			statusCode = http.StatusBadGateway
 		}
-		warnOnErr("log_request", d.Store.LogRequest(p.Ctx, store.RequestLog{
+		d.warnOnErr("log_request", d.Store.LogRequest(p.Ctx, store.RequestLog{
 			Timestamp:        time.Now().UTC(),
 			ModelID:          p.ModelID,
 			ProviderID:       p.ProviderID,
@@ -170,7 +170,7 @@ func recordObservability(d Dependencies, p observeParams) {
 			OutputTokens:     p.OutputTokens,
 			TotalTokens:      p.InputTokens + p.OutputTokens,
 		}))
-		warnOnErr("log_reward", d.Store.LogReward(p.Ctx, store.RewardEntry{
+		d.warnOnErr("log_reward", d.Store.LogReward(p.Ctx, store.RewardEntry{
 			Timestamp:       time.Now().UTC(),
 			RequestID:       p.RequestID,
 			ModelID:         p.ModelID,

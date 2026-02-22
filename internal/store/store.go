@@ -81,6 +81,7 @@ type ModelRecord struct {
 	InputPer1K       float64 `json:"input_per_1k"`
 	OutputPer1K      float64 `json:"output_per_1k"`
 	Enabled          bool    `json:"enabled"`
+	PricingSource    string  `json:"pricing_source"` // "manual" | "litellm" | "provider"
 }
 
 // ProviderRecord is the persisted form of a provider configuration.

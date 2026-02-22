@@ -44,6 +44,10 @@ type Policy struct {
 	MaxLatencyMs int
 	MinWeight    int
 	OutputSchema string
+	// EstimatedOutputTokens is the caller's estimate of how many output tokens the
+	// request will produce. Used for cost estimation and budget enforcement.
+	// Defaults to 512 when zero.
+	EstimatedOutputTokens int
 }
 
 // Decision captures the routing outcome: which model and provider were selected.
@@ -56,13 +60,14 @@ type Decision struct {
 
 // Model describes a registered LLM with its provider, pricing, and capabilities.
 type Model struct {
-	ID              string  `json:"id"`
+	ID               string  `json:"id"`
 	ProviderID       string  `json:"provider_id"`
 	Weight           int     `json:"weight"`
 	MaxContextTokens int     `json:"max_context_tokens"`
 	InputPer1K       float64 `json:"input_per_1k"`
 	OutputPer1K      float64 `json:"output_per_1k"`
 	Enabled          bool    `json:"enabled"`
+	PricingSource    string  `json:"pricing_source,omitempty"`
 }
 
 // OrchestrationDirective configures multi-model orchestration (adversarial, vote, refine).

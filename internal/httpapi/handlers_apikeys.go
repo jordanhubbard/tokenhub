@@ -66,7 +66,7 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.create",
 				Resource:  rec.ID,
@@ -141,7 +141,7 @@ func APIKeysRotateHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.rotate",
 				Resource:  id,
@@ -239,7 +239,7 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.update",
 				Resource:  id,
@@ -271,7 +271,7 @@ func APIKeysDeleteHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		if d.Store != nil {
-			warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.revoke",
 				Resource:  id,

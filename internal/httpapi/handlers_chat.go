@@ -22,12 +22,15 @@ import (
 // maxStreamBytes limits streaming response size to prevent memory exhaustion (100 MB).
 const maxStreamBytes = 100 * 1024 * 1024
 
-// warnOnErr logs a warning if a background store operation fails.
-// Used for audit logs, request logs, and reward logs that should not block
-// the response but whose failures must be visible.
-func warnOnErr(op string, err error) {
+// warnOnErr logs a warning if a background store operation fails and increments
+// the store_dropped_total Prometheus counter. Used for audit logs, request logs,
+// and reward logs that should not block the response but must be observable.
+func (d Dependencies) warnOnErr(op string, err error) {
 	if err != nil {
 		slog.Warn("store operation failed", slog.String("op", op), slog.String("error", err.Error()))
+		if d.Metrics != nil {
+			d.Metrics.StoreDroppedTotal.WithLabelValues(op).Inc()
+		}
 	}
 }
 

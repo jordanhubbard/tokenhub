@@ -26,6 +26,13 @@ const (
 	saltLen       = 16
 )
 
+// Sentinel errors returned by vault operations.
+var (
+	ErrVaultLocked          = errors.New("vault is locked")
+	ErrVaultNotEnabled      = errors.New("vault is not enabled")
+	ErrNewPasswordTooShort  = errors.New("new password too short")
+)
+
 // Option configures optional Vault parameters.
 type Option func(*Vault)
 
@@ -283,17 +290,17 @@ func (v *Vault) Decrypt(ciphertext []byte) ([]byte, error) {
 // generated, and all values are re-encrypted under the write lock.
 func (v *Vault) RotatePassword(oldPassword, newPassword []byte) error {
 	if !v.enabled {
-		return errors.New("vault is not enabled")
+		return ErrVaultNotEnabled
 	}
 	if len(newPassword) < 8 {
-		return errors.New("new password too short")
+		return ErrNewPasswordTooShort
 	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	if v.locked {
-		return errors.New("vault is locked")
+		return ErrVaultLocked
 	}
 
 	// Verify the old password matches the current key.

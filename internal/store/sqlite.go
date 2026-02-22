@@ -37,8 +37,8 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// Enable WAL mode and set busy timeout.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;"); err != nil {
+	// Enable WAL mode, busy timeout, and foreign key enforcement.
+	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite pragmas: %w", err)
 	}
@@ -60,7 +60,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS models (
 			id TEXT PRIMARY KEY,
-			provider_id TEXT NOT NULL,
+			provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
 			weight INTEGER NOT NULL DEFAULT 1,
 			max_context_tokens INTEGER NOT NULL DEFAULT 4096,
 			input_per_1k REAL NOT NULL DEFAULT 0,
@@ -157,6 +157,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		{"request_logs", "input_tokens", "ALTER TABLE request_logs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0"},
 		{"request_logs", "output_tokens", "ALTER TABLE request_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0"},
 		{"request_logs", "total_tokens", "ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0"},
+		{"models", "pricing_source", "ALTER TABLE models ADD COLUMN pricing_source TEXT NOT NULL DEFAULT 'manual'"},
 	}
 	for _, m := range alterMigrations {
 		var count int
@@ -179,7 +180,56 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	// Add FK constraint on models.provider_id if not present.
+	// SQLite can't ALTER TABLE to add FK constraints; must recreate the table.
+	if err := s.migrateModelsForeignKey(ctx); err != nil {
+		return fmt.Errorf("migrate models FK: %w", err)
+	}
+
 	return nil
+}
+
+// migrateModelsForeignKey recreates the models table with a FK constraint on
+// provider_id if the constraint is not already present. Idempotent.
+func (s *SQLiteStore) migrateModelsForeignKey(ctx context.Context) error {
+	var fkCount int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_foreign_key_list('models')").Scan(&fkCount); err != nil {
+		return err
+	}
+	if fkCount > 0 {
+		return nil // FK already present
+	}
+
+	// Recreate models table with FK constraint in a transaction.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmts := []string{
+		`CREATE TABLE models_new (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+			weight INTEGER NOT NULL DEFAULT 1,
+			max_context_tokens INTEGER NOT NULL DEFAULT 4096,
+			input_per_1k REAL NOT NULL DEFAULT 0,
+			output_per_1k REAL NOT NULL DEFAULT 0,
+			enabled BOOLEAN NOT NULL DEFAULT 1,
+			pricing_source TEXT NOT NULL DEFAULT 'manual'
+		)`,
+		`INSERT INTO models_new SELECT id, provider_id, weight, max_context_tokens,
+			input_per_1k, output_per_1k, enabled, pricing_source FROM models`,
+		`DROP TABLE models`,
+		`ALTER TABLE models_new RENAME TO models`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("recreate models: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) Close() error {
@@ -190,7 +240,7 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) ListModels(ctx context.Context) ([]ModelRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled FROM models`)
+		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source FROM models`)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +249,7 @@ func (s *SQLiteStore) ListModels(ctx context.Context) ([]ModelRecord, error) {
 	var models []ModelRecord
 	for rows.Next() {
 		var m ModelRecord
-		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Weight, &m.MaxContextTokens, &m.InputPer1K, &m.OutputPer1K, &m.Enabled); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Weight, &m.MaxContextTokens, &m.InputPer1K, &m.OutputPer1K, &m.Enabled, &m.PricingSource); err != nil {
 			return nil, err
 		}
 		models = append(models, m)
@@ -210,8 +260,8 @@ func (s *SQLiteStore) ListModels(ctx context.Context) ([]ModelRecord, error) {
 func (s *SQLiteStore) GetModel(ctx context.Context, id string) (*ModelRecord, error) {
 	var m ModelRecord
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled FROM models WHERE id = ?`, id).
-		Scan(&m.ID, &m.ProviderID, &m.Weight, &m.MaxContextTokens, &m.InputPer1K, &m.OutputPer1K, &m.Enabled)
+		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source FROM models WHERE id = ?`, id).
+		Scan(&m.ID, &m.ProviderID, &m.Weight, &m.MaxContextTokens, &m.InputPer1K, &m.OutputPer1K, &m.Enabled, &m.PricingSource)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -222,17 +272,21 @@ func (s *SQLiteStore) GetModel(ctx context.Context, id string) (*ModelRecord, er
 }
 
 func (s *SQLiteStore) UpsertModel(ctx context.Context, m ModelRecord) error {
+	if m.PricingSource == "" {
+		m.PricingSource = "manual"
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO models (id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO models (id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   provider_id=excluded.provider_id,
 		   weight=excluded.weight,
 		   max_context_tokens=excluded.max_context_tokens,
 		   input_per_1k=excluded.input_per_1k,
 		   output_per_1k=excluded.output_per_1k,
-		   enabled=excluded.enabled`,
-		m.ID, m.ProviderID, m.Weight, m.MaxContextTokens, m.InputPer1K, m.OutputPer1K, m.Enabled)
+		   enabled=excluded.enabled,
+		   pricing_source=excluded.pricing_source`,
+		m.ID, m.ProviderID, m.Weight, m.MaxContextTokens, m.InputPer1K, m.OutputPer1K, m.Enabled, m.PricingSource)
 	return err
 }
 

@@ -729,6 +729,11 @@ func TestModelPatchSuccess(t *testing.T) {
 	mock := &mockSender{id: "p1", resp: json.RawMessage(`{}`)}
 	eng.RegisterAdapter(mock)
 
+	// Create the "p1" provider so model FK constraints are satisfied.
+	provBody, _ := json.Marshal(map[string]any{"id": "p1", "type": "openai", "enabled": true})
+	resp0, _ := http.Post(ts.URL+"/admin/v1/providers", "application/json", bytes.NewReader(provBody))
+	_ = resp0.Body.Close()
+
 	model := router.Model{ID: "m-patch-ok", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true}
 	body, _ := json.Marshal(model)
 	resp, _ := http.Post(ts.URL+"/admin/v1/models", "application/json", bytes.NewReader(body))

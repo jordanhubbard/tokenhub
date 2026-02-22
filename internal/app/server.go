@@ -57,8 +57,11 @@ type Server struct {
 	stopPrune    chan struct{} // signals TSDB prune goroutine to stop
 	stopLogPrune chan struct{} // signals log prune goroutine to stop
 	stopRotation chan struct{} // signals key rotation enforcement goroutine to stop
+	stopPricing  chan struct{} // signals pricing refresh goroutine to stop
 	apiKeyMgr    *apikey.Manager
 	eventBus     *events.Bus
+
+	httpServer *http.Server // set via SetHTTPServer; used by Close() to drain in-flight requests
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -282,6 +285,7 @@ func NewServer(cfg Config) (*Server, error) {
 		stopPrune:        make(chan struct{}),
 		stopLogPrune:     make(chan struct{}),
 		stopRotation:     make(chan struct{}),
+		stopPricing:      make(chan struct{}),
 		apiKeyMgr:        keyMgr,
 		eventBus:         bus,
 	}
@@ -296,6 +300,11 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Start API key rotation enforcement goroutine.
 	go s.rotationEnforceLoop()
+
+	// Start pricing refresh goroutine (polls LiteLLM pricing JSON).
+	if cfg.PricingRefreshEnabled {
+		go s.pricingRefreshLoop()
+	}
 
 	// Ensure admin endpoints are always protected. Auto-generate a token if
 	// the operator didn't set one, and log it so they can use it.
@@ -387,6 +396,12 @@ func NewServer(cfg Config) (*Server, error) {
 
 func (s *Server) Router() http.Handler { return s.r }
 
+// SetHTTPServer registers the HTTP server so that Close() can drain in-flight
+// requests via http.Server.Shutdown before releasing other resources.
+func (s *Server) SetHTTPServer(srv *http.Server) {
+	s.httpServer = srv
+}
+
 // Reload applies hot-reloadable configuration parameters at runtime without
 // restarting the server. It updates rate limiter settings, routing policy
 // defaults, and the log level.
@@ -406,9 +421,25 @@ func (s *Server) Reload(cfg Config) {
 }
 
 func (s *Server) Close() error {
+	// Drain in-flight HTTP requests before stopping background workers.
+	if s.httpServer != nil {
+		drainSecs := s.cfg.ShutdownDrainSecs
+		if drainSecs <= 0 {
+			drainSecs = 30
+		}
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), time.Duration(drainSecs)*time.Second)
+		defer drainCancel()
+		if err := s.httpServer.Shutdown(drainCtx); err != nil {
+			s.logger.Warn("HTTP drain error", slog.String("error", err.Error()))
+		}
+	}
+
 	close(s.stopPrune)
 	close(s.stopLogPrune)
 	close(s.stopRotation)
+	if s.stopPricing != nil {
+		close(s.stopPricing)
+	}
 	if s.stopBandit != nil {
 		s.stopBandit()
 	}
@@ -503,6 +534,105 @@ func (s *Server) rotationEnforceLoop() {
 			return
 		}
 	}
+}
+
+const litellmPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+
+type litellmEntry struct {
+	InputCostPerToken  float64 `json:"input_cost_per_token"`
+	OutputCostPerToken float64 `json:"output_cost_per_token"`
+	MaxInputTokens     int     `json:"max_input_tokens"`
+}
+
+func (s *Server) pricingRefreshLoop() {
+	interval := time.Duration(s.cfg.PricingRefreshIntervalSecs) * time.Second
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	s.refreshPricing() // run immediately on startup
+	for {
+		select {
+		case <-ticker.C:
+			s.refreshPricing()
+		case <-s.stopPricing:
+			return
+		}
+	}
+}
+
+func (s *Server) refreshPricing() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, litellmPricingURL, nil)
+	if err != nil {
+		s.logger.Warn("pricing refresh: build request failed", slog.String("error", err.Error()))
+		return
+	}
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		s.logger.Warn("pricing refresh: fetch failed", slog.String("error", err.Error()))
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Warn("pricing refresh: unexpected status", slog.Int("status", resp.StatusCode))
+		return
+	}
+
+	var pricing map[string]litellmEntry
+	if err := json.NewDecoder(resp.Body).Decode(&pricing); err != nil {
+		s.logger.Warn("pricing refresh: decode failed", slog.String("error", err.Error()))
+		return
+	}
+
+	// Build set of local (self-hosted) provider IDs to skip.
+	providers, _ := s.store.ListProviders(ctx)
+	localProviders := make(map[string]bool)
+	for _, p := range providers {
+		if p.Type == "vllm" {
+			localProviders[p.ID] = true
+		}
+	}
+
+	models, _ := s.store.ListModels(ctx)
+	updated := 0
+	for _, m := range models {
+		if localProviders[m.ProviderID] {
+			continue // skip self-hosted models
+		}
+		// Don't overwrite manually-set pricing.
+		if m.PricingSource == "manual" && (m.InputPer1K != 0 || m.OutputPer1K != 0) {
+			continue
+		}
+		entry, ok := pricing[m.ID]
+		if !ok {
+			continue
+		}
+		m.InputPer1K = entry.InputCostPerToken * 1000
+		m.OutputPer1K = entry.OutputCostPerToken * 1000
+		m.PricingSource = "litellm"
+		if entry.MaxInputTokens > 0 && m.MaxContextTokens == 0 {
+			m.MaxContextTokens = entry.MaxInputTokens
+		}
+		if err := s.store.UpsertModel(ctx, m); err == nil {
+			s.engine.RegisterModel(router.Model{
+				ID:               m.ID,
+				ProviderID:       m.ProviderID,
+				Weight:           m.Weight,
+				MaxContextTokens: m.MaxContextTokens,
+				InputPer1K:       m.InputPer1K,
+				OutputPer1K:      m.OutputPer1K,
+				Enabled:          m.Enabled,
+				PricingSource:    m.PricingSource,
+			})
+			updated++
+		}
+	}
+	s.logger.Info("pricing refresh complete", slog.Int("updated", updated))
 }
 
 // loadCredentialsFile reads a JSON credentials file (default ~/.tokenhub/credentials)
@@ -605,14 +735,12 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 		}
 
 		// Register runtime adapter.
-		switch p.Type {
-		case "anthropic":
-			eng.RegisterAdapter(anthropic.New(p.ID, p.APIKey, p.BaseURL, anthropic.WithTimeout(timeout)))
-		case "vllm":
-			eng.RegisterAdapter(vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout)))
-		default:
-			eng.RegisterAdapter(openai.New(p.ID, p.APIKey, p.BaseURL, openai.WithTimeout(timeout)))
+		adapter, err := newProviderAdapter(p.Type, p.ID, p.APIKey, p.BaseURL, timeout)
+		if err != nil {
+			logger.Warn("skipping credentials provider: unknown type", slog.String("provider", p.ID), slog.String("type", p.Type))
+			continue
 		}
+		eng.RegisterAdapter(adapter)
 		logger.Info("registered provider from credentials file", slog.String("provider", p.ID), slog.String("base_url", p.BaseURL), slog.String("cred_store", credStore))
 	}
 
@@ -663,6 +791,21 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 	)
 }
 
+// newProviderAdapter constructs a runtime adapter for the given provider type,
+// credentials, and base URL. Returns an error for unknown provider types.
+func newProviderAdapter(provType, id, apiKey, baseURL string, timeout time.Duration) (router.Sender, error) {
+	switch provType {
+	case "anthropic":
+		return anthropic.New(id, apiKey, baseURL, anthropic.WithTimeout(timeout)), nil
+	case "vllm":
+		return vllm.New(id, baseURL, vllm.WithTimeout(timeout)), nil
+	case "openai", "":
+		return openai.New(id, apiKey, baseURL, openai.WithTimeout(timeout)), nil
+	default:
+		return nil, fmt.Errorf("unknown provider type %q", provType)
+	}
+}
+
 // loadPersistedProviders reads provider records from the database and creates
 // runtime adapters for any that don't already have one registered (e.g. from
 // the credentials file). This ensures providers added via the admin API
@@ -689,14 +832,12 @@ func loadPersistedProviders(eng *router.Engine, v *vault.Vault, db store.Store, 
 		if p.CredStore == "vault" && v != nil && !v.IsLocked() {
 			apiKey, _ = v.Get("provider:" + p.ID + ":api_key")
 		}
-		switch p.Type {
-		case "anthropic":
-			eng.RegisterAdapter(anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout)))
-		case "vllm":
-			eng.RegisterAdapter(vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout)))
-		default:
-			eng.RegisterAdapter(openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout)))
+		adapter, err := newProviderAdapter(p.Type, p.ID, apiKey, p.BaseURL, timeout)
+		if err != nil {
+			logger.Warn("skipping persisted provider: unknown type", slog.String("provider", p.ID), slog.String("type", p.Type))
+			continue
 		}
+		eng.RegisterAdapter(adapter)
 		registered++
 		logger.Info("registered persisted provider", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
 	}
@@ -720,6 +861,7 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 			InputPer1K:       m.InputPer1K,
 			OutputPer1K:      m.OutputPer1K,
 			Enabled:          m.Enabled,
+			PricingSource:    m.PricingSource,
 		})
 	}
 	if len(models) > 0 {

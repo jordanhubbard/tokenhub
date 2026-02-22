@@ -29,6 +29,9 @@ type Registry struct {
 
 	// Providers skipped during routing, by skip reason.
 	ProviderSkipsTotal *prometheus.CounterVec
+
+	// Store writes dropped due to errors (audit log, request log, reward log).
+	StoreDroppedTotal *prometheus.CounterVec
 }
 
 func New() *Registry {
@@ -80,11 +83,16 @@ func New() *Registry {
 			Name: "tokenhub_provider_skips_total",
 			Help: "Providers skipped during routing, by reason",
 		}, []string{"provider", "reason"}),
+		StoreDroppedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tokenhub_store_dropped_total",
+			Help: "Store writes dropped due to errors (audit/request/reward logs), by operation",
+		}, []string{"op"}),
 	}
 	reg.MustRegister(
 		m.RequestsTotal, m.RequestLatency, m.CostUSD, m.TokensTotal,
 		m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal,
 		m.ProviderHealthState, m.RequestErrorsByStatus, m.ProviderSkipsTotal,
+		m.StoreDroppedTotal,
 	)
 	return m
 }

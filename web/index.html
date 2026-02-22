@@ -132,6 +132,15 @@
     .toggle-switch { cursor: pointer; font-size: 18px; }
     .auth-error { color: #f44336; font-size: 13px; margin-top: 8px; min-height: 18px; }
     @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.full-width { grid-column: 1; } }
+    .model-rank-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #1f2233; font-size: 12px; }
+    .rank-num { min-width: 28px; color: #8a8d9a; font-size: 11px; }
+    .rank-arrows { display: flex; flex-direction: column; gap: 1px; }
+    .rank-arrows .btn.sm { padding: 0 6px; font-size: 10px; line-height: 14px; }
+    .rank-model { flex: 1; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rank-provider { color: #8a8d9a; min-width: 80px; font-size: 11px; }
+    .rank-weight { min-width: 40px; color: #ffc107; font-size: 11px; }
+    .pricing-warn { color: #e8a040; cursor: pointer; }
+    .pricing-local { color: #8a8d9a; }
   </style>
 </head>
 <body>
@@ -358,7 +367,7 @@
         <table><thead><tr><th>Model</th><th>Provider</th><th>Wt</th><th>Reqs</th><th>Tokens</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead>
         <tbody id="leaderboard-body"></tbody></table>
       </div>
-      <h2 style="margin-top:16px">Weights</h2>
+      <h2 style="margin-top:16px">Routing Priority <span style="font-size:10px;color:#555;text-transform:none;letter-spacing:0">(▲▼ to adjust weight)</span></h2>
       <div id="weight-sliders"></div>
     </div>
 
@@ -1001,15 +1010,30 @@ function discoverModels(provId) {
   showModal('wizard-modal');
 }
 
+function pricingCell(m, providerTypes) {
+  const isLocal = providerTypes[m.provider_id] === 'vllm';
+  if (isLocal) return '<span class="pricing-local">$0 local</span>';
+  if ((m.input_per_1k || 0) === 0 && (m.output_per_1k || 0) === 0) {
+    const title = 'No pricing set — click to edit';
+    const src = m.pricing_source ? ` [${m.pricing_source}]` : '';
+    return `<span class="pricing-warn" title="${title}${src}" onclick="editModel('${m.id}','${m.provider_id}',${m.weight},${m.max_context_tokens||0},0,0,${m.enabled})">$0 &#9888; edit</span>`;
+  }
+  const src = m.pricing_source && m.pricing_source !== 'manual' ? ` <span style="color:#555;font-size:10px">[${m.pricing_source}]</span>` : '';
+  return `$${m.input_per_1k}/$${m.output_per_1k}${src}`;
+}
+
 function fetchModels() {
   // Merge store models with engine models so runtime-registered models appear.
   Promise.all([
     fetch('/admin/v1/models').then(r => r.json()).catch(() => ({ items: [] })),
-    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ models: [] }))
-  ]).then(([storeData, engineData]) => {
+    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ models: [] })),
+    fetch('/admin/v1/providers').then(r => r.json()).catch(() => ({ items: [] }))
+  ]).then(([storeData, engineData, provData]) => {
     const storeModels = Array.isArray(storeData.items) ? storeData.items : [];
     const storeIds = new Set(storeModels.map(m => m.id));
     const engineModels = engineData.models || [];
+    const providerTypes = {};
+    (Array.isArray(provData.items) ? provData.items : []).forEach(p => { providerTypes[p.id] = p.type; });
 
     // Add engine-only models not in store.
     const runtimeModels = engineModels.filter(m => !storeIds.has(m.id));
@@ -1021,9 +1045,9 @@ function fetchModels() {
     } else {
       tbody.innerHTML = allModels.map(m => `<tr>
         <td style="font-family:monospace;font-size:12px">${m.id}</td><td>${m.provider_id}</td><td>${m.weight}</td><td>${m.max_context_tokens||'-'}</td>
-        <td>${m.input_per_1k}</td><td>${m.output_per_1k}</td>
+        <td colspan="2">${pricingCell(m, providerTypes)}</td>
         <td><span class="toggle-switch" onclick="toggleModel('${m.id}',${!m.enabled})">${m.enabled?'&#9989;':'&#10060;'}</span></td>
-        <td><button class="btn sm" onclick="editModel('${m.id}','${m.provider_id}',${m.weight},${m.max_context_tokens||0},${m.input_per_1k},${m.output_per_1k},${m.enabled})">Edit</button> <button class="btn danger sm" onclick="deleteModel('${m.id}')">Delete</button></td>
+        <td><button class="btn sm" onclick="editModel('${m.id}','${m.provider_id}',${m.weight},${m.max_context_tokens||0},${m.input_per_1k||0},${m.output_per_1k||0},${m.enabled})">Edit</button> <button class="btn danger sm" onclick="deleteModel('${m.id}')">Delete</button></td>
       </tr>`).join('');
     }
   });
@@ -1098,7 +1122,7 @@ function updateLeaderboard() {
     const items = data.items || data || [];
     if (Array.isArray(items)) {
       items.forEach(m => { modelWeights[m.id] = m.weight; });
-      renderWeightSliders(items);
+      renderModelRanking(items);
     }
   }).catch(() => {});
   fetch('/admin/v1/stats').then(r => r.json()).then(data => {
@@ -1114,14 +1138,38 @@ function updateLeaderboard() {
   }).catch(() => {});
 }
 
-function renderWeightSliders(models) {
-  document.getElementById('weight-sliders').innerHTML = models.map(m => `<div class="weight-slider"><label title="${m.id}">${m.id}</label><input type="range" min="1" max="10" value="${m.weight}" data-model-id="${m.id}" onchange="updateWeight(this)"><span class="weight-val">${m.weight}</span></div>`).join('');
+function renderModelRanking(models) {
+  if (!models || models.length === 0) {
+    document.getElementById('weight-sliders').innerHTML = '<div style="color:#8a8d9a;font-size:12px">No models</div>';
+    return;
+  }
+  // Sort by weight descending for display (higher weight = preferred).
+  const sorted = [...models].sort((a, b) => (b.weight || 1) - (a.weight || 1));
+  document.getElementById('weight-sliders').innerHTML = sorted.map((m, i) => `
+    <div class="model-rank-row">
+      <span class="rank-num">#${i+1}</span>
+      <div class="rank-arrows">
+        <button class="btn sm" onclick="adjustWeight('${m.id}',1)" title="Increase weight">&#9650;</button>
+        <button class="btn sm" onclick="adjustWeight('${m.id}',-1)" title="Decrease weight">&#9660;</button>
+      </div>
+      <span class="rank-model" title="${m.id}">${m.id}</span>
+      <span class="rank-provider">${m.provider_id}</span>
+      <span class="rank-weight">wt:${modelWeights[m.id] !== undefined ? modelWeights[m.id] : (m.weight || '-')}</span>
+      ${m.enabled === false ? '<span class="badge down">off</span>' : ''}
+    </div>`).join('');
 }
 
-function updateWeight(el) {
-  const modelId = el.dataset.modelId;
-  el.nextElementSibling.textContent = el.value;
-  fetch(`/admin/v1/models/${modelId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ weight: parseInt(el.value) }) }).catch(() => {});
+function adjustWeight(modelId, delta) {
+  const current = modelWeights[modelId] !== undefined ? modelWeights[modelId] : 5;
+  const next = Math.min(10, Math.max(1, current + delta));
+  if (next === current) return;
+  fetch(`/admin/v1/models/${modelId}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ weight: next })
+  }).then(r => {
+    if (r.ok) { modelWeights[modelId] = next; updateLeaderboard(); }
+  }).catch(() => showToast('Failed', 'error'));
 }
 
 // ============================

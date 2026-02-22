@@ -211,6 +211,8 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 		}
 	}
 
+	outTok := estOutTokens(p)
+
 	var eligible []Model
 	for _, m := range e.models {
 		if !m.Enabled {
@@ -236,7 +238,7 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 			continue // skip providers in cooldown
 		}
 		if p.MaxBudgetUSD > 0 {
-			est := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+			est := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
 			if est > p.MaxBudgetUSD {
 				skip(m.ProviderID, "budget_exceeded")
 				continue
@@ -265,16 +267,32 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 	}
 
 	// Sort by multi-objective score (lower is better).
-	scores := e.scoreModels(eligible, tokensNeeded, p.Mode)
+	scores := e.scoreModels(eligible, tokensNeeded, outTok, p.Mode)
 	sort.Slice(eligible, func(i, j int) bool {
 		return scores[eligible[i].ID] < scores[eligible[j].ID]
 	})
 	return eligible
 }
 
+// applyHintBoost boosts the hinted model's weight by +3 (capped at 10), re-scores,
+// and re-sorts eligible in place. Returns true if the hint model was found.
+func (e *Engine) applyHintBoost(eligible []Model, hintID string, tokensNeeded, outTokens int, mode string) bool {
+	for i := range eligible {
+		if eligible[i].ID == hintID {
+			eligible[i].Weight = min(10, eligible[i].Weight+3)
+			scores := e.scoreModels(eligible, tokensNeeded, outTokens, mode)
+			sort.Slice(eligible, func(a, b int) bool {
+				return scores[eligible[a].ID] < scores[eligible[b].ID]
+			})
+			return true
+		}
+	}
+	return false
+}
+
 // scoreModels computes a multi-objective score for each eligible model.
 // Lower score = better model for the given routing mode.
-func (e *Engine) scoreModels(models []Model, tokensNeeded int, mode string) map[string]float64 {
+func (e *Engine) scoreModels(models []Model, tokensNeeded, outTokens int, mode string) map[string]float64 {
 	w := modeWeightProfiles["normal"]
 	if mw, ok := modeWeightProfiles[mode]; ok {
 		w = mw
@@ -288,7 +306,7 @@ func (e *Engine) scoreModels(models []Model, tokensNeeded int, mode string) map[
 	sp, hasStats := e.health.(StatsProvider)
 
 	for _, m := range models {
-		cost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+		cost := estimateCostUSD(tokensNeeded, outTokens, m.InputPer1K, m.OutputPer1K)
 		if cost > maxCost {
 			maxCost = cost
 		}
@@ -309,7 +327,7 @@ func (e *Engine) scoreModels(models []Model, tokensNeeded int, mode string) map[
 
 	scores := make(map[string]float64, len(models))
 	for _, m := range models {
-		cost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+		cost := estimateCostUSD(tokensNeeded, outTokens, m.InputPer1K, m.OutputPer1K)
 		normCost := safeNorm(cost, maxCost)
 		normWeight := safeNorm(float64(m.Weight), maxWeight)
 
@@ -366,36 +384,25 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 
 	tokensNeeded := EstimateTokens(req)
 
-	// Honor model hint if specified.
-	if req.ModelHint != "" {
-		if hinted, ok := e.models[req.ModelHint]; ok && hinted.Enabled {
-			if _, hasAdapter := e.adapters[hinted.ProviderID]; hasAdapter {
-				if e.health == nil || e.health.IsAvailable(hinted.ProviderID) {
-					estCost := estimateCostUSD(tokensNeeded, 512, hinted.InputPer1K, hinted.OutputPer1K)
-					eligible := e.eligibleModels(tokensNeeded, p)
-					return Decision{
-						ModelID:          hinted.ID,
-						ProviderID:       hinted.ProviderID,
-						EstimatedCostUSD: estCost,
-						Reason:           "model-hint",
-					}, eligible, nil
-				}
-			}
-		}
-	}
-
 	eligible := e.eligibleModels(tokensNeeded, p)
 	if len(eligible) == 0 {
 		return Decision{}, nil, errors.New("no eligible models registered")
 	}
 
+	outTok := estOutTokens(p)
+	hintApplied := req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
+
 	top := eligible[0]
-	estCost := estimateCostUSD(tokensNeeded, 512, top.InputPer1K, top.OutputPer1K)
+	estCost := estimateCostUSD(tokensNeeded, outTok, top.InputPer1K, top.OutputPer1K)
+	reason := fmt.Sprintf("routed-weight-%d", top.Weight)
+	if hintApplied {
+		reason = "routed-hint-boost"
+	}
 	return Decision{
 		ModelID:          top.ID,
 		ProviderID:       top.ProviderID,
 		EstimatedCostUSD: estCost,
-		Reason:           fmt.Sprintf("routed-weight-%d", top.Weight),
+		Reason:           reason,
 	}, eligible, nil
 }
 
@@ -467,50 +474,20 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	tokensNeeded := EstimateTokens(req)
 	eligible := e.eligibleModels(tokensNeeded, p)
 
-	// Honor model hint if specified.
-	if req.ModelHint != "" {
-		if hinted, ok := e.models[req.ModelHint]; ok && hinted.Enabled {
-			if adapter, hasAdapter := e.adapters[hinted.ProviderID]; hasAdapter {
-				if e.health == nil || e.health.IsAvailable(hinted.ProviderID) {
-					estCost := estimateCostUSD(tokensNeeded, 512, hinted.InputPer1K, hinted.OutputPer1K)
-					slog.Info("trying model hint",
-						slog.String("model", hinted.ID),
-						slog.String("provider", hinted.ProviderID),
-					)
-					sendStart := time.Now()
-					resp, err := adapter.Send(ctx, hinted.ID, req)
-					sendMs := float64(time.Since(sendStart).Milliseconds())
-					if err == nil {
-						if e.health != nil {
-							e.health.RecordSuccess(hinted.ProviderID, sendMs)
-						}
-						return Decision{
-							ModelID:          hinted.ID,
-							ProviderID:       hinted.ProviderID,
-							EstimatedCostUSD: estCost,
-							Reason:           "model-hint",
-						}, resp, nil
-					}
-					if e.health != nil {
-						e.health.RecordError(hinted.ProviderID, err.Error())
-					}
-					slog.Warn("model hint failed, falling through to scored routing",
-						slog.String("model", hinted.ID),
-						slog.String("error", err.Error()),
-					)
-				}
-			}
-		}
-	}
-
 	if len(eligible) == 0 {
 		return Decision{}, nil, errors.New("no eligible models registered")
+	}
+
+	outTok := estOutTokens(p)
+	hintModelID := ""
+	if req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode) {
+		hintModelID = req.ModelHint
 	}
 
 	// Try each eligible model in weight order, with escalation on failure.
 	for i, m := range eligible {
 		adapter := e.adapters[m.ProviderID]
-		estCost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+		estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
 
 		slog.Info("routing request",
 			slog.String("provider", m.ProviderID),
@@ -527,11 +504,15 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			if e.health != nil {
 				e.health.RecordSuccess(m.ProviderID, sendMs)
 			}
+			reason := fmt.Sprintf("routed-weight-%d", m.Weight)
+			if hintModelID != "" && m.ID == hintModelID {
+				reason = "routed-hint-boost"
+			}
 			return Decision{
 				ModelID:          m.ID,
 				ProviderID:       m.ProviderID,
 				EstimatedCostUSD: estCost,
-				Reason:           fmt.Sprintf("routed-weight-%d", m.Weight),
+				Reason:           reason,
 			}, resp, nil
 		}
 
@@ -563,7 +544,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 					return Decision{
 						ModelID:          larger.ID,
 						ProviderID:       larger.ProviderID,
-						EstimatedCostUSD: estimateCostUSD(tokensNeeded, 512, larger.InputPer1K, larger.OutputPer1K),
+						EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, larger.InputPer1K, larger.OutputPer1K),
 						Reason:           "escalated-context-overflow",
 					}, resp2, nil
 				}
@@ -1139,6 +1120,14 @@ func ExtractContent(resp ProviderResponse) string {
 
 func estimateCostUSD(inTokens, outTokens int, inPer1k, outPer1k float64) float64 {
 	return (float64(inTokens)/1000.0)*inPer1k + (float64(outTokens)/1000.0)*outPer1k
+}
+
+// estOutTokens returns the output-token estimate from the policy, defaulting to 512.
+func estOutTokens(p Policy) int {
+	if p.EstimatedOutputTokens > 0 {
+		return p.EstimatedOutputTokens
+	}
+	return 512
 }
 
 func clamp(v, lo, hi float64) float64 {
