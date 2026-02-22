@@ -1,4 +1,4 @@
-.PHONY: build install package run start stop restart admin-show logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
+.PHONY: build install package run start stop restart admin-key logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
 
 INSTALL_DIR ?= $(HOME)/.local/bin
 MAN_DIR     ?= $(HOME)/.local/share/man
@@ -71,7 +71,7 @@ start:
 	docker compose up -d tokenhub
 	@$(MAKE) -s _write-env
 
-admin-show: start
+admin-key: start
 	@grep '^TOKENHUB_ADMIN_TOKEN=' $(HOME)/.tokenhub/env | cut -d= -f2-
 
 stop:
