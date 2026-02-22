@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -109,6 +110,10 @@ type observeParams struct {
 	// Actual token usage extracted from the provider response.
 	InputTokens  int
 	OutputTokens int
+
+	// HTTPStatus is the HTTP response status code sent to the client.
+	// Used to populate tokenhub_request_errors_total. 0 means not set.
+	HTTPStatus int
 }
 
 // recordObservability writes a completed request result to all configured
@@ -127,6 +132,11 @@ func recordObservability(d Dependencies, p observeParams) {
 			status = "error"
 		}
 		d.Metrics.RequestsTotal.WithLabelValues(p.Mode, p.ModelID, p.ProviderID, status).Inc()
+		if !p.Success && p.HTTPStatus > 0 {
+			d.Metrics.RequestErrorsByStatus.WithLabelValues(
+				p.Mode, p.ModelID, p.ProviderID, fmt.Sprintf("%d", p.HTTPStatus),
+			).Inc()
+		}
 		if p.Success {
 			d.Metrics.RequestLatency.WithLabelValues(p.Mode, p.ModelID, p.ProviderID).Observe(float64(p.LatencyMs))
 			d.Metrics.CostUSD.WithLabelValues(p.ModelID, p.ProviderID).Add(p.CostUSD)

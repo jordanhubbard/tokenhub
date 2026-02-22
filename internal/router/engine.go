@@ -63,6 +63,12 @@ type HealthChecker interface {
 	RecordError(providerID string, errMsg string)
 }
 
+// SkipRecorder receives a notification each time a model/provider is excluded
+// from routing. Implemented by the metrics registry to count skip reasons.
+type SkipRecorder interface {
+	RecordProviderSkip(providerID string, reason string)
+}
+
 // StatsProvider optionally extends HealthChecker with scoring data.
 type StatsProvider interface {
 	GetAvgLatencyMs(providerID string) float64
@@ -95,9 +101,10 @@ type EngineConfig struct {
 }
 
 type Engine struct {
-	cfg    EngineConfig
-	health HealthChecker
-	bandit *ThompsonSampler // nil = disabled
+	cfg          EngineConfig
+	health       HealthChecker
+	bandit       *ThompsonSampler // nil = disabled
+	skipRecorder SkipRecorder
 
 	mu       sync.RWMutex
 	models   map[string]Model
@@ -118,6 +125,12 @@ func NewEngine(cfg EngineConfig) *Engine {
 // SetHealthChecker attaches a health tracker to the engine.
 func (e *Engine) SetHealthChecker(h HealthChecker) {
 	e.health = h
+}
+
+// SetSkipRecorder attaches a recorder that is notified whenever a model or
+// provider is excluded from routing (e.g. health_down, budget_exceeded).
+func (e *Engine) SetSkipRecorder(sr SkipRecorder) {
+	e.skipRecorder = sr
 }
 
 // SetBanditPolicy attaches a Thompson Sampling policy for RL-based routing.
@@ -192,28 +205,40 @@ func EstimateTokens(req Request) int {
 
 // eligibleModels returns models sorted by multi-objective score that meet the given constraints.
 func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
+	skip := func(providerID, reason string) {
+		if e.skipRecorder != nil {
+			e.skipRecorder.RecordProviderSkip(providerID, reason)
+		}
+	}
+
 	var eligible []Model
 	for _, m := range e.models {
 		if !m.Enabled {
+			skip(m.ProviderID, "disabled")
 			continue
 		}
 		if p.MinWeight > 0 && m.Weight < p.MinWeight {
+			skip(m.ProviderID, "weight_below_minimum")
 			continue
 		}
 		// Reserve 15% headroom for context estimation.
 		contextWithHeadroom := int(float64(tokensNeeded) * 1.15)
 		if m.MaxContextTokens > 0 && contextWithHeadroom > 0 && contextWithHeadroom > m.MaxContextTokens {
+			skip(m.ProviderID, "context_overflow")
 			continue
 		}
 		if _, ok := e.adapters[m.ProviderID]; !ok {
+			skip(m.ProviderID, "no_adapter")
 			continue // skip models without a registered adapter
 		}
 		if e.health != nil && !e.health.IsAvailable(m.ProviderID) {
+			skip(m.ProviderID, "health_down")
 			continue // skip providers in cooldown
 		}
 		if p.MaxBudgetUSD > 0 {
 			est := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
 			if est > p.MaxBudgetUSD {
+				skip(m.ProviderID, "budget_exceeded")
 				continue
 			}
 		}

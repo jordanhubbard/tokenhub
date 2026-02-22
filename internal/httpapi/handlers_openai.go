@@ -195,8 +195,10 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 
 			streamLatencyMs := time.Since(start).Milliseconds()
 			errClass := ""
+			httpStatus := http.StatusOK
 			if !streamSuccess {
 				errClass = "stream_error"
+				httpStatus = http.StatusBadGateway
 			}
 			recordObservability(d, observeParams{
 				Ctx:             r.Context(),
@@ -210,6 +212,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 				RequestID:       reqID,
 				APIKeyID:        apiKeyID,
 				EstimatedTokens: estimatedTokens,
+				HTTPStatus:      httpStatus,
 			})
 			return
 		}
@@ -229,6 +232,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 				RequestID:       reqID,
 				APIKeyID:        apiKeyID,
 				EstimatedTokens: estimatedTokens,
+				HTTPStatus:      http.StatusBadGateway,
 			})
 			writeOpenAIError(w, err.Error(), "server_error", http.StatusBadGateway)
 			return
@@ -251,6 +255,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			EstimatedTokens: estimatedTokens,
 			InputTokens:     usage.InputTokens,
 			OutputTokens:    usage.OutputTokens,
+			HTTPStatus:      http.StatusOK,
 		})
 
 		// Build OpenAI-compatible response.

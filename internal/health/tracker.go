@@ -53,6 +53,7 @@ func DefaultConfig() TrackerConfig {
 type Tracker struct {
 	cfg      TrackerConfig
 	EventBus *events.Bus
+	onUpdate func(providerID string, state State)
 
 	mu    sync.RWMutex
 	stats map[string]*Stats
@@ -66,6 +67,14 @@ type TrackerOption func(*Tracker)
 func WithEventBus(bus *events.Bus) TrackerOption {
 	return func(t *Tracker) {
 		t.EventBus = bus
+	}
+}
+
+// WithOnUpdate registers a callback invoked on every RecordSuccess/RecordError
+// call (not just state transitions). Use this to keep external gauges current.
+func WithOnUpdate(fn func(providerID string, state State)) TrackerOption {
+	return func(t *Tracker) {
+		t.onUpdate = fn
 	}
 }
 
@@ -104,6 +113,9 @@ func (t *Tracker) RecordSuccess(providerID string, latencyMs float64) {
 	newState := s.State
 	t.mu.Unlock()
 
+	if t.onUpdate != nil {
+		t.onUpdate(providerID, newState)
+	}
 	if oldState != newState && t.EventBus != nil {
 		t.EventBus.Publish(events.Event{
 			Type:       events.EventHealthChange,
@@ -138,6 +150,9 @@ func (t *Tracker) RecordError(providerID string, errMsg string) {
 	newState := s.State
 	t.mu.Unlock()
 
+	if t.onUpdate != nil {
+		t.onUpdate(providerID, newState)
+	}
 	if oldState != newState && t.EventBus != nil {
 		t.EventBus.Publish(events.Event{
 			Type:       events.EventHealthChange,

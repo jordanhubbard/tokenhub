@@ -183,6 +183,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 					RequestID:       middleware.GetReqID(r.Context()),
 					APIKeyID:        apiKeyID,
 					EstimatedTokens: estimatedTokens,
+					HTTPStatus:      http.StatusBadGateway,
 				})
 			}
 			jsonError(w, err.Error(), http.StatusBadGateway)
@@ -208,6 +209,7 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 				EstimatedTokens: estimatedTokens,
 				InputTokens:     usage.InputTokens,
 				OutputTokens:    usage.OutputTokens,
+				HTTPStatus:      http.StatusOK,
 			})
 		}
 

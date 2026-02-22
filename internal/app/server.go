@@ -116,6 +116,7 @@ func NewServer(cfg Config) (*Server, error) {
 		DefaultMaxBudgetUSD: cfg.DefaultMaxBudget,
 		DefaultMaxLatencyMs: cfg.DefaultMaxLatencyMs,
 	})
+	eng.SetSkipRecorder(m)
 
 	// Open store.
 	db, err := store.NewSQLite(cfg.DBDSN)
@@ -156,7 +157,18 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	// Set up health tracking.
-	ht := health.NewTracker(health.DefaultConfig())
+	ht := health.NewTracker(health.DefaultConfig(), health.WithOnUpdate(func(providerID string, state health.State) {
+		var v float64
+		switch state {
+		case health.StateHealthy:
+			v = 2
+		case health.StateDegraded:
+			v = 1
+		default: // StateDown
+			v = 0
+		}
+		m.ProviderHealthState.WithLabelValues(providerID).Set(v)
+	}))
 	eng.SetHealthChecker(ht)
 
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second

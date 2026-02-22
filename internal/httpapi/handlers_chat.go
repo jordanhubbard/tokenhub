@@ -231,8 +231,10 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			} else {
 				// Direct logging path when Temporal is not available.
 				errClass := ""
+				httpStatus := http.StatusOK
 				if !streamSuccess {
 					errClass = "stream_error"
+					httpStatus = http.StatusBadGateway
 				}
 				recordObservability(d, observeParams{
 					Ctx:             r.Context(),
@@ -247,6 +249,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					APIKeyID:        apiKeyID,
 					EstimatedTokens: estimatedTokens,
 					LatencyBudgetMs: latencyBudgetMs,
+					HTTPStatus:      httpStatus,
 				})
 			}
 			return
@@ -351,6 +354,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					APIKeyID:        apiKeyID,
 					EstimatedTokens: estimatedTokens,
 					LatencyBudgetMs: latencyBudgetMs,
+					HTTPStatus:      http.StatusBadGateway,
 				})
 			}
 			jsonError(w, err.Error(), http.StatusBadGateway)
@@ -378,6 +382,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				LatencyBudgetMs: latencyBudgetMs,
 				InputTokens:     usage.InputTokens,
 				OutputTokens:    usage.OutputTokens,
+				HTTPStatus:      http.StatusOK,
 			})
 		}
 

@@ -18,8 +18,17 @@ type Registry struct {
 	TemporalUp       prometheus.Gauge
 
 	// Circuit breaker metrics.
-	TemporalCircuitState prometheus.Gauge   // 0=closed, 1=open, 2=half-open
+	TemporalCircuitState  prometheus.Gauge   // 0=closed, 1=open, 2=half-open
 	TemporalFallbackTotal prometheus.Counter // count of requests that fell back to direct engine
+
+	// Provider health state per provider (2=healthy, 1=degraded, 0=down).
+	ProviderHealthState *prometheus.GaugeVec
+
+	// Request errors broken down by HTTP status code.
+	RequestErrorsByStatus *prometheus.CounterVec
+
+	// Providers skipped during routing, by skip reason.
+	ProviderSkipsTotal *prometheus.CounterVec
 }
 
 func New() *Registry {
@@ -59,9 +68,30 @@ func New() *Registry {
 			Name: "tokenhub_temporal_fallback_total",
 			Help: "Total requests that fell back to direct engine due to circuit breaker",
 		}),
+		ProviderHealthState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tokenhub_provider_health_state",
+			Help: "Current health state per provider (2=healthy, 1=degraded, 0=down)",
+		}, []string{"provider"}),
+		RequestErrorsByStatus: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tokenhub_request_errors_total",
+			Help: "Request errors broken down by HTTP status code",
+		}, []string{"mode", "model", "provider", "http_status"}),
+		ProviderSkipsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tokenhub_provider_skips_total",
+			Help: "Providers skipped during routing, by reason",
+		}, []string{"provider", "reason"}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestLatency, m.CostUSD, m.TokensTotal, m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal)
+	reg.MustRegister(
+		m.RequestsTotal, m.RequestLatency, m.CostUSD, m.TokensTotal,
+		m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal,
+		m.ProviderHealthState, m.RequestErrorsByStatus, m.ProviderSkipsTotal,
+	)
 	return m
+}
+
+// RecordProviderSkip implements router.SkipRecorder.
+func (m *Registry) RecordProviderSkip(providerID string, reason string) {
+	m.ProviderSkipsTotal.WithLabelValues(providerID, reason).Inc()
 }
 
 func (m *Registry) Handler() http.Handler {
