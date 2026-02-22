@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -56,23 +57,68 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
-func (s *SQLiteStore) Migrate(ctx context.Context) error {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS models (
-			id TEXT PRIMARY KEY,
-			provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-			weight INTEGER NOT NULL DEFAULT 1,
-			max_context_tokens INTEGER NOT NULL DEFAULT 4096,
-			input_per_1k REAL NOT NULL DEFAULT 0,
-			output_per_1k REAL NOT NULL DEFAULT 0,
-			enabled BOOLEAN NOT NULL DEFAULT 1
-		)`,
+// schemaVersion records a completed migration.
+type schemaVersion struct {
+	version   int
+	name      string
+	appliedAt time.Time
+}
+
+// migration is a versioned, ordered schema change.
+// run receives a *sql.DB and must be idempotent (safe to call on already-migrated databases).
+type migration struct {
+	version int
+	name    string
+	run     func(ctx context.Context, db *sql.DB) error
+}
+
+// sqlMigration returns a migration that executes a list of SQL statements in order.
+// Statements beginning with "ALTER TABLE ... ADD COLUMN" are silently skipped when
+// the column already exists, so the migration is safe to replay on databases that
+// ran the pre-versioning ad-hoc migration code.
+func sqlMigration(version int, name string, stmts ...string) migration {
+	return migration{
+		version: version,
+		name:    name,
+		run: func(ctx context.Context, db *sql.DB) error {
+			for _, s := range stmts {
+				if _, err := db.ExecContext(ctx, s); err != nil {
+					// SQLite returns "duplicate column name" when ADD COLUMN is
+					// attempted on an already-existing column.  Treat as a no-op
+					// so that databases migrated by the pre-versioning code
+					// don't fail when replaying these migrations.
+					errStr := err.Error()
+					if strings.Contains(errStr, "duplicate column name") || strings.Contains(errStr, "already exists") {
+						continue
+					}
+					return fmt.Errorf("migration %d %s: %w", version, name, err)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+
+// schemaMigrations is the ordered list of all schema changes.
+// New migrations must be appended at the end with a strictly increasing version.
+var schemaMigrations = []migration{
+	sqlMigration(1, "create_base_tables",
 		`CREATE TABLE IF NOT EXISTS providers (
 			id TEXT PRIMARY KEY,
 			type TEXT NOT NULL,
 			enabled BOOLEAN NOT NULL DEFAULT 1,
 			base_url TEXT NOT NULL DEFAULT '',
 			cred_store TEXT NOT NULL DEFAULT 'none'
+		)`,
+		`CREATE TABLE IF NOT EXISTS models (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL,
+			weight INTEGER NOT NULL DEFAULT 1,
+			max_context_tokens INTEGER NOT NULL DEFAULT 4096,
+			input_per_1k REAL NOT NULL DEFAULT 0,
+			output_per_1k REAL NOT NULL DEFAULT 0,
+			enabled BOOLEAN NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE IF NOT EXISTS request_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,99 +184,117 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			enabled INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`,
-	}
-	for _, q := range queries {
-		if _, err := s.db.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("migrate: %w", err)
-		}
-	}
-
-	// Backwards-compatible ALTER TABLE migrations.
-	// Each migration is idempotent: we check if the column exists before adding.
-	alterMigrations := []struct {
-		table  string
-		column string
-		ddl    string
-	}{
-		{"request_logs", "api_key_id", "ALTER TABLE request_logs ADD COLUMN api_key_id TEXT NOT NULL DEFAULT ''"},
-		{"api_keys", "monthly_budget_usd", "ALTER TABLE api_keys ADD COLUMN monthly_budget_usd REAL NOT NULL DEFAULT 0"},
-		{"request_logs", "input_tokens", "ALTER TABLE request_logs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0"},
-		{"request_logs", "output_tokens", "ALTER TABLE request_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0"},
-		{"request_logs", "total_tokens", "ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0"},
-		{"models", "pricing_source", "ALTER TABLE models ADD COLUMN pricing_source TEXT NOT NULL DEFAULT 'manual'"},
-		{"api_keys", "rate_limit_rps", "ALTER TABLE api_keys ADD COLUMN rate_limit_rps INTEGER NOT NULL DEFAULT 0"},
-	}
-	for _, m := range alterMigrations {
-		var count int
-		err := s.db.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
-			m.table, m.column).Scan(&count)
-		if err != nil {
-			return fmt.Errorf("migrate check column %s.%s: %w", m.table, m.column, err)
-		}
-		if count == 0 {
-			if _, err := s.db.ExecContext(ctx, m.ddl); err != nil {
-				return fmt.Errorf("migrate alter %s add %s: %w", m.table, m.column, err)
+	),
+	sqlMigration(2, "add_request_logs_api_key_id",
+		`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id)`,
+	),
+	sqlMigration(3, "add_api_keys_monthly_budget",
+		`ALTER TABLE api_keys ADD COLUMN monthly_budget_usd REAL NOT NULL DEFAULT 0`,
+	),
+	sqlMigration(4, "add_request_logs_token_columns",
+		`ALTER TABLE request_logs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0`,
+	),
+	sqlMigration(5, "add_models_pricing_source",
+		`ALTER TABLE models ADD COLUMN pricing_source TEXT NOT NULL DEFAULT 'manual'`,
+	),
+	{
+		version: 6,
+		name:    "add_models_provider_fk",
+		run: func(ctx context.Context, db *sql.DB) error {
+			// SQLite cannot add FK constraints via ALTER TABLE; recreate the table.
+			var fkCount int
+			if err := db.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM pragma_foreign_key_list('models')").Scan(&fkCount); err != nil {
+				return err
 			}
-		}
-	}
-
-	// Add index on request_logs.api_key_id for budget queries.
-	if _, err := s.db.ExecContext(ctx,
-		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id)`); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-
-	// Add FK constraint on models.provider_id if not present.
-	// SQLite can't ALTER TABLE to add FK constraints; must recreate the table.
-	if err := s.migrateModelsForeignKey(ctx); err != nil {
-		return fmt.Errorf("migrate models FK: %w", err)
-	}
-
-	return nil
+			if fkCount > 0 {
+				return nil // already has FK
+			}
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback() }()
+			for _, stmt := range []string{
+				`CREATE TABLE models_new (
+					id TEXT PRIMARY KEY,
+					provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+					weight INTEGER NOT NULL DEFAULT 1,
+					max_context_tokens INTEGER NOT NULL DEFAULT 4096,
+					input_per_1k REAL NOT NULL DEFAULT 0,
+					output_per_1k REAL NOT NULL DEFAULT 0,
+					enabled BOOLEAN NOT NULL DEFAULT 1,
+					pricing_source TEXT NOT NULL DEFAULT 'manual'
+				)`,
+				`INSERT INTO models_new SELECT id, provider_id, weight, max_context_tokens,
+					input_per_1k, output_per_1k, enabled, pricing_source FROM models`,
+				`DROP TABLE models`,
+				`ALTER TABLE models_new RENAME TO models`,
+			} {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return fmt.Errorf("recreate models with FK: %w", err)
+				}
+			}
+			return tx.Commit()
+		},
+	},
+	sqlMigration(7, "add_api_keys_rate_limit_rps",
+		`ALTER TABLE api_keys ADD COLUMN rate_limit_rps INTEGER NOT NULL DEFAULT 0`,
+	),
 }
 
-// migrateModelsForeignKey recreates the models table with a FK constraint on
-// provider_id if the constraint is not already present. Idempotent.
-func (s *SQLiteStore) migrateModelsForeignKey(ctx context.Context) error {
-	var fkCount int
-	if err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM pragma_foreign_key_list('models')").Scan(&fkCount); err != nil {
-		return err
-	}
-	if fkCount > 0 {
-		return nil // FK already present
+// Migrate applies all pending schema migrations in version order.
+// Each migration is recorded in the schema_migrations table; applied migrations
+// are skipped on subsequent runs. New migrations must be appended to schemaMigrations
+// with a strictly increasing version number.
+func (s *SQLiteStore) Migrate(ctx context.Context) error {
+	// Bootstrap the version-tracking table. This must run unconditionally before
+	// any migration so that the table exists even on a fresh database.
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    INTEGER PRIMARY KEY,
+		name       TEXT NOT NULL,
+		applied_at TEXT NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	// Recreate models table with FK constraint in a transaction.
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Load the set of already-applied versions.
+	rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
 	if err != nil {
-		return err
+		return fmt.Errorf("read schema_migrations: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	applied := make(map[int]bool)
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan schema_migrations: %w", err)
+		}
+		applied[v] = true
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate schema_migrations: %w", err)
+	}
 
-	stmts := []string{
-		`CREATE TABLE models_new (
-			id TEXT PRIMARY KEY,
-			provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-			weight INTEGER NOT NULL DEFAULT 1,
-			max_context_tokens INTEGER NOT NULL DEFAULT 4096,
-			input_per_1k REAL NOT NULL DEFAULT 0,
-			output_per_1k REAL NOT NULL DEFAULT 0,
-			enabled BOOLEAN NOT NULL DEFAULT 1,
-			pricing_source TEXT NOT NULL DEFAULT 'manual'
-		)`,
-		`INSERT INTO models_new SELECT id, provider_id, weight, max_context_tokens,
-			input_per_1k, output_per_1k, enabled, pricing_source FROM models`,
-		`DROP TABLE models`,
-		`ALTER TABLE models_new RENAME TO models`,
-	}
-	for _, stmt := range stmts {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("recreate models: %w", err)
+	// Run pending migrations in order.
+	for _, m := range schemaMigrations {
+		if applied[m.version] {
+			continue
+		}
+		if err := m.run(ctx, s.db); err != nil {
+			return fmt.Errorf("migration %d (%s): %w", m.version, m.name, err)
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)`,
+			m.version, m.name, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("record migration %d: %w", m.version, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *SQLiteStore) Close() error {

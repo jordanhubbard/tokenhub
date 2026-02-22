@@ -175,6 +175,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		}
 		r.Post("/chat", ChatHandler(d))
 		r.Post("/chat/completions", ChatCompletionsHandler(d))
+		r.Post("/embeddings", EmbeddingsHandler(d))
 		r.Get("/models", ModelsListPublicHandler(d))
 		r.Post("/plan", PlanHandler(d))
 	})
