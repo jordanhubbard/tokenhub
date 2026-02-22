@@ -1,4 +1,6 @@
-.PHONY: build package run start stop restart logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup
+.PHONY: build install package run start stop restart logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup
+
+INSTALL_DIR ?= $(HOME)/.local/bin
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -37,6 +39,16 @@ builder: setup
 build: builder
 	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
 	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
+
+# ──── Install ────
+# Builds natively on the host (requires Go 1.24+) and installs to ~/.local/bin.
+
+install:
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
+	@mkdir -p $(INSTALL_DIR)
+	cp bin/tokenhub bin/tokenhubctl $(INSTALL_DIR)/
+	@echo "Installed tokenhub and tokenhubctl to $(INSTALL_DIR)"
 
 # ──── Package ────
 

@@ -383,7 +383,8 @@ All build operations run inside Docker containers via Make. No host Go installat
 
 | Target | Description |
 |--------|-------------|
-| `make build` | Build `tokenhub` and `tokenhubctl` to `bin/` |
+| `make build` | Build `tokenhub` and `tokenhubctl` to `bin/` (inside builder container) |
+| `make install` | Build natively and install to `~/.local/bin` (requires Go 1.24+) |
 | `make run` | Build Docker image, start via `docker compose up`, tail logs |
 | `make start` | Start the service (no rebuild) |
 | `make stop` | Stop the service |

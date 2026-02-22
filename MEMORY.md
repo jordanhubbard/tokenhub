@@ -127,6 +127,7 @@ tokenhub/
 | Command | What It Does |
 |---------|--------------|
 | `make build` | Compiles `bin/tokenhub` and `bin/tokenhubctl` inside the builder container |
+| `make install` | Builds natively on the host and installs to `~/.local/bin` (requires Go 1.24+) |
 | `make package` | Builds the production Docker image (`tokenhub:$(VERSION)` + `tokenhub:latest`) |
 | `make run` | Builds image, starts compose stack, tails logs |
 | `make start` | Start the service (no rebuild) |
