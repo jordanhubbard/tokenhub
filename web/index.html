@@ -1091,14 +1091,18 @@ function fetchVaultStatus() {
       document.getElementById('vault-label').textContent = 'Unlocked';
       document.getElementById('vault-controls').innerHTML = '<button class="btn danger" onclick="vaultLock()">Lock</button>';
     } else if (!vaultInitialized) {
-      document.getElementById('vault-label').textContent = 'First-Time Setup';
+      document.getElementById('vault-label').textContent = 'Not Initialized — First-Time Setup Required';
       document.getElementById('vault-controls').innerHTML =
-        '<div style="max-width:420px">' +
-        '<p style="font-size:13px;color:#ffc107;margin-bottom:8px">The vault has not been initialized yet. Choose a master password (8+ characters) to encrypt your provider API keys and secrets.</p>' +
-        '<p style="font-size:12px;color:#8a8d9a;margin-bottom:10px">This password will be required each time you restart TokenHub. Store it somewhere safe.</p>' +
-        '<div style="display:flex;gap:8px;align-items:center">' +
-        '<input type="password" id="vault-password" placeholder="Choose a master password (8+ chars)" style="flex:1;background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:4px;font-size:13px">' +
-        ' <button class="btn primary" onclick="vaultUnlock()">Initialize Vault</button>' +
+        '<div style="max-width:480px">' +
+        '<div style="background:#2a2000;border:1px solid #554400;border-radius:6px;padding:12px;margin-bottom:12px">' +
+        '<p style="font-size:13px;color:#ffc107;margin-bottom:6px"><strong>Welcome!</strong> The vault has never been set up on this instance.</p>' +
+        '<p style="font-size:12px;color:#ccc">Choose a master password to encrypt your provider API keys and secrets. ' +
+        'You will need this password each time TokenHub restarts (or set <code style="background:#12141d;padding:2px 4px;border-radius:3px;font-size:11px">TOKENHUB_VAULT_PASSWORD</code> for automatic unlock).</p>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px">' +
+        '<input type="password" id="vault-password" placeholder="Choose a master password (8+ characters)" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:8px 10px;border-radius:4px;font-size:13px">' +
+        '<input type="password" id="vault-password-confirm" placeholder="Confirm master password" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:8px 10px;border-radius:4px;font-size:13px">' +
+        '<button class="btn primary" onclick="vaultUnlock()" style="align-self:flex-start;padding:8px 20px">Initialize Vault</button>' +
         '</div></div>';
     } else {
       document.getElementById('vault-label').textContent = 'Locked';
@@ -1112,6 +1116,11 @@ function vaultUnlock() {
   const pw = document.getElementById('vault-password');
   if (!pw?.value) return;
   if (pw.value.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+  if (!vaultInitialized) {
+    const confirm = document.getElementById('vault-password-confirm');
+    if (!confirm?.value) { showToast('Please confirm your password', 'error'); return; }
+    if (pw.value !== confirm.value) { showToast('Passwords do not match', 'error'); return; }
+  }
   fetch('/admin/v1/vault/unlock', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({admin_password:pw.value}) })
     .then(r => { if (!r.ok) throw 0; showToast(vaultInitialized ? 'Unlocked' : 'Vault initialized and unlocked', 'success'); fetchVaultStatus(); })
     .catch(() => showToast('Failed','error'));
