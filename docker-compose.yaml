@@ -1,6 +1,6 @@
 services:
   tokenhub:
-    image: tokenhub:v0.2.5-6-g13a5d7a-dirty
+    image: tokenhub:latest
     ports:
       - "8090:8080"
     environment:

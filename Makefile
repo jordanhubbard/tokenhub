@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-integration test-e2e vet lint docker clean docs docs-serve release release-major release-minor release-patch builder setup bootstrap
+.PHONY: build package run test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup bootstrap
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -15,12 +15,15 @@ DOCKER_RUN    := docker run --rm \
 # --load ensures the image is available to the local docker daemon.
 DOCKER_BUILD := $(shell docker buildx version >/dev/null 2>&1 && echo "docker buildx build --load" || echo "docker build")
 
+# Host port the tokenhub container exposes (must match docker-compose.yaml).
+TOKENHUB_PORT ?= 8090
+
 # ──── Host setup ────
 
 # setup aligns the host Docker CLI to the best available configuration.
 # On macOS with Homebrew-installed Docker, stale Docker Desktop symlinks in
-# ~/.docker/cli-plugins/ shadow the working Homebrew binaries.  This target
-# detects and repairs that situation.
+# ~/.docker/cli-plugins/ shadow the working Homebrew binaries.
+# No-op on Linux.
 setup:
 	@scripts/setup-docker.sh
 
@@ -35,23 +38,28 @@ build: builder
 	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
 	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
 
+# ──── Package ────
+
+# package builds the production container image and tags it as both
+# tokenhub:<version> (for pinning) and tokenhub:latest (for compose).
+package: setup
+	$(DOCKER_BUILD) -t tokenhub:$(VERSION) -t tokenhub:latest .
+
 # ──── Run ────
 
-run: docker
+run: package
 	docker compose up -d
 	@$(MAKE) -s bootstrap
 	docker compose logs -f tokenhub
 
 # ──── Bootstrap ────
 
-TOKENHUB_PORT ?= 8090
-
 bootstrap:
 	@if [ -f bootstrap.local ]; then \
 		max=50; attempt=0; \
 		while [ $$attempt -lt $$max ]; do \
-			if curl -sf http://localhost:$(TOKENHUB_PORT)/healthz > /dev/null 2>&1; then \
-				echo "TokenHub is healthy, running bootstrap.local..."; \
+			if curl -s -o /dev/null -w '%{http_code}' http://localhost:$(TOKENHUB_PORT)/healthz 2>/dev/null | grep -qE '^(200|503)$$'; then \
+				echo "TokenHub is responding, running bootstrap.local..."; \
 				chmod +x bootstrap.local && TOKENHUB_URL=http://localhost:$(TOKENHUB_PORT) ./bootstrap.local; \
 				break; \
 			fi; \
@@ -59,7 +67,7 @@ bootstrap:
 			sleep 2; \
 		done; \
 		if [ $$attempt -ge $$max ]; then \
-			echo "WARNING: TokenHub did not become healthy in 100s, skipping bootstrap.local"; \
+			echo "WARNING: TokenHub did not respond within 100s, skipping bootstrap.local"; \
 			echo "         Run 'make bootstrap' manually once TokenHub is ready."; \
 		fi; \
 	else \
@@ -77,10 +85,10 @@ test-race: builder
 test-coverage: builder
 	$(DOCKER_RUN) go test -race -coverprofile=coverage.out ./...
 
-test-integration: docker
+test-integration: package
 	@bash tests/integration.sh
 
-test-e2e:
+test-e2e: package
 	@bash tests/e2e-temporal.sh
 
 # ──── Code quality ────
@@ -90,11 +98,6 @@ vet: builder
 
 lint: builder
 	$(DOCKER_RUN) golangci-lint run --concurrency=1
-
-# ──── Docker ────
-
-docker: setup
-	$(DOCKER_BUILD) -t tokenhub:$(VERSION) .
 
 # ──── Docs ────
 

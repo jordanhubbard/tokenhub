@@ -5,18 +5,23 @@ FROM golang:1.24-alpine AS build
 ARG VERSION=dev
 WORKDIR /src
 
-# Install build dependencies: git, certificates, mdbook (pre-built), golangci-lint.
+# Install build dependencies: git, certificates, mdbook.
+# golangci-lint is NOT included here — it's only needed in the dev image
+# (Dockerfile.dev) for `make lint`. Keeping it out of the production build
+# avoids a 15 MB download from GitHub's CDN which frequently times out.
 ARG TARGETARCH
-RUN apk add --no-cache git ca-certificates curl bash && \
-    MDBOOK_VERSION=0.4.44 && \
-    case "${TARGETARCH}" in \
+RUN apk add --no-cache git ca-certificates curl bash
+
+ARG MDBOOK_VERSION=0.4.44
+RUN case "${TARGETARCH}" in \
       amd64) MDBOOK_ARCH="x86_64-unknown-linux-musl" ;; \
       arm64) MDBOOK_ARCH="aarch64-unknown-linux-musl" ;; \
       *) echo "unsupported arch: ${TARGETARCH}" && exit 1 ;; \
     esac && \
-    curl -sSL --retry 3 --retry-delay 5 "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-${MDBOOK_ARCH}.tar.gz" \
-      -o /tmp/mdbook.tar.gz && tar xz -C /usr/local/bin -f /tmp/mdbook.tar.gz && rm /tmp/mdbook.tar.gz && \
-    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin
+    curl -sSL --retry 3 --retry-delay 5 --max-time 120 \
+      "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-${MDBOOK_ARCH}.tar.gz" \
+      -o /tmp/mdbook.tar.gz && \
+    tar xz -C /usr/local/bin -f /tmp/mdbook.tar.gz && rm /tmp/mdbook.tar.gz
 
 # Download Go dependencies first (layer cache).
 COPY go.mod go.sum ./
