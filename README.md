@@ -18,7 +18,7 @@ An LLM routing proxy that routes, arbitrates, and orchestrates requests across m
 - **Observability** -- Prometheus metrics, embedded TSDB, structured logging, health tracking, SSE event bus, audit logs, and request logs
 - **Idempotency** -- automatic request deduplication via `Idempotency-Key` header
 - **Hot reload** -- send SIGHUP to reload configuration without restarting
-- **External token injection** -- `bootstrap.local` scripts and `~/.tokenhub/credentials` file for git-safe secret management
+- **External token injection** -- `~/.tokenhub/credentials` file for declarative, git-safe secret management
 
 ## Architecture Overview
 
@@ -38,7 +38,7 @@ TokenHub sits between clients and LLM providers as a reverse proxy. Its core com
 
 **Admin UI** -- Embedded single-page application served at `/admin` with panels for vault management, provider configuration, model registry, routing policy, health status, request/audit logs, API key management, reward data, and Temporal workflow visibility. Features a multi-step setup wizard, model discovery, what-if routing simulator, and real-time SSE decision feed.
 
-**tokenhubctl** -- Command-line interface for all admin operations. Covers vault, providers, models, routing, API keys, logs, events, and diagnostics. Useful for scripting, CI/CD pipelines, and `bootstrap.local` scripts.
+**tokenhubctl** -- Command-line interface for all admin operations. Covers vault, providers, models, routing, API keys, logs, events, and diagnostics. Useful for scripting and CI/CD pipelines.
 
 **TSDB** -- Lightweight embedded time-series database for latency, cost, and throughput metrics with configurable retention and pruning.
 
@@ -78,13 +78,24 @@ A freshly started TokenHub has no providers. You can add any LLM endpoint
 that speaks the OpenAI, Anthropic, or vLLM protocol — this includes NVIDIA NIM,
 Azure OpenAI, Together AI, Groq, Fireworks, Mistral, local Ollama, and more.
 
-The recommended approach for development is `bootstrap.local`:
+The recommended approach is `~/.tokenhub/credentials` — a declarative JSON file
+that seeds providers and models at startup. It lives outside the source tree,
+requires `0600` permissions, and persists entries to the database on first boot:
 
 ```bash
-cp bootstrap.local.example bootstrap.local
-chmod +x bootstrap.local
-# Edit bootstrap.local with your providers, models, and API keys
-make run     # builds image, starts compose, runs bootstrap.local, tails logs
+mkdir -p ~/.tokenhub && chmod 700 ~/.tokenhub
+cat > ~/.tokenhub/credentials << 'EOF'
+{
+  "providers": [
+    {"id": "my-provider", "type": "openai", "base_url": "https://api.example.com", "api_key": "sk-..."}
+  ],
+  "models": [
+    {"id": "my-model", "provider_id": "my-provider", "weight": 8, "max_context_tokens": 128000}
+  ]
+}
+EOF
+chmod 600 ~/.tokenhub/credentials
+make run     # builds image, starts compose, tails logs
 ```
 
 You can also register providers interactively via `tokenhubctl`, the admin API,
@@ -130,7 +141,7 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 |----------|---------|-------------|
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
 
-Providers are registered at runtime via `bootstrap.local`, the admin API, `tokenhubctl`, or the admin UI. See [Provider Management](docs/src/admin/providers.md).
+Providers are registered at runtime via `~/.tokenhub/credentials`, the admin API, `tokenhubctl`, or the admin UI. See [Provider Management](docs/src/admin/providers.md).
 
 ### Routing Defaults
 
@@ -373,7 +384,7 @@ All build operations run inside Docker containers via Make. No host Go installat
 | Target | Description |
 |--------|-------------|
 | `make build` | Build `tokenhub` and `tokenhubctl` to `bin/` |
-| `make run` | Build Docker image, start via `docker compose up`, run bootstrap |
+| `make run` | Build Docker image, start via `docker compose up`, tail logs |
 | `make test` | Run unit tests |
 | `make test-race` | Run tests with Go race detector |
 | `make test-coverage` | Run tests with coverage report (`coverage.out`) |

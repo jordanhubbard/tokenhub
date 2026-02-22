@@ -116,7 +116,7 @@ tokenhub/
 ├── Dockerfile                    # Multi-stage production image (Alpine 3.21)
 ├── Dockerfile.dev                # Builder image with Go + mdbook + golangci-lint
 ├── docker-compose.yaml           # Local dev stack (tokenhub + Temporal + mock vLLM)
-├── bootstrap.local.example       # Example post-startup provider registration script
+├── .gitignore                    # Includes bootstrap.local (legacy, superseded by ~/.tokenhub/credentials)
 └── CLAUDE.md                     # AI assistant workflow instructions
 ```
 
@@ -128,7 +128,7 @@ tokenhub/
 |---------|--------------|
 | `make build` | Compiles `bin/tokenhub` and `bin/tokenhubctl` inside the builder container |
 | `make package` | Builds the production Docker image (`tokenhub:$(VERSION)` + `tokenhub:latest`) |
-| `make run` | Builds image, starts compose stack, runs `bootstrap.local`, tails logs |
+| `make run` | Builds image, starts compose stack, tails logs |
 | `make test` | Runs `go test ./...` inside the builder container |
 | `make test-race` | Tests with race detector |
 | `make test-coverage` | Tests with coverage profile |
@@ -162,7 +162,7 @@ All config is via environment variables (`TOKENHUB_*`). See `internal/app/config
 | `TOKENHUB_ADMIN_TOKEN` | (auto-generated if empty) | Bearer token for `/admin/v1/*` endpoints |
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
 | `TOKENHUB_VAULT_PASSWORD` | — | Auto-unlock vault at startup (headless/automated mode) |
-| `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | JSON file with providers/models (must be mode 0600) |
+| `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Declarative JSON file with providers/models; persisted to DB on load (must be mode 0600) |
 | `TOKENHUB_TEMPORAL_ENABLED` | `false` | Enable Temporal workflow engine |
 | `TOKENHUB_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
 | `TOKENHUB_RATE_LIMIT_RPS` | `60` | Per-IP rate limit (applied to `/v1/*` only) |
@@ -446,7 +446,7 @@ curl http://localhost:8080/admin/v1/health
 
 ### Common issues
 
-1. **"no eligible models registered"**: Either no adapters are registered (check `TOKENHUB_*_API_KEY` env vars), or the only adapter's provider is in health cooldown. Check `/admin/v1/health` for cooldown state.
+1. **"no eligible models registered"**: Either no adapters are registered (check `~/.tokenhub/credentials` and `/admin/v1/providers`), or the only adapter's provider is in health cooldown. Check `/admin/v1/health` for cooldown state.
 
 2. **Health prober uses stale endpoint**: The prober is initialized once at startup. If you PATCH a provider's `base_url`, the adapter is re-registered but the prober keeps probing the old endpoint. Restart the container to fix.
 
@@ -456,9 +456,9 @@ curl http://localhost:8080/admin/v1/health
 
 5. **Model IDs with slashes fail on PATCH/DELETE**: Use the wildcard routes (`/admin/v1/models/*`) and do NOT URL-encode the slashes. The UI sends literal `/` characters.
 
-6. **Cost is $0 for all requests**: Check that models have `input_per_1k` and `output_per_1k` set to non-zero values. Models registered via `bootstrap.local`, credentials file, or admin API may have pricing set to 0 if not explicitly provided.
+6. **Cost is $0 for all requests**: Check that models have `input_per_1k` and `output_per_1k` set to non-zero values. Models registered via the credentials file or admin API may have pricing set to 0 if not explicitly provided.
 
-7. **Vault is locked after restart**: The vault salt is persisted in the database, but the master password is not stored anywhere. You must unlock the vault via the UI or API after every restart.
+7. **Vault is locked after restart**: The vault salt is persisted in the database, but the master password is not stored anywhere. Set `TOKENHUB_VAULT_PASSWORD` for automatic unlock, or unlock manually via the UI or API after each restart.
 
 ## Testing
 
@@ -515,11 +515,15 @@ The `scripts/release.sh` script:
 ```bash
 # First time setup
 make setup                  # Fix Docker CLI issues (macOS)
-cp bootstrap.local.example bootstrap.local  # Edit with your API keys
 cp .env.example .env        # Edit with your tokens
 
+# Create credentials file
+mkdir -p ~/.tokenhub && chmod 700 ~/.tokenhub
+# Edit ~/.tokenhub/credentials with your providers and API keys (see docs)
+chmod 600 ~/.tokenhub/credentials
+
 # Build and run
-make run                    # Builds image, starts stack, runs bootstrap, tails logs
+make run                    # Builds image, starts stack, tails logs
 
 # After code changes, rebuild
 make package                # Rebuild image
@@ -543,13 +547,13 @@ make build
 
 5. **Timestamp precision loss**: `ListRequestLogs` and other SQLite read paths used `time.Parse(time.RFC3339, ...)` which truncates sub-second precision. Go's `time.Now()` produces nanosecond timestamps stored as RFC3339Nano strings. Added `parseTime()` helper that tries RFC3339Nano first.
 
-6. **docker-compose vLLM endpoint mismatch**: The compose file had a mock vLLM endpoint while the real endpoint was different. Resolved by removing provider env vars entirely — providers are now registered at runtime via the admin API, `bootstrap.local`, `tokenhubctl`, or the UI.
+6. **docker-compose vLLM endpoint mismatch**: The compose file had a mock vLLM endpoint while the real endpoint was different. Resolved by removing provider env vars entirely — providers are now loaded from `~/.tokenhub/credentials` at startup or registered at runtime via the admin API, `tokenhubctl`, or the UI.
 
-7. **Persisted providers not restored on restart**: Providers registered via the admin API or `bootstrap.local` had their DB records preserved but no runtime adapters were created at startup. Added `loadPersistedProviders()` in `server.go` that reads provider records from the DB and creates adapters before the health prober starts, so persisted providers survive restarts.
+7. **Persisted providers not restored on restart**: Providers registered via the admin API had their DB records preserved but no runtime adapters were created at startup. Added `loadPersistedProviders()` in `server.go` that reads provider records from the DB and creates adapters before the health prober starts, so persisted providers survive restarts.
 
-8. **Makefile bootstrap health check wrong port**: The `make bootstrap` target checked `http://localhost:8080/healthz` but docker-compose maps host port 8090 to container port 8080. Made the port configurable via `TOKENHUB_PORT` (default 8090).
+8. **Provider upsert defaults `enabled` to `false`**: The `ProvidersUpsertHandler` decoded the JSON request into a `ProviderUpsertRequest` struct. When the JSON omitted the `enabled` field, Go's zero-value `false` was stored in the DB, overwriting previously-enabled providers. Fixed by defaulting `req.Enabled = true` before JSON decode.
 
-9. **Provider upsert defaults `enabled` to `false`**: The `ProvidersUpsertHandler` decoded the JSON request into a `ProviderUpsertRequest` struct. When the JSON omitted the `enabled` field, Go's zero-value `false` was stored in the DB, overwriting previously-enabled providers. Fixed by defaulting `req.Enabled = true` before JSON decode.
+9. **Credentials file was runtime-only**: The `loadCredentialsFile()` function only created runtime adapters without persisting to the database or storing API keys in the vault. Fixed by enhancing it to upsert providers/models to the DB and store API keys in the vault when unlocked. This makes the credentials file a complete bootstrap mechanism — providers persist across restarts after first load.
 
 ## Architecture Decisions
 
@@ -557,6 +561,6 @@ make build
 - **Single-binary server** — no sidecar processes needed; Temporal and OTel are opt-in
 - **Embedded UI** via `go:embed` — no separate frontend build step or asset server
 - **Provider response treated as opaque `json.RawMessage`** — the router doesn't parse responses; it's the handler layer that extracts usage data for observability
-- **Health prober includes persisted providers** — `loadPersistedProviders()` runs before the prober starts, so both env-var and DB-stored providers are probed from boot
+- **Health prober includes persisted providers** — `loadPersistedProviders()` runs before the prober starts, so both credentials-file and DB-stored providers are probed from boot
 - **Thompson Sampling parameters** are refreshed from the reward_logs table every 5 minutes by a background goroutine
 - **Idempotency** is enforced via an in-memory cache with 5-minute TTL and 10k max entries

@@ -174,22 +174,6 @@ tokenhubctl tsdb query metric=latency&model_id=gpt-4o&step_ms=60000
 tokenhubctl tsdb prune
 ```
 
-## Use in bootstrap.local
-
-`tokenhubctl` pairs well with `bootstrap.local` for post-startup configuration:
-
-```bash
-#!/bin/bash
-set -e
-export TOKENHUB_URL="http://localhost:8080"
-export TOKENHUB_ADMIN_TOKEN="your-token"
-
-tokenhubctl vault unlock "vault-password"
-tokenhubctl provider add '{"id":"openai","type":"openai","base_url":"https://api.openai.com","api_key":"sk-..."}'
-tokenhubctl model add '{"id":"gpt-4o","provider_id":"openai","weight":8,"max_context_tokens":128000,"input_per_1k":0.0025,"output_per_1k":0.01,"enabled":true}'
-echo "Bootstrap complete: $(tokenhubctl status | head -3)"
-```
-
 ## Output Format
 
 Most commands produce human-readable tabular output. For programmatic use, pipe JSON responses directly from `curl` or parse `tokenhubctl` output with standard text tools.

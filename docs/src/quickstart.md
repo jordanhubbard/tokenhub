@@ -37,75 +37,67 @@ host port 8090. Adjust the examples below accordingly.
 ## 2. Register Providers
 
 A freshly started TokenHub has no providers configured. You need to tell
-it where your LLM endpoints are. There are several ways to do this, from
-a one-time script to the admin UI. Pick whichever fits your workflow.
+it where your LLM endpoints are. There are several ways to do this. Pick
+whichever fits your workflow.
 
-### Option A: bootstrap.local (recommended for development)
+### Option A: Credentials file (recommended)
 
-`bootstrap.local` is a git-ignored shell script that runs automatically
-after `make run`, or manually via `make bootstrap`. It uses `tokenhubctl`
-to register providers, models, and API keys against the running server.
+The `~/.tokenhub/credentials` file is a declarative JSON file that seeds
+providers and models at startup. It lives outside the source tree, requires
+`0600` permissions, and is processed before the service accepts requests.
 
-```bash
-cp bootstrap.local.example bootstrap.local
-chmod +x bootstrap.local
-```
-
-Edit it to add your providers. Here's an example registering a local
-Ollama instance and an NVIDIA cloud endpoint:
+API keys are automatically stored in the vault (when `TOKENHUB_VAULT_PASSWORD`
+is set) and providers are persisted to the database on first boot. The file
+is idempotent — it can stay in place across restarts.
 
 ```bash
-#!/bin/bash
-set -euo pipefail
-export TOKENHUB_URL="${TOKENHUB_URL:-http://localhost:8090}"
-TOKENHUBCTL="${TOKENHUBCTL:-tokenhubctl}"
-
-# Local Ollama (no API key needed)
-$TOKENHUBCTL provider add '{
-    "id": "ollama",
-    "type": "openai",
-    "base_url": "http://localhost:11434",
-    "enabled": true
-}'
-
-# NVIDIA NIM cloud
-$TOKENHUBCTL provider add '{
-    "id": "nvidia",
-    "type": "openai",
-    "base_url": "https://integrate.api.nvidia.com",
-    "api_key": "nvapi-...",
-    "enabled": true
-}'
-
-# Register models on those providers
-$TOKENHUBCTL model add '{
-    "id": "llama3.1:8b",
-    "provider_id": "ollama",
-    "weight": 5,
-    "max_context_tokens": 8192,
-    "input_per_1k": 0.0,
-    "output_per_1k": 0.0,
-    "enabled": true
-}'
-
-$TOKENHUBCTL model add '{
-    "id": "meta/llama-3.1-70b-instruct",
-    "provider_id": "nvidia",
-    "weight": 8,
-    "max_context_tokens": 128000,
-    "input_per_1k": 0.0003,
-    "output_per_1k": 0.0003,
-    "enabled": true
-}'
-
-$TOKENHUBCTL model list
+mkdir -p ~/.tokenhub
+chmod 700 ~/.tokenhub
+cat > ~/.tokenhub/credentials << 'EOF'
+{
+  "providers": [
+    {
+      "id": "ollama",
+      "type": "openai",
+      "base_url": "http://localhost:11434"
+    },
+    {
+      "id": "nvidia",
+      "type": "openai",
+      "base_url": "https://integrate.api.nvidia.com",
+      "api_key": "nvapi-..."
+    }
+  ],
+  "models": [
+    {
+      "id": "llama3.1:8b",
+      "provider_id": "ollama",
+      "weight": 5,
+      "max_context_tokens": 8192,
+      "input_per_1k": 0.0,
+      "output_per_1k": 0.0
+    },
+    {
+      "id": "meta/llama-3.1-70b-instruct",
+      "provider_id": "nvidia",
+      "weight": 8,
+      "max_context_tokens": 128000,
+      "input_per_1k": 0.0003,
+      "output_per_1k": 0.0003
+    }
+  ]
+}
+EOF
+chmod 600 ~/.tokenhub/credentials
 ```
 
-Then start everything:
+Then start the server:
 
 ```bash
-make run    # builds image, starts compose, runs bootstrap.local, tails logs
+make run    # builds image, starts compose, tails logs
 ```
+
+Override the default path with `TOKENHUB_CREDENTIALS_FILE`.
 
 ### Option B: tokenhubctl (interactive)
 
@@ -169,11 +161,11 @@ curl -X POST http://localhost:8090/admin/v1/models \
   }'
 ```
 
-> **Providers persist across restarts.** Once registered via the API,
-> `tokenhubctl`, or the UI, providers and models are stored in the database
-> and restored automatically on restart. You only need to configure them once.
-> API keys for vault-backed providers require the vault to be unlocked after
-> restart, or re-supplied via `bootstrap.local`.
+> **Providers persist across restarts.** Once registered via the credentials
+> file, the API, `tokenhubctl`, or the UI, providers and models are stored in
+> the database and restored automatically on restart. You only need to configure
+> them once. API keys for vault-backed providers require the vault to be unlocked
+> after restart (set `TOKENHUB_VAULT_PASSWORD` for automatic unlock).
 
 ## 3. Verify It's Running
 

@@ -26,16 +26,14 @@
 # TOKENHUB_DEFAULT_MAX_BUDGET_USD=0.05
 # TOKENHUB_DEFAULT_MAX_LATENCY_MS=20000
 
-# ──── Provider Registration ────
-# Providers are registered at runtime via bootstrap.local, admin API, tokenhubctl, or UI.
-# Optionally load providers from a credentials file at startup:
+# ──── Credentials File ────
+# Providers and models are loaded from a JSON file at startup (default ~/.tokenhub/credentials).
+# The file must have mode 0600 or stricter. Providers are persisted to the database
+# and API keys are stored in the vault (when TOKENHUB_VAULT_PASSWORD is set).
 # TOKENHUB_CREDENTIALS_FILE=~/.tokenhub/credentials
-
-# ──── External Credentials File (optional, ~/.netrc analogue) ────
-# TOKENHUB_CREDENTIALS_FILE=~/.tokenhub/credentials  # JSON file with providers/models
-# File must have mode 0600 or stricter. Format:
-# { "providers": [{"id":"...","type":"openai","endpoint":"...","api_key":"..."}],
-#   "models": [{"id":"...","provider_id":"...","weight":8,"enabled":true}] }
+# Format:
+# { "providers": [{"id":"...","type":"openai","base_url":"...","api_key":"..."}],
+#   "models": [{"id":"...","provider_id":"...","weight":8,"max_context_tokens":128000}] }
 
 # ──── Temporal Workflow Engine (optional) ────
 # TOKENHUB_TEMPORAL_ENABLED=false

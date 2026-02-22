@@ -4,9 +4,14 @@ Providers are the LLM services that TokenHub routes requests to. TokenHub ships 
 
 ## Registration Methods
 
-### Credentials File
+### Credentials File (recommended)
 
-The `~/.tokenhub/credentials` file is read at startup and can register providers and models. This is the recommended approach for managing secrets outside of environment variables. The file must have `0600` permissions.
+The `~/.tokenhub/credentials` file is a declarative JSON file processed at
+startup. Providers are persisted to the database and API keys are stored in
+the vault (when unlocked via `TOKENHUB_VAULT_PASSWORD`). The file is
+idempotent — it can remain in place across restarts.
+
+The file must have `0600` permissions and live outside the source tree.
 
 ```json
 {
@@ -14,14 +19,19 @@ The `~/.tokenhub/credentials` file is read at startup and can register providers
     {
       "id": "openai",
       "type": "openai",
-      "endpoint": "https://api.openai.com",
+      "base_url": "https://api.openai.com",
       "api_key": "sk-..."
     },
     {
       "id": "anthropic",
       "type": "anthropic",
-      "endpoint": "https://api.anthropic.com",
+      "base_url": "https://api.anthropic.com",
       "api_key": "sk-ant-..."
+    },
+    {
+      "id": "ollama-local",
+      "type": "openai",
+      "base_url": "http://localhost:11434"
     }
   ],
   "models": [
@@ -31,29 +41,29 @@ The `~/.tokenhub/credentials` file is read at startup and can register providers
       "weight": 8,
       "max_context_tokens": 128000,
       "input_per_1k": 0.0025,
-      "output_per_1k": 0.01,
-      "enabled": true
+      "output_per_1k": 0.01
     }
   ]
 }
 ```
 
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | Yes | Unique provider identifier |
+| `type` | string | Yes | Provider type: `openai`, `anthropic`, or `vllm` |
+| `base_url` | string | Yes | Provider API base URL |
+| `api_key` | string | No | API key (stored in vault when available, omit for keyless providers) |
+| `enabled` | bool | No | Whether the provider is active (default: true) |
+
 Override the default path with `TOKENHUB_CREDENTIALS_FILE`.
 
-### bootstrap.local
+### Admin API / tokenhubctl
 
-A git-ignored shell script that configures a running instance via the admin API after startup. Ideal for development and staging environments:
+Providers can be registered and managed dynamically via the admin API or `tokenhubctl` at any time after the service starts.
 
-```bash
-cp bootstrap.local.example bootstrap.local
-chmod +x bootstrap.local
-# Edit with your provider keys
-make run   # Automatically runs bootstrap.local after healthz passes
-```
+### Admin UI
 
-### Admin API
-
-Providers can be registered and managed dynamically via the admin API or `tokenhubctl`.
+The setup wizard at `/admin` walks through adding providers interactively.
 
 ## API Operations
 

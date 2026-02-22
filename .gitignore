@@ -37,7 +37,7 @@ go.work.sum
 /tmp/
 docs/book/
 
-# Local bootstrap (contains API keys and local endpoints)
+# Legacy bootstrap script (superseded by ~/.tokenhub/credentials)
 bootstrap.local
 
 # Tool config

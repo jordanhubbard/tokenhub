@@ -160,7 +160,7 @@ func NewServer(cfg Config) (*Server, error) {
 	timeout := time.Duration(cfg.ProviderTimeoutSecs) * time.Second
 
 	// Load providers from credentials file (~/.tokenhub/credentials).
-	loadCredentialsFile(cfg.CredentialsFile, eng, timeout, logger)
+	loadCredentialsFile(cfg.CredentialsFile, eng, v, db, timeout, logger)
 
 	// Load persisted providers from DB and register adapters so they're
 	// included in health probing and routing from the moment we start.
@@ -192,7 +192,7 @@ func NewServer(cfg Config) (*Server, error) {
 	adapterIDs := eng.ListAdapterIDs()
 	modelList := eng.ListModels()
 	if len(adapterIDs) == 0 {
-		logger.Warn("NO PROVIDERS REGISTERED — use bootstrap.local, the admin API, tokenhubctl, or the UI to add providers")
+		logger.Warn("NO PROVIDERS REGISTERED — configure ~/.tokenhub/credentials, or use the admin API, tokenhubctl, or the UI to add providers")
 	}
 	if len(modelList) == 0 {
 		logger.Warn("NO MODELS REGISTERED — requests will fail until models are configured")
@@ -491,11 +491,15 @@ func (s *Server) rotationEnforceLoop() {
 	}
 }
 
-// loadCredentialsFile reads a JSON credentials file (similar to ~/.netrc) and
-// registers any providers and models it contains. The file is optional; if it
-// does not exist the function silently returns. The file must be owner-readable
-// only (mode 0600 or 0400) to prevent accidental secret exposure.
-func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration, logger *slog.Logger) {
+// loadCredentialsFile reads a JSON credentials file (default ~/.tokenhub/credentials)
+// and registers providers and models. Providers are persisted to the database and
+// API keys are stored in the vault (when unlocked). This is the primary mechanism
+// for bootstrapping a fresh TokenHub instance — it is declarative, lives outside
+// the source tree, and requires no running service or CLI tools.
+//
+// The file must be owner-readable only (mode 0600 or 0400). It is idempotent:
+// providers and models are upserted, so the file can remain in place across restarts.
+func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db store.Store, timeout time.Duration, logger *slog.Logger) {
 	if path == "" {
 		return
 	}
@@ -526,10 +530,11 @@ func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration,
 	}
 
 	type credProvider struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Endpoint string `json:"endpoint"`
-		APIKey   string `json:"api_key"`
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		BaseURL string `json:"base_url"`
+		APIKey  string `json:"api_key"`
+		Enabled *bool  `json:"enabled"` // nil = true
 	}
 	type credModel struct {
 		ID               string  `json:"id"`
@@ -538,7 +543,7 @@ func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration,
 		MaxContextTokens int     `json:"max_context_tokens"`
 		InputPer1K       float64 `json:"input_per_1k"`
 		OutputPer1K      float64 `json:"output_per_1k"`
-		Enabled          bool    `json:"enabled"`
+		Enabled          *bool   `json:"enabled"` // nil = true
 	}
 	type credFile struct {
 		Providers []credProvider `json:"providers"`
@@ -551,18 +556,60 @@ func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration,
 		return
 	}
 
+	ctx := context.Background()
+
 	for _, p := range creds.Providers {
-		if p.ID == "" || p.Endpoint == "" || p.APIKey == "" {
-			logger.Warn("skipping credentials provider: id, endpoint, and api_key required", slog.String("id", p.ID))
+		if p.ID == "" || p.BaseURL == "" {
+			logger.Warn("skipping credentials provider: id and base_url required", slog.String("id", p.ID))
 			continue
 		}
+
+		enabled := p.Enabled == nil || *p.Enabled
+
+		// Store API key in vault if provided and vault is unlocked.
+		credStore := "none"
+		if p.APIKey != "" && v != nil && !v.IsLocked() {
+			if err := v.Set("provider:"+p.ID+":api_key", p.APIKey); err != nil {
+				logger.Warn("failed to store API key in vault", slog.String("provider", p.ID), slog.String("error", err.Error()))
+			} else {
+				credStore = "vault"
+			}
+		}
+
+		// Persist to database.
+		if db != nil {
+			rec := store.ProviderRecord{
+				ID:        p.ID,
+				Type:      p.Type,
+				Enabled:   enabled,
+				BaseURL:   p.BaseURL,
+				CredStore: credStore,
+			}
+			if err := db.UpsertProvider(ctx, rec); err != nil {
+				logger.Warn("failed to persist credentials provider", slog.String("provider", p.ID), slog.String("error", err.Error()))
+			}
+		}
+
+		// Register runtime adapter.
 		switch p.Type {
 		case "anthropic":
-			eng.RegisterAdapter(anthropic.New(p.ID, p.APIKey, p.Endpoint, anthropic.WithTimeout(timeout)))
+			eng.RegisterAdapter(anthropic.New(p.ID, p.APIKey, p.BaseURL, anthropic.WithTimeout(timeout)))
+		case "vllm":
+			eng.RegisterAdapter(vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout)))
 		default:
-			eng.RegisterAdapter(openai.New(p.ID, p.APIKey, p.Endpoint, openai.WithTimeout(timeout)))
+			eng.RegisterAdapter(openai.New(p.ID, p.APIKey, p.BaseURL, openai.WithTimeout(timeout)))
 		}
-		logger.Info("registered provider from credentials file", slog.String("provider", p.ID), slog.String("endpoint", p.Endpoint))
+		logger.Info("registered provider from credentials file", slog.String("provider", p.ID), slog.String("base_url", p.BaseURL), slog.String("cred_store", credStore))
+	}
+
+	// Persist vault blob after storing all API keys.
+	if v != nil && !v.IsLocked() && db != nil {
+		if salt := v.Salt(); salt != nil {
+			data := v.Export()
+			if err := db.SaveVaultBlob(ctx, salt, data); err != nil {
+				logger.Warn("failed to persist vault after credentials load", slog.String("error", err.Error()))
+			}
+		}
 	}
 
 	for _, m := range creds.Models {
@@ -570,15 +617,28 @@ func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration,
 			logger.Warn("skipping credentials model: id and provider_id required", slog.String("id", m.ID))
 			continue
 		}
-		eng.RegisterModel(router.Model{
+		enabled := m.Enabled == nil || *m.Enabled
+		model := router.Model{
 			ID:               m.ID,
 			ProviderID:       m.ProviderID,
 			Weight:           m.Weight,
 			MaxContextTokens: m.MaxContextTokens,
 			InputPer1K:       m.InputPer1K,
 			OutputPer1K:      m.OutputPer1K,
-			Enabled:          m.Enabled,
-		})
+			Enabled:          enabled,
+		}
+		eng.RegisterModel(model)
+
+		// Persist to database.
+		if db != nil {
+			if err := db.UpsertModel(ctx, store.ModelRecord{
+				ID: m.ID, ProviderID: m.ProviderID, Weight: m.Weight,
+				MaxContextTokens: m.MaxContextTokens, InputPer1K: m.InputPer1K,
+				OutputPer1K: m.OutputPer1K, Enabled: enabled,
+			}); err != nil {
+				logger.Warn("failed to persist credentials model", slog.String("model", m.ID), slog.String("error", err.Error()))
+			}
+		}
 		logger.Info("registered model from credentials file", slog.String("model", m.ID), slog.String("provider", m.ProviderID))
 	}
 
@@ -591,8 +651,8 @@ func loadCredentialsFile(path string, eng *router.Engine, timeout time.Duration,
 
 // loadPersistedProviders reads provider records from the database and creates
 // runtime adapters for any that don't already have one registered (e.g. from
-// env vars). This ensures providers added via the admin API or bootstrap.local
-// survive restarts without re-running the bootstrap script.
+// the credentials file). This ensures providers added via the admin API
+// survive restarts.
 func loadPersistedProviders(eng *router.Engine, v *vault.Vault, db store.Store, timeout time.Duration, logger *slog.Logger) {
 	providers, err := db.ListProviders(context.Background())
 	if err != nil {

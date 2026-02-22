@@ -68,7 +68,7 @@ tokenhub:
   restart: unless-stopped
 ```
 
-Set `TOKENHUB_VAULT_PASSWORD` to auto-unlock the vault at startup (headless mode). If not set, unlock interactively via UI or `tokenhubctl`. Providers are registered at runtime via `bootstrap.local`, the admin API, `tokenhubctl`, or the admin UI.
+Set `TOKENHUB_VAULT_PASSWORD` to auto-unlock the vault at startup (headless mode). If not set, unlock interactively via UI or `tokenhubctl`. Providers are loaded from `~/.tokenhub/credentials` at startup, or registered at runtime via the admin API, `tokenhubctl`, or the admin UI.
 
 Note: The `TOKENHUB_DB_DSN` should be a plain path (e.g., `/data/tokenhub.sqlite`) when using `modernc.org/sqlite` (the pure-Go driver). SQLite pragmas are applied programmatically, not via DSN query parameters.
 
@@ -110,15 +110,12 @@ docker compose up -d tokenhub
 
 Or set `TOKENHUB_TEMPORAL_ENABLED=false`.
 
-### Bootstrap After Start
+### Provider Bootstrapping
 
-The `make run` target starts the container, waits for it to become healthy, and then runs `bootstrap.local` (if present) to configure providers and models via the admin API:
-
-```bash
-cp bootstrap.local.example bootstrap.local
-# Edit with your secrets
-make run
-```
+Providers are loaded from `~/.tokenhub/credentials` at startup. For Docker,
+mount the credentials file into the container or use the host path if running
+via Docker Compose with a volume mount. See [Provider Management](../admin/providers.md)
+for the file format.
 
 ## Health Check
 

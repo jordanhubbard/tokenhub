@@ -38,7 +38,7 @@ TokenHub is configured entirely via environment variables. All variables are opt
 |----------|---------|-------------|
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
 
-Providers are registered at runtime via `bootstrap.local`, the admin API, `tokenhubctl`, the admin UI, or a credentials file. At least one provider must be registered for TokenHub to route requests.
+Providers are registered at startup via `~/.tokenhub/credentials` or at runtime via the admin API, `tokenhubctl`, or the admin UI. At least one provider must be registered for TokenHub to route requests.
 
 ### Temporal (Optional)
 
@@ -59,7 +59,10 @@ Providers are registered at runtime via `bootstrap.local`, the admin API, `token
 
 ## External Credentials File
 
-The `~/.tokenhub/credentials` file provides a git-safe way to configure providers and models at startup. The file must have `0600` permissions.
+The `~/.tokenhub/credentials` file is the primary mechanism for bootstrapping
+providers and models. It is processed at startup — providers are persisted to
+the database and API keys are stored in the vault (when `TOKENHUB_VAULT_PASSWORD`
+is set). The file must have `0600` permissions.
 
 ```json
 {
@@ -67,8 +70,13 @@ The `~/.tokenhub/credentials` file provides a git-safe way to configure provider
     {
       "id": "openai",
       "type": "openai",
-      "endpoint": "https://api.openai.com",
+      "base_url": "https://api.openai.com",
       "api_key": "sk-..."
+    },
+    {
+      "id": "vllm-local",
+      "type": "vllm",
+      "base_url": "http://localhost:8000"
     }
   ],
   "models": [
@@ -78,12 +86,15 @@ The `~/.tokenhub/credentials` file provides a git-safe way to configure provider
       "weight": 8,
       "max_context_tokens": 128000,
       "input_per_1k": 0.0025,
-      "output_per_1k": 0.01,
-      "enabled": true
+      "output_per_1k": 0.01
     }
   ]
 }
 ```
+
+The file is idempotent — providers and models are upserted, so it can remain
+in place across restarts. `api_key` is optional for keyless providers (vLLM,
+Ollama). All providers default to `enabled: true` unless explicitly set to `false`.
 
 ## Example Configuration
 
@@ -91,7 +102,7 @@ The `~/.tokenhub/credentials` file provides a git-safe way to configure provider
 
 ```bash
 ./bin/tokenhub
-# Then register providers via bootstrap.local, admin API, or UI.
+# Then register providers via ~/.tokenhub/credentials, admin API, or UI.
 ```
 
 ### Full Production
@@ -123,7 +134,7 @@ export TOKENHUB_OTEL_ENABLED="true"
 export TOKENHUB_OTEL_ENDPOINT="otel-collector:4318"
 
 ./bin/tokenhub
-# Providers are registered at runtime via bootstrap.local, admin API, or UI.
+# Providers are loaded from ~/.tokenhub/credentials, or registered via admin API/UI.
 ```
 
 ## Runtime Configuration
