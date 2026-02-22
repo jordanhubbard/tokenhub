@@ -15,10 +15,11 @@ import (
 func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 	type createReq struct {
 		Name             string  `json:"name"`
-		Scopes           string  `json:"scopes"`             // JSON array, e.g. '["chat","plan"]'
+		Scopes           string  `json:"scopes"`              // JSON array, e.g. '["chat","plan"]'
 		RotationDays     int     `json:"rotation_days"`
-		ExpiresIn        *string `json:"expires_in"`          // duration string, e.g. "720h"
-		MonthlyBudgetUSD float64 `json:"monthly_budget_usd"` // 0 = unlimited
+		ExpiresIn        *string `json:"expires_in"`           // duration string, e.g. "720h"
+		MonthlyBudgetUSD float64 `json:"monthly_budget_usd"`  // 0 = unlimited
+		RateLimitRPS     int     `json:"rate_limit_rps"`      // 0 = global default, -1 = unlimited
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.APIKeyMgr == nil {
@@ -56,11 +57,12 @@ func APIKeysCreateHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Set monthly budget if specified.
-		if req.MonthlyBudgetUSD > 0 {
+		// Set monthly budget and per-key rate limit if specified.
+		if req.MonthlyBudgetUSD > 0 || req.RateLimitRPS != 0 {
 			rec.MonthlyBudgetUSD = req.MonthlyBudgetUSD
+			rec.RateLimitRPS = req.RateLimitRPS
 			if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {
-				jsonError(w, "failed to set budget: "+err.Error(), http.StatusInternalServerError)
+				jsonError(w, "failed to set key options: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -231,6 +233,14 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 				return
 			}
 			rec.MonthlyBudgetUSD = f
+		}
+		if v, ok := patch["rate_limit_rps"]; ok {
+			f, ok := v.(float64)
+			if !ok || f < -1 {
+				jsonError(w, "rate_limit_rps must be -1 (unlimited), 0 (global default), or a positive integer", http.StatusBadRequest)
+				return
+			}
+			rec.RateLimitRPS = int(f)
 		}
 
 		if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {

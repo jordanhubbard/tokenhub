@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -150,12 +151,15 @@ func recordObservability(d Dependencies, p observeParams) {
 	}
 
 	// --- Store: request log + reward log ---
+	// Writes are dispatched to a dedicated worker goroutine (via StoreWriteQueue)
+	// so that SQLite contention does not add to client-visible latency.
+	// When StoreWriteQueue is nil (e.g. tests) the writes are synchronous.
 	if d.Store != nil {
 		statusCode := http.StatusOK
 		if !p.Success {
 			statusCode = http.StatusBadGateway
 		}
-		d.warnOnErr("log_request", d.Store.LogRequest(p.Ctx, store.RequestLog{
+		rl := store.RequestLog{
 			Timestamp:        time.Now().UTC(),
 			ModelID:          p.ModelID,
 			ProviderID:       p.ProviderID,
@@ -169,8 +173,8 @@ func recordObservability(d Dependencies, p observeParams) {
 			InputTokens:      p.InputTokens,
 			OutputTokens:     p.OutputTokens,
 			TotalTokens:      p.InputTokens + p.OutputTokens,
-		}))
-		d.warnOnErr("log_reward", d.Store.LogReward(p.Ctx, store.RewardEntry{
+		}
+		re := store.RewardEntry{
 			Timestamp:       time.Now().UTC(),
 			RequestID:       p.RequestID,
 			ModelID:         p.ModelID,
@@ -184,7 +188,21 @@ func recordObservability(d Dependencies, p observeParams) {
 			Success:         p.Success,
 			ErrorClass:      p.ErrorClass,
 			Reward:          router.ComputeReward(float64(p.LatencyMs), p.CostUSD, p.Success, p.LatencyBudgetMs),
-		}))
+		}
+		if d.StoreWriteQueue != nil {
+			select {
+			case d.StoreWriteQueue <- func() {
+				d.warnOnErr("log_request", d.Store.LogRequest(context.Background(), rl))
+				d.warnOnErr("log_reward", d.Store.LogReward(context.Background(), re))
+			}:
+			default:
+				// Queue full: drop the write and record the miss.
+				d.warnOnErr("log_request", errors.New("store write queue full"))
+			}
+		} else {
+			d.warnOnErr("log_request", d.Store.LogRequest(p.Ctx, rl))
+			d.warnOnErr("log_reward", d.Store.LogReward(p.Ctx, re))
+		}
 	}
 
 	// --- EventBus ---

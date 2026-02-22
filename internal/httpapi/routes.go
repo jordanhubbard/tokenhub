@@ -60,9 +60,18 @@ type Dependencies struct {
 
 	// Rate limiter for expensive API endpoints (nil = no rate limiting).
 	RateLimiter *ratelimit.Limiter
+	// RateLimitRPS is the global per-IP rate limit (requests/second). Used as
+	// the fallback per-API-key rate limit when a key has no custom limit set.
+	RateLimitRPS int
 
 	// Provider timeout for constructing new adapters at runtime.
 	ProviderTimeout time.Duration
+
+	// StoreWriteQueue decouples store writes (request/reward logs) from the
+	// handler goroutine so SQLite contention does not add to client-visible
+	// latency. A dedicated goroutine drains the queue. When nil, writes are
+	// performed synchronously (e.g. in test harnesses).
+	StoreWriteQueue chan func()
 }
 
 // maxRequestBodySize is the maximum allowed request body for POST/PUT/PATCH endpoints (10 MB).
@@ -160,8 +169,9 @@ func MountRoutes(r chi.Router, d Dependencies) {
 			r.Use(idempotency.Middleware(d.IdempotencyCache))
 		}
 		// Apply API key auth middleware if key manager is configured.
+		// Pass the rate limiter for per-key rate limiting alongside the per-IP limit.
 		if d.APIKeyMgr != nil {
-			r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker))
+			r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker, d.RateLimiter, d.RateLimitRPS))
 		}
 		r.Post("/chat", ChatHandler(d))
 		r.Post("/chat/completions", ChatCompletionsHandler(d))

@@ -17,6 +17,7 @@ type APIKeyRecord struct {
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 	RotationDays     int        `json:"rotation_days"`          // 0 = manual rotation only
 	MonthlyBudgetUSD float64    `json:"monthly_budget_usd"`     // 0 = unlimited
+	RateLimitRPS     int        `json:"rate_limit_rps"`         // 0 = global default, -1 = unlimited
 	Enabled          bool       `json:"enabled"`
 }
 

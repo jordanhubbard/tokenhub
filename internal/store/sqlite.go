@@ -158,6 +158,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		{"request_logs", "output_tokens", "ALTER TABLE request_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0"},
 		{"request_logs", "total_tokens", "ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0"},
 		{"models", "pricing_source", "ALTER TABLE models ADD COLUMN pricing_source TEXT NOT NULL DEFAULT 'manual'"},
+		{"api_keys", "rate_limit_rps", "ALTER TABLE api_keys ADD COLUMN rate_limit_rps INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, m := range alterMigrations {
 		var count int
@@ -514,11 +515,11 @@ func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key APIKeyRecord) error 
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.ID, key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
 		key.CreatedAt.UTC().Format(time.RFC3339), lastUsed, expires,
-		key.RotationDays, enabledInt, key.MonthlyBudgetUSD)
+		key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.RateLimitRPS)
 	return err
 }
 
@@ -528,10 +529,10 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 	var lastUsed, expires sql.NullString
 	var enabledInt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
 		 FROM api_keys WHERE id = ?`, id).
 		Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD)
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -553,7 +554,7 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 
 func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]APIKeyRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
 		 FROM api_keys WHERE key_prefix = ? AND enabled = 1`, prefix)
 	if err != nil {
 		return nil, err
@@ -567,7 +568,7 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 		var lastUsed, expires sql.NullString
 		var enabledInt int
 		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS); err != nil {
 			return nil, err
 		}
 		k.CreatedAt = parseTime(createdAt)
@@ -587,7 +588,7 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 
 func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
 		 FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -601,7 +602,7 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 		var lastUsed, expires sql.NullString
 		var enabledInt int
 		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS); err != nil {
 			return nil, err
 		}
 		k.CreatedAt = parseTime(createdAt)
@@ -625,7 +626,7 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 func (s *SQLiteStore) ListExpiredRotationKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd
+		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
 		 FROM api_keys
 		 WHERE rotation_days > 0
 		   AND enabled = 1
@@ -643,7 +644,7 @@ func (s *SQLiteStore) ListExpiredRotationKeys(ctx context.Context) ([]APIKeyReco
 		var lastUsed, expires sql.NullString
 		var enabledInt int
 		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD); err != nil {
+			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS); err != nil {
 			return nil, err
 		}
 		k.CreatedAt = parseTime(createdAt)
@@ -676,10 +677,10 @@ func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key APIKeyRecord) error 
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?, monthly_budget_usd=?
+		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?, monthly_budget_usd=?, rate_limit_rps=?
 		 WHERE id=?`,
 		key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
-		lastUsed, expires, key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.ID)
+		lastUsed, expires, key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.RateLimitRPS, key.ID)
 	return err
 }
 

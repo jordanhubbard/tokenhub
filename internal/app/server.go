@@ -61,6 +61,9 @@ type Server struct {
 	apiKeyMgr    *apikey.Manager
 	eventBus     *events.Bus
 
+	storeWriteQueue chan func()      // buffered channel for async store writes
+	storeWriteDone  chan struct{}    // closed by the write worker when it exits
+
 	httpServer *http.Server // set via SetHTTPServer; used by Close() to drain in-flight requests
 }
 
@@ -270,6 +273,17 @@ func NewServer(cfg Config) (*Server, error) {
 	idemCache := idempotency.New(5*time.Minute, 10000)
 	logger.Info("idempotency cache initialized", slog.Duration("ttl", 5*time.Minute), slog.Int("max_entries", 10000))
 
+	// Async store write queue: decouples SQLite writes from handler goroutines.
+	// The channel is closed in Close() after HTTP drain to flush remaining writes.
+	storeWriteQueue := make(chan func(), 4096)
+	storeWriteDone := make(chan struct{})
+	go func() {
+		defer close(storeWriteDone)
+		for fn := range storeWriteQueue {
+			fn()
+		}
+	}()
+
 	s := &Server{
 		cfg:              cfg,
 		r:                r,
@@ -289,6 +303,8 @@ func NewServer(cfg Config) (*Server, error) {
 		stopPricing:      make(chan struct{}),
 		apiKeyMgr:        keyMgr,
 		eventBus:         bus,
+		storeWriteQueue:  storeWriteQueue,
+		storeWriteDone:   storeWriteDone,
 	}
 
 	// Start TSDB auto-prune goroutine.
@@ -350,7 +366,9 @@ func NewServer(cfg Config) (*Server, error) {
 		IdempotencyCache: idemCache,
 		CircuitBreaker:   cb,
 		RateLimiter:      rl,
+		RateLimitRPS:     cfg.RateLimitRPS,
 		ProviderTimeout:  time.Duration(cfg.ProviderTimeoutSecs) * time.Second,
+		StoreWriteQueue:  storeWriteQueue,
 	}
 
 	// Initialize Temporal workflow engine if enabled.
@@ -465,6 +483,12 @@ func (s *Server) Close() error {
 	}
 	if s.tsdb != nil {
 		s.tsdb.Stop()
+	}
+	// Flush all remaining async store writes before closing the store.
+	// HTTP is already drained, so no new writes will be enqueued.
+	if s.storeWriteQueue != nil {
+		close(s.storeWriteQueue)
+		<-s.storeWriteDone
 	}
 	if s.store != nil {
 		return s.store.Close()

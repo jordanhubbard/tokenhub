@@ -73,6 +73,51 @@ func WithMaxKeys(n int) Option {
 	}
 }
 
+// Allow reports whether the given key is within the global rate limit.
+// It uses the rate and burst values configured at construction time.
+func (l *Limiter) Allow(key string) bool {
+	return l.allow(key)
+}
+
+// AllowCustom reports whether the given key is within a custom rate limit.
+// rate and burst override the limiter's global defaults for this specific key.
+// When rate <= 0, the request is always allowed (unlimited).
+func (l *Limiter) AllowCustom(key string, rate, burst int) bool {
+	if rate <= 0 {
+		return true // unlimited
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	elem, ok := l.buckets[key]
+	if !ok {
+		if len(l.buckets) >= l.maxKeys {
+			l.evictOldest()
+		}
+		e := &entry{key: key, b: bucket{tokens: burst, lastFill: time.Now()}}
+		elem = l.lru.PushFront(e)
+		l.buckets[key] = elem
+	} else {
+		l.lru.MoveToFront(elem)
+	}
+
+	b := &elem.Value.(*entry).b
+	elapsed := time.Since(b.lastFill)
+	refill := int(elapsed/l.interval) * rate
+	if refill > 0 {
+		b.tokens += refill
+		if b.tokens > burst {
+			b.tokens = burst
+		}
+		b.lastFill = time.Now()
+	}
+	if b.tokens <= 0 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
 // Middleware returns an http.Handler middleware that enforces rate limits per
 // client IP (using X-Real-IP or RemoteAddr).
 func (l *Limiter) Middleware(next http.Handler) http.Handler {

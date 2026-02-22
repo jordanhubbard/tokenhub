@@ -14,6 +14,12 @@ type contextKey string
 
 const apiKeyContextKey contextKey = "apikey"
 
+// KeyRateLimiter is the subset of the ratelimit.Limiter interface used by
+// AuthMiddleware for per-API-key rate limiting.
+type KeyRateLimiter interface {
+	AllowCustom(key string, rate, burst int) bool
+}
+
 // FromContext returns the API key record attached to the request context.
 func FromContext(ctx context.Context) *store.APIKeyRecord {
 	if v, ok := ctx.Value(apiKeyContextKey).(*store.APIKeyRecord); ok {
@@ -24,9 +30,11 @@ func FromContext(ctx context.Context) *store.APIKeyRecord {
 
 // AuthMiddleware validates Bearer tokens on incoming requests.
 // Returns 401 for missing/invalid keys, 403 for insufficient scopes,
-// and 429 if the API key has exceeded its monthly budget.
-// The budgetChecker parameter is optional; pass nil to skip budget enforcement.
-func AuthMiddleware(mgr *Manager, budgetChecker *BudgetChecker) func(http.Handler) http.Handler {
+// and 429 if the API key has exceeded its monthly budget or per-key rate limit.
+// budgetChecker and keyLimiter are optional; pass nil to skip.
+// globalRPS is the fallback RPS used when a key's RateLimitRPS is 0; pass 0
+// to skip per-key rate limiting entirely.
+func AuthMiddleware(mgr *Manager, budgetChecker *BudgetChecker, keyLimiter KeyRateLimiter, globalRPS int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientIP := r.Header.Get("X-Real-IP")
@@ -90,6 +98,24 @@ func AuthMiddleware(mgr *Manager, budgetChecker *BudgetChecker) func(http.Handle
 					slog.Warn("api key auth: budget check error",
 						slog.String("key_id", rec.ID),
 						slog.String("error", err.Error()))
+				}
+			}
+
+			// Per-API-key rate limiting (independent of per-IP limit).
+			// rec.RateLimitRPS == -1 means unlimited; 0 means use globalRPS.
+			if keyLimiter != nil && globalRPS > 0 {
+				rps := rec.RateLimitRPS
+				if rps == 0 {
+					rps = globalRPS
+				}
+				if rps > 0 && !keyLimiter.AllowCustom("apikey:"+rec.ID, rps, rps*2) {
+					slog.Warn("api key auth: rate limit exceeded",
+						slog.String("ip", clientIP),
+						slog.String("key_id", rec.ID),
+						slog.Int("rps", rps))
+					w.Header().Set("Retry-After", "1")
+					http.Error(w, "api key rate limit exceeded", http.StatusTooManyRequests)
+					return
 				}
 			}
 
