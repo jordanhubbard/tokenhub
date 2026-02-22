@@ -130,6 +130,7 @@
     .pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
     .pagination .page-info { font-size: 12px; color: #8a8d9a; margin-left: auto; }
     .toggle-switch { cursor: pointer; font-size: 18px; }
+    .auth-error { color: #f44336; font-size: 13px; margin-top: 8px; min-height: 18px; }
     @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.full-width { grid-column: 1; } }
   </style>
 </head>
@@ -137,17 +138,29 @@
   <div class="header">
     <h1>TokenHub</h1>
     <div style="display:flex;align-items:center;gap:16px;">
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:11px;color:#8a8d9a;white-space:nowrap">Admin Token:</span>
-        <input type="password" id="admin-token-input" placeholder="paste TOKENHUB_ADMIN_TOKEN here"
-               style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:4px 8px;border-radius:4px;font-size:12px;width:240px"
-               oninput="setAdminToken(this.value)">
-      </div>
+      <button id="sign-out-btn" class="btn sm" onclick="signOut()" style="display:none">Sign Out</button>
       <a href="/docs/" target="_blank" style="color:#64b5f6;font-size:13px;text-decoration:none;">Docs</a>
       <span id="sse-status" class="status disconnected">Disconnected</span>
     </div>
   </div>
   <div id="toast" class="toast"></div>
+
+  <!-- ===== AUTH MODAL ===== -->
+  <div id="auth-modal" class="modal-overlay">
+    <div class="modal" style="min-width:360px;max-width:420px">
+      <h3>Admin Authentication</h3>
+      <p style="font-size:13px;color:#8a8d9a;margin-bottom:16px">Enter your admin token to access the dashboard. Retrieve it with <code style="background:#12141d;padding:2px 5px;border-radius:3px;font-size:11px">tokenhubctl admin-token</code>.</p>
+      <div class="field">
+        <label>Admin Token</label>
+        <input type="password" id="auth-token-input" placeholder="Paste token here"
+               onkeydown="if(event.key==='Enter')authenticate()">
+      </div>
+      <div id="auth-error" class="auth-error"></div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn primary" onclick="authenticate()">Authenticate</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===== EDIT PROVIDER MODAL ===== -->
   <div id="edit-provider-modal" class="modal-overlay">
@@ -231,6 +244,7 @@
     <!-- Vault -->
     <div class="panel full-width">
       <h2>Vault Status</h2>
+      <p style="font-size:12px;color:#8a8d9a;margin-bottom:10px">The vault password encrypts your stored provider API keys. It is separate from your admin token.</p>
       <div class="vault-status">
         <span id="vault-indicator" class="vault-indicator locked"></span>
         <span id="vault-label" class="vault-label">Locked</span>
@@ -405,6 +419,37 @@ function setAdminToken(val) {
   adminToken = val.trim();
   if (adminToken) sessionStorage.setItem('th_admin_token', adminToken);
   else sessionStorage.removeItem('th_admin_token');
+}
+
+function authenticate() {
+  const input = document.getElementById('auth-token-input');
+  const token = (input?.value || '').trim();
+  const errEl = document.getElementById('auth-error');
+  if (!token) { errEl.textContent = 'Token is required.'; return; }
+  errEl.textContent = '';
+  _origFetch('/admin/v1/info', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => {
+      if (r.status === 401) throw new Error('Invalid token — check the value and try again.');
+      if (!r.ok) throw new Error('Server error (' + r.status + ').');
+      return r.json();
+    })
+    .then(() => {
+      setAdminToken(token);
+      hideModal('auth-modal');
+      document.getElementById('sign-out-btn').style.display = '';
+      initDashboard();
+    })
+    .catch(err => { errEl.textContent = err.message || 'Authentication failed.'; });
+}
+
+function signOut() {
+  adminToken = '';
+  sessionStorage.removeItem('th_admin_token');
+  document.getElementById('sign-out-btn').style.display = 'none';
+  document.getElementById('auth-token-input').value = '';
+  document.getElementById('auth-error').textContent = '';
+  showModal('auth-modal');
+  setTimeout(() => document.getElementById('auth-token-input')?.focus(), 50);
 }
 
 // Inject Authorization header into every /admin/ fetch automatically.
@@ -1078,7 +1123,7 @@ function fetchVaultStatus() {
       document.getElementById('vault-indicator').className = 'vault-indicator locked';
       document.getElementById('vault-label').textContent = 'Auth Required';
       document.getElementById('vault-controls').innerHTML =
-        '<p style="font-size:13px;color:#ffc107">Enter your admin token above to access vault controls.</p>';
+        '<p style="font-size:13px;color:#ffc107">Admin token invalid or expired. <button class="btn sm" onclick="signOut()">Re-authenticate</button></p>';
       return;
     }
     return r.json();
@@ -1101,13 +1146,13 @@ function fetchVaultStatus() {
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:8px">' +
         '<input type="password" id="vault-password" placeholder="Choose a master password (8+ characters)" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:8px 10px;border-radius:4px;font-size:13px">' +
-        '<input type="password" id="vault-password-confirm" placeholder="Confirm master password" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:8px 10px;border-radius:4px;font-size:13px">' +
+        '<input type="password" id="vault-password-confirm" placeholder="Confirm master password" onkeydown="if(event.key===\'Enter\')vaultUnlock()" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:8px 10px;border-radius:4px;font-size:13px">' +
         '<button class="btn primary" onclick="vaultUnlock()" style="align-self:flex-start;padding:8px 20px">Initialize Vault</button>' +
         '</div></div>';
     } else {
       document.getElementById('vault-label').textContent = 'Locked';
       document.getElementById('vault-controls').innerHTML =
-        '<input type="password" id="vault-password" placeholder="Enter master password" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:4px;font-size:13px;width:220px">' +
+        '<input type="password" id="vault-password" placeholder="Enter master password" onkeydown="if(event.key===\'Enter\')vaultUnlock()" style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:4px;font-size:13px;width:220px">' +
         ' <button class="btn primary" onclick="vaultUnlock()">Unlock</button>';
     }
   }).catch(() => {});
@@ -1268,12 +1313,7 @@ function showToast(msg, type) {
 // ============================
 // Init
 // ============================
-document.addEventListener('DOMContentLoaded', () => {
-  if (adminToken) {
-    const inp = document.getElementById('admin-token-input');
-    if (inp) inp.value = adminToken;
-  }
-  initChart();
+function initDashboard() {
   seedStatsFromServer();
   connectSSE();
   updateLeaderboard(); fetchAuditLog(); fetchVaultStatus(); fetchProviders();
@@ -1288,6 +1328,17 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(fetchAPIKeys, 15000);
   setInterval(fetchWorkflows, 5000);
   setInterval(updateLeaderboard, 15000);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initChart();
+  if (adminToken) {
+    document.getElementById('sign-out-btn').style.display = '';
+    initDashboard();
+  } else {
+    showModal('auth-modal');
+    setTimeout(() => document.getElementById('auth-token-input')?.focus(), 50);
+  }
 });
 </script>
 </body>
