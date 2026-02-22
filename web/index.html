@@ -137,6 +137,12 @@
   <div class="header">
     <h1>TokenHub</h1>
     <div style="display:flex;align-items:center;gap:16px;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:#8a8d9a;white-space:nowrap">Admin Token:</span>
+        <input type="password" id="admin-token-input" placeholder="paste TOKENHUB_ADMIN_TOKEN here"
+               style="background:#12141d;border:1px solid #2a2d3a;color:#e0e0e0;padding:4px 8px;border-radius:4px;font-size:12px;width:240px"
+               oninput="setAdminToken(this.value)">
+      </div>
       <a href="/docs/" target="_blank" style="color:#64b5f6;font-size:13px;text-decoration:none;">Docs</a>
       <span id="sse-status" class="status disconnected">Disconnected</span>
     </div>
@@ -391,6 +397,30 @@
 
 <script>
 // ============================
+// Admin Token Management
+// ============================
+let adminToken = sessionStorage.getItem('th_admin_token') || '';
+
+function setAdminToken(val) {
+  adminToken = val.trim();
+  if (adminToken) sessionStorage.setItem('th_admin_token', adminToken);
+  else sessionStorage.removeItem('th_admin_token');
+}
+
+// Inject Authorization header into every /admin/ fetch automatically.
+const _origFetch = window.fetch.bind(window);
+window.fetch = function(url, opts) {
+  if (adminToken && typeof url === 'string' && url.startsWith('/admin/')) {
+    opts = Object.assign({}, opts);
+    opts.headers = Object.assign({}, opts.headers || {});
+    if (!opts.headers['Authorization']) {
+      opts.headers['Authorization'] = 'Bearer ' + adminToken;
+    }
+  }
+  return _origFetch(url, opts);
+};
+
+// ============================
 // Cytoscape.js Enhanced Graph
 // ============================
 const cy = cytoscape({
@@ -572,7 +602,10 @@ const perModelCost = {};
 
 function connectSSE() {
   const status = document.getElementById('sse-status');
-  const es = new EventSource('/admin/v1/events');
+  const sseUrl = adminToken
+    ? '/admin/v1/events?token=' + encodeURIComponent(adminToken)
+    : '/admin/v1/events';
+  const es = new EventSource(sseUrl);
   es.addEventListener('connected', () => { status.textContent = 'Connected'; status.className = 'status'; });
   es.addEventListener('route_success', (e) => {
     const d = JSON.parse(e.data);
@@ -1217,6 +1250,10 @@ function showToast(msg, type) {
 // Init
 // ============================
 document.addEventListener('DOMContentLoaded', () => {
+  if (adminToken) {
+    const inp = document.getElementById('admin-token-input');
+    if (inp) inp.value = adminToken;
+  }
   initChart();
   seedStatsFromServer();
   connectSSE();
