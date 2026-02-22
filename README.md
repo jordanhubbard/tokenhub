@@ -122,6 +122,7 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
+| `TOKENHUB_VAULT_PASSWORD` | | Auto-unlock vault at startup (headless mode) |
 
 ### Credentials
 

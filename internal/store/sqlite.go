@@ -72,7 +72,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			type TEXT NOT NULL,
 			enabled BOOLEAN NOT NULL DEFAULT 1,
 			base_url TEXT NOT NULL DEFAULT '',
-			cred_store TEXT NOT NULL DEFAULT 'env'
+			cred_store TEXT NOT NULL DEFAULT 'none'
 		)`,
 		`CREATE TABLE IF NOT EXISTS request_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -89,7 +89,7 @@ type ProviderRecord struct {
 	Type      string `json:"type"` // openai, anthropic, vllm
 	Enabled   bool   `json:"enabled"`
 	BaseURL   string `json:"base_url"`
-	CredStore string `json:"cred_store"` // env, vault, none
+	CredStore string `json:"cred_store"` // vault, none
 }
 
 // RoutingConfig holds persisted routing policy defaults.

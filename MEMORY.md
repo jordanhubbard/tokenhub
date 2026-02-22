@@ -161,6 +161,7 @@ All config is via environment variables (`TOKENHUB_*`). See `internal/app/config
 | `TOKENHUB_DB_DSN` | `file:/data/tokenhub.sqlite` | SQLite database path |
 | `TOKENHUB_ADMIN_TOKEN` | (auto-generated if empty) | Bearer token for `/admin/v1/*` endpoints |
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
+| `TOKENHUB_VAULT_PASSWORD` | — | Auto-unlock vault at startup (headless/automated mode) |
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | JSON file with providers/models (must be mode 0600) |
 | `TOKENHUB_TEMPORAL_ENABLED` | `false` | Enable Temporal workflow engine |
 | `TOKENHUB_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |

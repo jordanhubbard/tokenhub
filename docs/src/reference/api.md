@@ -146,7 +146,7 @@ Prometheus metrics endpoint.
 
 Create or update a provider.
 
-**Body**: `{"id": "string", "type": "openai|anthropic|vllm", "enabled": true, "base_url": "string", "cred_store": "env|vault|none", "api_key": "string"}`
+**Body**: `{"id": "string", "type": "openai|anthropic|vllm", "enabled": true, "base_url": "string", "cred_store": "vault|none", "api_key": "string"}`
 
 **Response**: `200 OK` → `{"ok": true, "cred_store": "vault"}`
 

@@ -136,6 +136,23 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	}
 
+	// Auto-unlock vault from environment if TOKENHUB_VAULT_PASSWORD is set.
+	// This allows headless/automated deployments to skip interactive unlock.
+	if cfg.VaultPassword != "" && cfg.VaultEnabled {
+		if err := v.Unlock([]byte(cfg.VaultPassword)); err != nil {
+			logger.Error("failed to auto-unlock vault from TOKENHUB_VAULT_PASSWORD", slog.String("error", err.Error()))
+		} else {
+			logger.Info("vault auto-unlocked from TOKENHUB_VAULT_PASSWORD")
+			// Persist the vault blob so first-time setup also works headless.
+			if salt := v.Salt(); salt != nil {
+				data := v.Export()
+				if err := db.SaveVaultBlob(context.Background(), salt, data); err != nil {
+					logger.Warn("failed to persist vault blob after auto-unlock", slog.String("error", err.Error()))
+				}
+			}
+		}
+	}
+
 	// Set up health tracking.
 	ht := health.NewTracker(health.DefaultConfig())
 	eng.SetHealthChecker(ht)

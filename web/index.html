@@ -857,9 +857,9 @@ function fetchProviders() {
       const isRuntime = !sp;
       return {
         id,
-        type: sp ? sp.type : (engineAdapters.includes(id) ? 'openai' : 'env'),
+        type: sp ? sp.type : 'openai',
         base_url: baseUrl,
-        cred_store: sp ? (sp.cred_store || 'none') : 'env',
+        cred_store: sp ? (sp.cred_store || 'none') : 'none',
         enabled: sp ? sp.enabled : true,
         _runtime: isRuntime,
         _modelCount: models.length

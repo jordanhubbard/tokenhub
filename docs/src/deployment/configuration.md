@@ -12,6 +12,7 @@ TokenHub is configured entirely via environment variables. All variables are opt
 | `TOKENHUB_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `TOKENHUB_DB_DSN` | `/data/tokenhub.sqlite` | SQLite database path |
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
+| `TOKENHUB_VAULT_PASSWORD` | — | Auto-unlock vault at startup (headless mode) |
 | `TOKENHUB_PROVIDER_TIMEOUT_SECS` | `30` | HTTP timeout for provider API calls |
 
 ### Routing Defaults

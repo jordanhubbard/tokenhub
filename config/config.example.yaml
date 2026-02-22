@@ -12,6 +12,7 @@
 # TOKENHUB_LOG_LEVEL=info                  # debug, info, warn, error
 # TOKENHUB_DB_DSN=file:/data/tokenhub.sqlite?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
 # TOKENHUB_VAULT_ENABLED=true
+# TOKENHUB_VAULT_PASSWORD=                 # Auto-unlock vault at startup (headless mode)
 # TOKENHUB_PROVIDER_TIMEOUT_SECS=30
 
 # ──── Security & Hardening ────

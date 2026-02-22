@@ -14,7 +14,8 @@ type Config struct {
 
 	DBDSN string
 
-	VaultEnabled bool
+	VaultEnabled  bool
+	VaultPassword string // auto-unlock vault at startup if set
 
 	DefaultMode         string
 	DefaultMaxBudget    float64
@@ -48,7 +49,8 @@ func LoadConfig() (Config, error) {
 		ListenAddr: getEnv("TOKENHUB_LISTEN_ADDR", ":8080"),
 		LogLevel:   getEnv("TOKENHUB_LOG_LEVEL", "info"),
 		DBDSN:      getEnv("TOKENHUB_DB_DSN", "file:/data/tokenhub.sqlite"),
-		VaultEnabled: getEnvBool("TOKENHUB_VAULT_ENABLED", true),
+		VaultEnabled:  getEnvBool("TOKENHUB_VAULT_ENABLED", true),
+		VaultPassword: getEnv("TOKENHUB_VAULT_PASSWORD", ""),
 
 		DefaultMode: getEnv("TOKENHUB_DEFAULT_MODE", "normal"),
 		DefaultMaxBudget: getEnvFloat("TOKENHUB_DEFAULT_MAX_BUDGET_USD", 0.05),

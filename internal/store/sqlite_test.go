@@ -101,7 +101,7 @@ func TestProvidersCRUD(t *testing.T) {
 
 	p := ProviderRecord{
 		ID: "openai", Type: "openai", Enabled: true,
-		BaseURL: "https://api.openai.com", CredStore: "env",
+		BaseURL: "https://api.openai.com", CredStore: "vault",
 	}
 	if err := s.UpsertProvider(ctx, p); err != nil {
 		t.Fatalf("upsert failed: %v", err)

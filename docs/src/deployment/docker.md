@@ -61,13 +61,14 @@ tokenhub:
     - TOKENHUB_LISTEN_ADDR=:8080
     - TOKENHUB_DB_DSN=/data/tokenhub.sqlite
     - TOKENHUB_VAULT_ENABLED=true
+    - TOKENHUB_VAULT_PASSWORD=${TOKENHUB_VAULT_PASSWORD}
     - TOKENHUB_ADMIN_TOKEN=${TOKENHUB_ADMIN_TOKEN}
   volumes:
     - tokenhub_data:/data
   restart: unless-stopped
 ```
 
-Providers are registered after startup via `bootstrap.local`, the admin API, `tokenhubctl`, or the admin UI.
+Set `TOKENHUB_VAULT_PASSWORD` to auto-unlock the vault at startup (headless mode). If not set, unlock interactively via UI or `tokenhubctl`. Providers are registered at runtime via `bootstrap.local`, the admin API, `tokenhubctl`, or the admin UI.
 
 Note: The `TOKENHUB_DB_DSN` should be a plain path (e.g., `/data/tokenhub.sqlite`) when using `modernc.org/sqlite` (the pure-Go driver). SQLite pragmas are applied programmatically, not via DSN query parameters.
 

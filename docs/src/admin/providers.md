@@ -84,7 +84,7 @@ tokenhubctl provider add '{"id":"openai-prod","type":"openai","base_url":"https:
 | `type` | string | Yes | Provider type: `openai`, `anthropic`, or `vllm` |
 | `enabled` | bool | No | Whether the provider is active (default: true) |
 | `base_url` | string | Yes | Provider API base URL |
-| `cred_store` | string | No | Where to store credentials: `env`, `vault`, or `none` |
+| `cred_store` | string | No | Where to store credentials: `vault` or `none` |
 | `api_key` | string | No | API key (stored according to `cred_store`) |
 
 ### List Providers
@@ -138,8 +138,8 @@ This calls the provider's `/v1/models` endpoint (using the stored API key from t
 
 | `cred_store` | Description |
 |--------------|-------------|
-| `vault` | API key is encrypted and stored in the vault (recommended) |
-| `none` | No credentials needed (e.g., local vLLM without auth) |
+| `vault` | API key is encrypted and stored in the vault (default when `api_key` is provided) |
+| `none` | No credentials needed (e.g., local vLLM/Ollama without auth) |
 
 When using `vault`, the API key is encrypted with AES-256-GCM and only available when the vault is unlocked.
 
