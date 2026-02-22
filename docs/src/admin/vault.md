@@ -2,6 +2,8 @@
 
 TokenHub includes an AES-256-GCM encrypted vault for storing provider API keys securely. Provider credentials are encrypted at rest and only decrypted in memory when the vault is unlocked.
 
+> **Vault password vs. admin token**: The vault password is *not* the same as your admin token. The admin token authenticates HTTP requests to the admin API. The vault password derives the encryption key used to protect stored credentials. Both are required in a production deployment: the admin token to access the API, and the vault password to decrypt provider keys.
+
 ## How It Works
 
 1. An administrator sets a **vault password** when first configuring TokenHub

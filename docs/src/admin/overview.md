@@ -4,12 +4,13 @@ This section covers how to configure, manage, and monitor a TokenHub deployment.
 
 ## Administration Model
 
-TokenHub uses a two-tier security model:
+TokenHub uses a three-tier security model:
 
-1. **Vault password**: Protects encrypted provider credentials. Required to unlock the vault after restart.
-2. **API keys**: Issued to client applications for `/v1` endpoint access. Managed via admin API.
+1. **Admin token** (`TOKENHUB_ADMIN_TOKEN`): Authenticates access to the admin API (`/admin/v1/*`) and the admin dashboard. The UI requires the token at login; all admin API calls include it as `Authorization: Bearer <token>`. Retrieve it with `tokenhubctl admin-token`.
+2. **Vault password**: A separate secret that *encrypts provider API keys at rest*. Even a valid admin token cannot decrypt the vault — the vault must be explicitly unlocked after each restart (or set `TOKENHUB_VAULT_PASSWORD` for auto-unlock).
+3. **API keys**: Issued to client applications for `/v1` endpoint access. Managed via the admin API or UI.
 
-Admin endpoints (`/admin/v1/*`) are protected by `TOKENHUB_ADMIN_TOKEN` when configured. In production, always set this token and additionally restrict access at the network level (firewall, VPN, reverse proxy).
+In production, always set `TOKENHUB_ADMIN_TOKEN` and restrict network access to `/admin/*` at the firewall, VPN, or reverse proxy level.
 
 ## Administration Tools
 

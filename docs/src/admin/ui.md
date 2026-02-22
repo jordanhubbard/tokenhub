@@ -12,6 +12,18 @@ http://localhost:8080/admin
 
 The root URL (`http://localhost:8080/`) automatically redirects to `/admin/`.
 
+### Authentication
+
+When `TOKENHUB_ADMIN_TOKEN` is set, the dashboard displays a full-screen **Admin Authentication** modal on first visit. Paste your admin token and press **Authenticate** (or Enter). The token is verified against the API before the dashboard loads; an invalid token shows an inline error.
+
+Once authenticated, the token is stored in `sessionStorage` (cleared when the browser tab closes). A **Sign Out** button in the header clears the session and re-opens the authentication modal.
+
+To retrieve the admin token:
+
+```bash
+tokenhubctl admin-token
+```
+
 ## Cache Busting
 
 The admin HTML is served with `Cache-Control: no-cache, must-revalidate` and an `ETag` derived from the content hash. Static assets under `/_assets/` are served with `immutable` cache headers and versioned URLs (`?v=<hash>`), ensuring browsers always get fresh assets after a rebuild without manual cache clearing.
@@ -22,9 +34,11 @@ The admin HTML is served with `Cache-Control: no-cache, must-revalidate` and an 
 
 The vault panel adapts to three states:
 
-- **First-Time Setup**: When the vault has never been initialized, the UI displays a clear "Set a Vault Password" prompt with password requirements (minimum 8 characters) and a confirmation field.
-- **Locked**: When the vault has been initialized but is locked, the UI shows an "Enter Vault Password" prompt to unlock.
-- **Unlocked**: Shows the unlocked status with Lock and Rotate password buttons.
+- **First-Time Setup**: When the vault has never been initialized, the UI displays a prompt to choose a master password (minimum 8 characters) with a confirmation field. Press Enter in the confirmation field or click **Initialize Vault** to complete setup.
+- **Locked**: When the vault has been initialized but is locked, the UI shows a password input. Press Enter or click **Unlock** to unlock.
+- **Unlocked**: Shows the unlocked status with a **Lock** button.
+
+> **Note:** The vault password encrypts your stored provider API keys. It is distinct from your admin token, which authenticates access to the admin API. You need both: the admin token to access the dashboard, and the vault password to decrypt stored credentials.
 
 ### Provider Management
 
