@@ -18,7 +18,6 @@ services:
       - TOKENHUB_TEMPORAL_TASK_QUEUE=${TOKENHUB_TEMPORAL_TASK_QUEUE:-tokenhub-tasks}
     volumes:
       - tokenhub_data:/data
-      - ${HOME}/.tokenhub:/home/tokenhub/.tokenhub:ro
     # Temporal is optional; the app handles its absence gracefully.
     # Uncomment the depends_on block below if you enable Temporal.
     # depends_on:
