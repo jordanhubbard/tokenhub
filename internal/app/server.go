@@ -715,20 +715,34 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 	}
 }
 
-// writeAdminTokenFile persists the admin token to a well-known file next to
-// the database so that tokenhubctl can retrieve it without parsing logs.
+// writeAdminTokenFile persists the admin token so that tokenhubctl can
+// retrieve it without parsing logs. It writes to two locations:
+//   - Next to the database (e.g. /data/.admin-token) for Docker deployments
+//   - ~/.tokenhub/.admin-token for native/host deployments
 func writeAdminTokenFile(dbDSN, token string, logger *slog.Logger) {
+	content := []byte(token + "\n")
+
+	// Write next to the database.
 	dsn := strings.TrimPrefix(dbDSN, "file:")
 	if i := strings.IndexByte(dsn, '?'); i >= 0 {
 		dsn = dsn[:i]
 	}
-	if dsn == "" || dsn == ":memory:" {
-		return
+	if dsn != "" && dsn != ":memory:" {
+		tokenPath := filepath.Join(filepath.Dir(dsn), ".admin-token")
+		if err := os.WriteFile(tokenPath, content, 0600); err != nil {
+			logger.Warn("failed to write admin token file", slog.String("path", tokenPath), slog.String("error", err.Error()))
+		}
 	}
-	dir := filepath.Dir(dsn)
-	tokenPath := filepath.Join(dir, ".admin-token")
-	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
-		logger.Warn("failed to write admin token file", slog.String("path", tokenPath), slog.String("error", err.Error()))
+
+	// Write to ~/.tokenhub/.admin-token for native deployments.
+	if home, err := os.UserHomeDir(); err == nil {
+		dir := filepath.Join(home, ".tokenhub")
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			tokenPath := filepath.Join(dir, ".admin-token")
+			if err := os.WriteFile(tokenPath, content, 0600); err != nil {
+				logger.Warn("failed to write ~/.tokenhub/.admin-token", slog.String("error", err.Error()))
+			}
+		}
 	}
 }
 
