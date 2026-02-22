@@ -170,7 +170,7 @@ make test-race   # With race detector
 
 ```bash
 make build       # Build to bin/tokenhub
-make docker      # Build Docker image
+make package     # Build Docker image
 make lint        # Run linter (requires golangci-lint)
 make vet         # Go vet
 ```

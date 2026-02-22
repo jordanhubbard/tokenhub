@@ -158,5 +158,5 @@ Static assets (Cytoscape.js, D3.js) are served from `/_assets/` to avoid conflic
 The admin UI is a single `index.html` file located at `web/index.html` in the source tree. To customize:
 
 1. Edit `web/index.html`
-2. Rebuild the binary (`make build`) or Docker image (`make docker`)
+2. Rebuild the binary (`make build`) or Docker image (`make package`)
 3. The updated UI is embedded automatically with fresh cache-busting hashes

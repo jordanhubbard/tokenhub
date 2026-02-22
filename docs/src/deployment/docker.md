@@ -7,7 +7,7 @@ TokenHub provides a Dockerfile for container builds and a Docker Compose file fo
 ### Build
 
 ```bash
-make docker
+make package
 # or
 docker buildx build --load -t tokenhub .
 ```

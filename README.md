@@ -60,62 +60,49 @@ Client --> /v1/chat/completions or /v1/chat or /v1/plan
 
 ## Quick Start
 
-### Prerequisites
+Only **Docker** and **Make** are required on the host. All build tools run inside containers.
 
-Only **Docker** and **Make** are required on the host. All build tools (Go 1.24, golangci-lint, mdbook) run inside containers.
-
-### Docker Compose
+### 1. Start the server
 
 ```bash
-cp .env.example .env
-# Edit .env with your provider API keys and an admin token
-docker compose up --build
+git clone https://github.com/jordanhubbard/tokenhub.git
+cd tokenhub
+docker compose up -d tokenhub
 ```
 
-TokenHub will be available at `http://localhost:8080`. The admin UI is at `http://localhost:8080/admin`.
+TokenHub is now listening on `http://localhost:8090`. The admin UI is at `http://localhost:8090/admin`.
 
-If Temporal is enabled, the Temporal UI is available at `http://localhost:8233`.
+### 2. Register providers
 
-### External Token Injection
+A freshly started TokenHub has no providers. You can add any LLM endpoint
+that speaks the OpenAI, Anthropic, or vLLM protocol — this includes NVIDIA NIM,
+Azure OpenAI, Together AI, Groq, Fireworks, Mistral, local Ollama, and more.
 
-For secrets you don't want in environment variables or git:
-
-**Credentials file** (`~/.tokenhub/credentials`): A JSON file read at startup to register providers and models. Must have `0600` permissions. See the [Provider Management](docs/src/admin/providers.md) docs for the format.
-
-**bootstrap.local**: A git-ignored shell script that runs after `make run` to configure a live instance via the admin API. Copy `bootstrap.local.example` and fill in your values:
+The recommended approach for development is `bootstrap.local`:
 
 ```bash
 cp bootstrap.local.example bootstrap.local
 chmod +x bootstrap.local
-# Edit bootstrap.local with your provider keys and model configs
-make run
+# Edit bootstrap.local with your providers, models, and API keys
+make run     # builds image, starts compose, runs bootstrap.local, tails logs
 ```
 
-### Unlock the Vault
+You can also register providers interactively via `tokenhubctl`, the admin API,
+or the admin UI's setup wizard. See the [Quick Start guide](docs/src/quickstart.md) for all options.
 
-On first start with `TOKENHUB_VAULT_ENABLED=true`, the vault is locked. Unlock it via the admin UI or:
+Providers and models persist in the database and are restored automatically on restart.
+
+### 3. Send a request
 
 ```bash
-curl -X POST http://localhost:8080/admin/v1/vault/unlock \
-  -H "Authorization: Bearer $TOKENHUB_ADMIN_TOKEN" \
+# Create an API key
+tokenhubctl apikey create '{"name":"test","scopes":"[\"chat\"]"}'
+
+# Send a chat request
+curl -X POST http://localhost:8090/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{"admin_password": "your-vault-password"}'
-```
-
-Or with `tokenhubctl`:
-
-```bash
-tokenhubctl vault unlock "your-vault-password"
-```
-
-### Send a Request
-
-```bash
-curl -X POST http://localhost:8080/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "Hello, world!"}]
-  }'
+  -H "Authorization: Bearer tokenhub_..." \
+  -d '{"request":{"messages":[{"role":"user","content":"Hello!"}]}}'
 ```
 
 ## Configuration Reference
@@ -395,7 +382,7 @@ All build operations run inside Docker containers via Make. No host Go installat
 | `make test-e2e` | Run end-to-end Temporal workflow tests |
 | `make vet` | Run `go vet` |
 | `make lint` | Run golangci-lint |
-| `make docker` | Build production Docker image |
+| `make package` | Build production Docker image |
 | `make docs` | Build HTML documentation (mdbook) |
 | `make docs-serve` | Serve docs with live reload on port 3000 |
 | `make clean` | Remove `bin/`, `docs/book/`, and `coverage.out` |

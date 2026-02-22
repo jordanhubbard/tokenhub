@@ -127,7 +127,7 @@ tokenhub/
 | Command | What It Does |
 |---------|--------------|
 | `make build` | Compiles `bin/tokenhub` and `bin/tokenhubctl` inside the builder container |
-| `make docker` | Builds the production Docker image (`tokenhub:$(VERSION)`) |
+| `make package` | Builds the production Docker image (`tokenhub:$(VERSION)` + `tokenhub:latest`) |
 | `make run` | Builds image, starts compose stack, runs `bootstrap.local`, tails logs |
 | `make test` | Runs `go test ./...` inside the builder container |
 | `make test-race` | Tests with race detector |
@@ -525,7 +525,7 @@ cp .env.example .env        # Edit with your tokens
 make run                    # Builds image, starts stack, runs bootstrap, tails logs
 
 # After code changes, rebuild
-make docker                 # Rebuild image
+make package                # Rebuild image
 docker compose down tokenhub && docker compose up -d tokenhub
 
 # Or use the Makefile build for faster iteration (creates bin/tokenhub)
