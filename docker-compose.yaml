@@ -19,7 +19,7 @@ services:
     volumes:
       - tokenhub_data:/data
     healthcheck:
-      test: ["/tokenhub", "-healthcheck"]
+      test: ["CMD", "/tokenhub", "-healthcheck"]
       interval: 5s
       timeout: 3s
       start_period: 10s
