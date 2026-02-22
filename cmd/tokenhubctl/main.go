@@ -249,7 +249,7 @@ func parseLimit(args []string) int {
 // --- Commands ---
 
 func doStatus() {
-	info := doGet("/admin/api/info")
+	info := doGet("/admin/v1/info")
 	healthResp, err := doRequest("GET", "/healthz", nil)
 	fatal(err)
 	defer healthResp.Body.Close()

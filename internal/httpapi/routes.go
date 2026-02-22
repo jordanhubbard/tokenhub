@@ -130,8 +130,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	serveAdmin := func(w http.ResponseWriter, r *http.Request) {
 		if cachedHTML == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"tokenhub":     "admin",
-				"vault_locked": d.Vault.IsLocked(),
+				"tokenhub": "admin",
 			})
 			return
 		}
@@ -149,15 +148,6 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		http.FileServer(http.FS(sub)).ServeHTTP(w, r)
 	})))
-
-	// JSON API for programmatic access.
-	r.Get("/admin/api/info", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"tokenhub":          "admin",
-			"vault_locked":      d.Vault.IsLocked(),
-			"vault_initialized": d.Vault.Salt() != nil,
-		})
-	})
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(bodySizeLimit(maxRequestBodySize))
@@ -182,9 +172,19 @@ func MountRoutes(r chi.Router, d Dependencies) {
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Use(bodySizeLimit(maxRequestBodySize))
 		// Protect admin endpoints when an admin token is configured.
+		// NewServer always sets a token (auto-generated if not provided),
+		// so this is only empty in test harnesses.
 		if d.AdminToken != "" {
 			r.Use(adminAuthMiddleware(d.AdminToken))
 		}
+
+		r.Get("/info", func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tokenhub":          "admin",
+				"vault_locked":      d.Vault.IsLocked(),
+				"vault_initialized": d.Vault.Salt() != nil,
+			})
+		})
 
 		// API key management endpoints.
 		r.Post("/apikeys", APIKeysCreateHandler(d))
@@ -256,6 +256,8 @@ func mountDocs(r chi.Router) {
 }
 
 // adminAuthMiddleware checks for a valid Bearer token on admin endpoints.
+// It first checks the Authorization header, then falls back to a ?token=
+// query parameter (required for EventSource/SSE which cannot set headers).
 func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -264,13 +266,18 @@ func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
 				clientIP = r.RemoteAddr
 			}
 
-			auth := r.Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") {
+			var provided string
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				provided = strings.TrimPrefix(auth, "Bearer ")
+			} else if qt := r.URL.Query().Get("token"); qt != "" {
+				provided = qt
+			}
+
+			if provided == "" {
 				slog.Warn("admin auth: missing token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "missing admin token", http.StatusUnauthorized)
 				return
 			}
-			provided := strings.TrimPrefix(auth, "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 				slog.Warn("admin auth: invalid token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid admin token", http.StatusUnauthorized)

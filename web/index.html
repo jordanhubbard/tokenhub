@@ -1073,7 +1073,17 @@ function updateWeight(el) {
 // ============================
 let vaultInitialized = false;
 function fetchVaultStatus() {
-  fetch('/admin/api/info').then(r=>r.json()).then(data => {
+  fetch('/admin/v1/info').then(r => {
+    if (r.status === 401) {
+      document.getElementById('vault-indicator').className = 'vault-indicator locked';
+      document.getElementById('vault-label').textContent = 'Auth Required';
+      document.getElementById('vault-controls').innerHTML =
+        '<p style="font-size:13px;color:#ffc107">Enter your admin token above to access vault controls.</p>';
+      return;
+    }
+    return r.json();
+  }).then(data => {
+    if (!data) return;
     const locked = data.vault_locked;
     vaultInitialized = !!data.vault_initialized;
     document.getElementById('vault-indicator').className = 'vault-indicator ' + (locked ? 'locked' : 'unlocked');

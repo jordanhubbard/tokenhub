@@ -159,7 +159,7 @@ All config is via environment variables (`TOKENHUB_*`). See `internal/app/config
 |----------|---------|---------|
 | `TOKENHUB_LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `TOKENHUB_DB_DSN` | `file:/data/tokenhub.sqlite` | SQLite database path |
-| `TOKENHUB_ADMIN_TOKEN` | (empty = unprotected!) | Bearer token for `/admin/v1/*` endpoints |
+| `TOKENHUB_ADMIN_TOKEN` | (auto-generated if empty) | Bearer token for `/admin/v1/*` endpoints |
 | `TOKENHUB_VAULT_ENABLED` | `true` | Enable encrypted credential vault |
 | `TOKENHUB_OPENAI_API_KEY` | — | Registers OpenAI provider adapter on startup |
 | `TOKENHUB_ANTHROPIC_API_KEY` | — | Registers Anthropic provider adapter on startup |

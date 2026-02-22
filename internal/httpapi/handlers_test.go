@@ -429,7 +429,7 @@ func TestAdminAPIInfoEndpoint(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/admin/api/info")
+	resp, err := http.Get(ts.URL + "/admin/v1/info")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}

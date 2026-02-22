@@ -12,7 +12,7 @@ Use this checklist when deploying TokenHub to production.
 
 ## Security Hardening
 
-- [ ] **Set `TOKENHUB_ADMIN_TOKEN`**: Required to protect `/admin/v1/*` endpoints with Bearer token auth
+- [ ] **Set `TOKENHUB_ADMIN_TOKEN`**: Stable Bearer token for `/admin/v1/*` endpoints (auto-generated if not set — check logs for the token)
 - [ ] **Set `TOKENHUB_CORS_ORIGINS`**: Restrict CORS to your domain(s) (e.g., `https://app.example.com`)
 - [ ] **Rate limiting**: Review `TOKENHUB_RATE_LIMIT_RPS` (default: 60/s) and `TOKENHUB_RATE_LIMIT_BURST` (default: 120) for your traffic patterns
 

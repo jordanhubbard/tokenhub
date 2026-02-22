@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -268,9 +270,16 @@ func NewServer(cfg Config) (*Server, error) {
 	// Start API key rotation enforcement goroutine.
 	go s.rotationEnforceLoop()
 
-	// Log security warnings.
+	// Ensure admin endpoints are always protected. Auto-generate a token if
+	// the operator didn't set one, and log it so they can use it.
 	if cfg.AdminToken == "" {
-		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — admin endpoints are UNPROTECTED")
+		tokenBytes := make([]byte, 32)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			return nil, fmt.Errorf("generate admin token: %w", err)
+		}
+		cfg.AdminToken = hex.EncodeToString(tokenBytes)
+		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — auto-generated token (set env var to use a fixed token)",
+			slog.String("token", cfg.AdminToken))
 	}
 	if len(cfg.CORSOrigins) == 0 {
 		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")

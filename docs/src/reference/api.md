@@ -425,9 +425,9 @@ Server-Sent Events stream.
 
 Serves the embedded admin SPA. The root URL (`/`) redirects here.
 
-### GET /admin/api/info
+### GET /admin/v1/info
 
-Admin status information.
+Admin status information. Requires admin token authentication (Bearer header or `?token=` query parameter).
 
 **Response**: `200 OK`
 ```json
