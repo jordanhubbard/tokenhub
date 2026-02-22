@@ -385,6 +385,10 @@ All build operations run inside Docker containers via Make. No host Go installat
 |--------|-------------|
 | `make build` | Build `tokenhub` and `tokenhubctl` to `bin/` |
 | `make run` | Build Docker image, start via `docker compose up`, tail logs |
+| `make start` | Start the service (no rebuild) |
+| `make stop` | Stop the service |
+| `make restart` | Stop and start the service |
+| `make logs` | Tail service logs |
 | `make test` | Run unit tests |
 | `make test-race` | Run tests with Go race detector |
 | `make test-coverage` | Run tests with coverage report (`coverage.out`) |

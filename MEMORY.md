@@ -129,6 +129,10 @@ tokenhub/
 | `make build` | Compiles `bin/tokenhub` and `bin/tokenhubctl` inside the builder container |
 | `make package` | Builds the production Docker image (`tokenhub:$(VERSION)` + `tokenhub:latest`) |
 | `make run` | Builds image, starts compose stack, tails logs |
+| `make start` | Start the service (no rebuild) |
+| `make stop` | Stop the service |
+| `make restart` | Stop and start the service |
+| `make logs` | Tail service logs |
 | `make test` | Runs `go test ./...` inside the builder container |
 | `make test-race` | Tests with race detector |
 | `make test-coverage` | Tests with coverage profile |

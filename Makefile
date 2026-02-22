@@ -1,4 +1,4 @@
-.PHONY: build package run test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup
+.PHONY: build package run start stop restart logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -45,10 +45,23 @@ build: builder
 package: setup
 	$(DOCKER_BUILD) -t tokenhub:$(VERSION) -t tokenhub:latest .
 
-# ──── Run ────
+# ──── Lifecycle ────
 
 run: package
 	docker compose up -d
+	docker compose logs -f tokenhub
+
+start:
+	docker compose up -d tokenhub
+
+stop:
+	docker compose down tokenhub
+
+restart:
+	docker compose down tokenhub
+	docker compose up -d tokenhub
+
+logs:
 	docker compose logs -f tokenhub
 
 # ──── Tests ────
