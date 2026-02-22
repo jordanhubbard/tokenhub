@@ -27,8 +27,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
 
-	if cfg.ListenAddr != ":8080" {
-		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":8080")
+	if cfg.ListenAddr != ":8090" {
+		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":8090")
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")

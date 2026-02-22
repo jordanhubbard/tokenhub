@@ -1,4 +1,4 @@
-.PHONY: build install package run start stop restart logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup
+.PHONY: build install package run start stop restart logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
 
 INSTALL_DIR ?= $(HOME)/.local/bin
 
@@ -65,6 +65,7 @@ run: package
 
 start:
 	docker compose up -d tokenhub
+	@$(MAKE) -s _write-env
 
 stop:
 	docker compose stop tokenhub
@@ -72,6 +73,26 @@ stop:
 restart:
 	docker compose stop tokenhub
 	docker compose up -d tokenhub
+	@$(MAKE) -s _write-env
+
+# Read /data/env from the running container, prepend TOKENHUB_URL, and write
+# ~/.tokenhub/env on the host. tokenhubctl auto-sources this file on startup
+# so no shell profile changes are needed.
+_write-env:
+	@echo "Waiting for tokenhub to start..."
+	@for i in $$(seq 1 30); do \
+		env=$$(docker compose exec -T tokenhub cat /data/env 2>/dev/null); \
+		if [ -n "$$env" ]; then \
+			mkdir -p $(HOME)/.tokenhub; \
+			{ printf 'TOKENHUB_URL=http://localhost:%s\n' "$(TOKENHUB_PORT)"; printf '%s\n' "$$env"; } \
+				> $(HOME)/.tokenhub/env; \
+			chmod 600 $(HOME)/.tokenhub/env; \
+			echo "State written to ~/.tokenhub/env"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "Warning: could not write ~/.tokenhub/env — run: tokenhubctl admin-token"
 
 logs:
 	docker compose logs -f tokenhub

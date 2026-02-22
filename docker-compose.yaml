@@ -18,6 +18,12 @@ services:
       - TOKENHUB_TEMPORAL_TASK_QUEUE=${TOKENHUB_TEMPORAL_TASK_QUEUE:-tokenhub-tasks}
     volumes:
       - tokenhub_data:/data
+    healthcheck:
+      test: ["/tokenhub", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
     # Temporal is optional; the app handles its absence gracefully.
     # Uncomment the depends_on block below if you enable Temporal.
     # depends_on:

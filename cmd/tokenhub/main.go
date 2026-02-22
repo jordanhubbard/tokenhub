@@ -35,7 +35,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
 		addr := os.Getenv("TOKENHUB_LISTEN_ADDR")
 		if addr == "" {
-			addr = ":8080"
+			addr = ":8090"
 		}
 		if err := runHealthCheck(addr); err != nil {
 			os.Exit(1)

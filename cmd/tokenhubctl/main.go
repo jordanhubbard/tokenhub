@@ -15,7 +15,35 @@ import (
 
 var version = "dev"
 
+// loadEnvFile reads ~/.tokenhub/env (written by make start) and sets any
+// key=value pairs not already present in the process environment. This lets
+// tokenhubctl work out of the box without shell profile configuration.
+func loadEnvFile() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(home + "/.tokenhub/env")
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if os.Getenv(strings.TrimSpace(k)) == "" {
+			os.Setenv(strings.TrimSpace(k), strings.TrimSpace(v))
+		}
+	}
+}
+
 func main() {
+	loadEnvFile()
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
@@ -75,8 +103,11 @@ func usage() {
 Usage: tokenhubctl <command> [arguments]
 
 Environment:
-  TOKENHUB_URL          Base URL (default: http://localhost:8080)
+  TOKENHUB_URL          Base URL (default: http://localhost:8090)
   TOKENHUB_ADMIN_TOKEN  Bearer token for admin endpoints
+
+  ~/.tokenhub/env       Auto-sourced on startup; written by make start.
+                        Explicit environment variables take precedence.
 
 Commands:
   admin-token                 Print the admin token (env, file, or Docker)
@@ -142,7 +173,7 @@ func baseURL() string {
 	if u := os.Getenv("TOKENHUB_URL"); u != "" {
 		return strings.TrimRight(u, "/")
 	}
-	return "http://localhost:8080"
+	return "http://localhost:8090"
 }
 
 func adminToken() string {

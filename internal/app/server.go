@@ -295,7 +295,7 @@ func NewServer(cfg Config) (*Server, error) {
 		cfg.AdminToken = hex.EncodeToString(tokenBytes)
 		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — auto-generated token written to data dir (retrieve with: tokenhubctl admin-token)")
 	}
-	writeAdminTokenFile(cfg.DBDSN, cfg.AdminToken, logger)
+	writeStateEnv(cfg.DBDSN, cfg.AdminToken, logger)
 	if len(cfg.CORSOrigins) == 0 {
 		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")
 	}
@@ -715,34 +715,28 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 	}
 }
 
-// writeAdminTokenFile persists the admin token so that tokenhubctl can
-// retrieve it without parsing logs. It writes to two locations:
-//   - Next to the database (e.g. /data/.admin-token) for Docker deployments
-//   - ~/.tokenhub/.admin-token for native/host deployments
-func writeAdminTokenFile(dbDSN, token string, logger *slog.Logger) {
-	content := []byte(token + "\n")
-
-	// Write next to the database.
+// writeStateEnv writes startup state as key=value pairs next to the database.
+// For Docker deployments, make start reads /data/env from the container via
+// docker compose exec and writes ~/.tokenhub/env on the host. The server never
+// writes to the host filesystem directly — that is always handled by the
+// Makefile, which is guaranteed to run in the host context.
+func writeStateEnv(dbDSN, token string, logger *slog.Logger) {
 	dsn := strings.TrimPrefix(dbDSN, "file:")
 	if i := strings.IndexByte(dsn, '?'); i >= 0 {
 		dsn = dsn[:i]
 	}
-	if dsn != "" && dsn != ":memory:" {
-		tokenPath := filepath.Join(filepath.Dir(dsn), ".admin-token")
-		if err := os.WriteFile(tokenPath, content, 0600); err != nil {
-			logger.Warn("failed to write admin token file", slog.String("path", tokenPath), slog.String("error", err.Error()))
-		}
+	if dsn == "" || dsn == ":memory:" {
+		return
 	}
-
-	// Write to ~/.tokenhub/.admin-token for native deployments.
-	if home, err := os.UserHomeDir(); err == nil {
-		dir := filepath.Join(home, ".tokenhub")
-		if err := os.MkdirAll(dir, 0700); err == nil {
-			tokenPath := filepath.Join(dir, ".admin-token")
-			if err := os.WriteFile(tokenPath, content, 0600); err != nil {
-				logger.Warn("failed to write ~/.tokenhub/.admin-token", slog.String("error", err.Error()))
-			}
-		}
+	dir := filepath.Dir(dsn)
+	envContent := []byte("TOKENHUB_ADMIN_TOKEN=" + token + "\n")
+	if err := os.WriteFile(filepath.Join(dir, "env"), envContent, 0600); err != nil {
+		logger.Warn("failed to write state env file", slog.String("error", err.Error()))
+	}
+	// Legacy: keep .admin-token for older tokenhubctl versions.
+	tokenContent := []byte(token + "\n")
+	if err := os.WriteFile(filepath.Join(dir, ".admin-token"), tokenContent, 0600); err != nil {
+		logger.Warn("failed to write admin token file", slog.String("error", err.Error()))
 	}
 }
 

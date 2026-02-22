@@ -46,7 +46,7 @@ type Config struct {
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		ListenAddr: getEnv("TOKENHUB_LISTEN_ADDR", ":8080"),
+		ListenAddr: getEnv("TOKENHUB_LISTEN_ADDR", ":8090"),
 		LogLevel:   getEnv("TOKENHUB_LOG_LEVEL", "info"),
 		DBDSN:      getEnv("TOKENHUB_DB_DSN", "file:/data/tokenhub.sqlite"),
 		VaultEnabled:  getEnvBool("TOKENHUB_VAULT_ENABLED", true),
