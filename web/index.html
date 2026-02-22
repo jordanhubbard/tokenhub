@@ -413,7 +413,14 @@
 // ============================
 // Admin Token Management
 // ============================
-let adminToken = sessionStorage.getItem('th_admin_token') || '';
+
+// Discard any stale token from sessionStorage that contains non-Latin-1
+// characters — these cause fetch() to throw before the request is sent.
+function isValidToken(t) { return t && /^[\x20-\x7E]+$/.test(t); }
+
+let adminToken = isValidToken(sessionStorage.getItem('th_admin_token'))
+  ? sessionStorage.getItem('th_admin_token')
+  : (sessionStorage.removeItem('th_admin_token'), '');
 
 function setAdminToken(val) {
   adminToken = val.trim();
@@ -426,10 +433,14 @@ function authenticate() {
   const token = (input?.value || '').trim();
   const errEl = document.getElementById('auth-error');
   if (!token) { errEl.textContent = 'Token is required.'; return; }
+  if (!isValidToken(token)) {
+    errEl.textContent = 'Token contains invalid characters — paste it directly from: tokenhubctl admin-token';
+    return;
+  }
   errEl.textContent = '';
   _origFetch('/admin/v1/info', { headers: { 'Authorization': 'Bearer ' + token } })
     .then(r => {
-      if (r.status === 401) throw new Error('Invalid token — check the value and try again.');
+      if (r.status === 401) throw new Error('Invalid token - check the value and try again.');
       if (!r.ok) throw new Error('Server error (' + r.status + ').');
       return r.json();
     })
