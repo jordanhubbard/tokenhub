@@ -293,8 +293,7 @@ func NewServer(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("generate admin token: %w", err)
 		}
 		cfg.AdminToken = hex.EncodeToString(tokenBytes)
-		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — auto-generated token (set env var to use a fixed token)",
-			slog.String("token", cfg.AdminToken))
+		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — auto-generated token written to data dir (retrieve with: tokenhubctl admin-token)")
 	}
 	writeAdminTokenFile(cfg.DBDSN, cfg.AdminToken, logger)
 	if len(cfg.CORSOrigins) == 0 {
