@@ -546,7 +546,13 @@ make build
 
 5. **Timestamp precision loss**: `ListRequestLogs` and other SQLite read paths used `time.Parse(time.RFC3339, ...)` which truncates sub-second precision. Go's `time.Now()` produces nanosecond timestamps stored as RFC3339Nano strings. Added `parseTime()` helper that tries RFC3339Nano first.
 
-6. **docker-compose vLLM endpoint mismatch**: The compose file had `TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000` (mock nginx) while the real endpoint was `http://ollama-server.hrd.nvidia.com:8000`. Since the adapter is created from the env var at startup, the prober was probing the wrong host. Updated compose to use the real endpoint.
+6. **docker-compose vLLM endpoint mismatch**: The compose file had `TOKENHUB_VLLM_ENDPOINTS=http://vllm-1:8000` (mock nginx) while the real endpoint was `http://ollama-server.hrd.nvidia.com:8000`. Since the adapter is created from the env var at startup, the prober was probing the wrong host. Updated compose to pass through from host environment.
+
+7. **Persisted providers not restored on restart**: Providers registered via the admin API or `bootstrap.local` had their DB records preserved but no runtime adapters were created at startup. Only env-var providers (`registerProviders`) got adapters. Added `loadPersistedProviders()` in `server.go` that reads provider records from the DB and creates adapters before the health prober starts, so persisted providers survive restarts.
+
+8. **Makefile bootstrap health check wrong port**: The `make bootstrap` target checked `http://localhost:8080/healthz` but docker-compose maps host port 8090 to container port 8080. Made the port configurable via `TOKENHUB_PORT` (default 8090).
+
+9. **Provider upsert defaults `enabled` to `false`**: The `ProvidersUpsertHandler` decoded the JSON request into a `ProviderUpsertRequest` struct. When the JSON omitted the `enabled` field, Go's zero-value `false` was stored in the DB, overwriting previously-enabled providers. Fixed by defaulting `req.Enabled = true` before JSON decode.
 
 ## Architecture Decisions
 
@@ -554,6 +560,6 @@ make build
 - **Single-binary server** — no sidecar processes needed; Temporal and OTel are opt-in
 - **Embedded UI** via `go:embed` — no separate frontend build step or asset server
 - **Provider response treated as opaque `json.RawMessage`** — the router doesn't parse responses; it's the handler layer that extracts usage data for observability
-- **Health prober is initialization-time only** — dynamically registered adapters aren't probed until restart (known limitation)
+- **Health prober includes persisted providers** — `loadPersistedProviders()` runs before the prober starts, so both env-var and DB-stored providers are probed from boot
 - **Thompson Sampling parameters** are refreshed from the reward_logs table every 5 minutes by a background goroutine
 - **Idempotency** is enforced via an in-memory cache with 5-minute TTL and 10k max entries

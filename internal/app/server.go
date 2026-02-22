@@ -636,10 +636,8 @@ func loadPersistedProviders(eng *router.Engine, v *vault.Vault, db store.Store, 
 	for _, id := range eng.ListAdapterIDs() {
 		existingAdapters[id] = true
 	}
-	logger.Info("loadPersistedProviders", slog.Int("db_providers", len(providers)), slog.Int("existing_adapters", len(existingAdapters)))
 	registered := 0
 	for _, p := range providers {
-		logger.Info("checking provider", slog.String("id", p.ID), slog.Bool("enabled", p.Enabled), slog.String("base_url", p.BaseURL), slog.Bool("already_registered", existingAdapters[p.ID]))
 		if !p.Enabled || p.BaseURL == "" {
 			continue
 		}

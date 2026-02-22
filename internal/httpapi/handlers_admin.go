@@ -157,6 +157,7 @@ type ProviderUpsertRequest struct {
 func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ProviderUpsertRequest
+		req.Enabled = true
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "bad json", http.StatusBadRequest)
 			return
