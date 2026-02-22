@@ -27,8 +27,8 @@ docker compose up -d tokenhub
 ```bash
 git clone https://github.com/jordanhubbard/tokenhub.git
 cd tokenhub
-make build        # produces bin/tokenhub and bin/tokenhubctl
-./bin/tokenhub
+make install      # builds and installs tokenhub + tokenhubctl to ~/.local/bin
+tokenhub
 ```
 
 TokenHub starts on port 8080 by default. Docker Compose maps this to

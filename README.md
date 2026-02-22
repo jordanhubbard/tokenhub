@@ -319,14 +319,14 @@ The admin dashboard is served at `/admin` as an embedded single-page application
 ### Installation
 
 ```bash
-make build    # Builds both tokenhub and tokenhubctl to bin/
+make install    # Builds and installs tokenhub + tokenhubctl to ~/.local/bin
 ```
 
 ### Configuration
 
 ```bash
-export TOKENHUB_URL="http://localhost:8080"       # default
-export TOKENHUB_ADMIN_TOKEN="your-admin-token"    # if admin auth is configured
+export TOKENHUB_URL="http://localhost:8080"
+export TOKENHUB_ADMIN_TOKEN="$(tokenhubctl admin-token)"
 ```
 
 ### Usage
@@ -425,9 +425,17 @@ BATCH=yes make release
 No local Go installation is needed. All tools run in containers:
 
 ```bash
-make build    # Compile the binaries
+make build    # Compile binaries (inside builder container)
 make test     # Run the test suite
 make lint     # Run linter
+```
+
+### Install CLI tools
+
+Requires Go 1.24+ on the host:
+
+```bash
+make install  # Installs tokenhub + tokenhubctl to ~/.local/bin
 ```
 
 ### Using a Local Go Toolchain

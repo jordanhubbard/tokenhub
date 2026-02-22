@@ -4,30 +4,26 @@
 
 ## Installation
 
-`tokenhubctl` is built alongside `tokenhub`:
-
 ```bash
-make build    # Produces bin/tokenhub and bin/tokenhubctl
+make install    # Builds natively and installs to ~/.local/bin
 ```
 
-Or build it directly:
+Or build inside the Docker builder container:
 
 ```bash
-go build -o bin/tokenhubctl ./cmd/tokenhubctl
+make build      # Produces bin/tokenhub and bin/tokenhubctl
 ```
 
 ## Configuration
 
-Two environment variables control how `tokenhubctl` connects to the server:
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOKENHUB_URL` | `http://localhost:8080` | TokenHub server URL |
-| `TOKENHUB_ADMIN_TOKEN` | — | Bearer token for admin endpoints |
+| `TOKENHUB_ADMIN_TOKEN` | — | Bearer token for admin endpoints (see `admin-token` command) |
 
 ```bash
 export TOKENHUB_URL="http://tokenhub.internal:8080"
-export TOKENHUB_ADMIN_TOKEN="your-admin-token"
+export TOKENHUB_ADMIN_TOKEN="$(tokenhubctl admin-token)"
 ```
 
 ## Command Reference
@@ -35,11 +31,23 @@ export TOKENHUB_ADMIN_TOKEN="your-admin-token"
 ### General
 
 ```bash
-tokenhubctl status      # Server info, health, vault state
-tokenhubctl health      # Provider health table
-tokenhubctl version     # CLI version
-tokenhubctl help        # Full usage
+tokenhubctl admin-token         # Print the admin token (env, file, or Docker)
+tokenhubctl status              # Server info, health, vault state
+tokenhubctl health              # Provider health table
+tokenhubctl version             # CLI version
+tokenhubctl help                # Full usage
 ```
+
+### Admin Token
+
+The `admin-token` command retrieves the admin token by checking, in order:
+
+1. `TOKENHUB_ADMIN_TOKEN` environment variable
+2. `~/.tokenhub/.admin-token` file (native deployments)
+3. `docker exec` into the running container to read `/data/.admin-token`
+
+This avoids the need to parse server logs. The token file is written
+automatically by the server at startup (whether auto-generated or set via env).
 
 ### Vault
 

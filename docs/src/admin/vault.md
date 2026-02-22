@@ -14,12 +14,34 @@ TokenHub includes an AES-256-GCM encrypted vault for storing provider API keys s
 
 | State | Description |
 |-------|-------------|
+| **Not initialized** | First-time setup required — choose a master password |
 | **Locked** | Credentials encrypted; provider requests will fail |
 | **Unlocked** | Credentials decrypted in memory; requests are served normally |
+
+## Auto-Unlock (Headless)
+
+Set `TOKENHUB_VAULT_PASSWORD` to unlock the vault automatically at startup.
+This is required for automated/headless deployments where no operator is
+present to enter the password interactively.
+
+```bash
+export TOKENHUB_VAULT_PASSWORD="your-secure-password"
+```
+
+On first boot this also initializes the vault, so no interactive setup is needed.
 
 ## Operations
 
 ### Unlock the Vault
+
+Via the admin UI (recommended for first-time setup — the UI asks for the
+password twice to prevent typos), or via API/CLI:
+
+```bash
+tokenhubctl vault unlock "your-secure-password"
+```
+
+Or via curl:
 
 ```bash
 curl -X POST http://localhost:8080/admin/v1/vault/unlock \
@@ -93,7 +115,8 @@ The credential lifecycle:
 ## Best Practices
 
 1. **Use a strong vault password**: At least 16 characters with mixed case, numbers, and symbols
-2. **Rotate regularly**: Use the rotate endpoint to change the vault password periodically
-3. **Monitor auto-lock**: Set up alerts if the vault locks unexpectedly during business hours
-4. **Backup the database**: The vault salt and encrypted blob are stored in SQLite. Back up the database file to ensure credential recovery
-5. **Network isolation**: Restrict access to vault admin endpoints to trusted networks
+2. **Use `TOKENHUB_VAULT_PASSWORD`** for automated deployments so the vault unlocks on restart
+3. **Rotate regularly**: Use the rotate endpoint to change the vault password periodically
+4. **Monitor auto-lock**: Set up alerts if the vault locks unexpectedly during business hours
+5. **Backup the database**: The vault salt and encrypted blob are stored in SQLite. Back up the database file to ensure credential recovery
+6. **Network isolation**: Restrict access to vault admin endpoints to trusted networks

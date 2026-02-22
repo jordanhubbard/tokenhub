@@ -26,6 +26,20 @@ Provider API keys are encrypted using AES-256-GCM:
 - Vault salt is persisted in the database for key re-derivation
 - Password rotation re-encrypts all values atomically
 
+## Admin Authentication
+
+### Admin Token
+
+All `/admin/v1/*` endpoints require a bearer token set via `TOKENHUB_ADMIN_TOKEN`.
+If not set, the server auto-generates a cryptographically random 64-character hex
+token at startup. The token is **never logged** — it is written to a file at
+`/data/.admin-token` (or `~/.tokenhub/.admin-token` for native deployments) and
+can be retrieved with:
+
+```bash
+tokenhubctl admin-token
+```
+
 ## Client Authentication
 
 ### API Key Security
