@@ -128,8 +128,11 @@ func (p *Prober) probe(target Probeable) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Any 2xx or 405 (Method Not Allowed — endpoint exists) counts as healthy.
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 || resp.StatusCode == http.StatusMethodNotAllowed {
+	// Any 2xx, 401 (Unauthorized — endpoint exists, auth required), or 405
+	// (Method Not Allowed — endpoint exists) counts as healthy.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 ||
+		resp.StatusCode == http.StatusUnauthorized ||
+		resp.StatusCode == http.StatusMethodNotAllowed {
 		p.tracker.RecordSuccess(target.ID(), latencyMs)
 		p.logger.Debug("health probe ok",
 			slog.String("provider", target.ID()),
