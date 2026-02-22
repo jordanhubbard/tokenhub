@@ -67,10 +67,10 @@ start:
 	docker compose up -d tokenhub
 
 stop:
-	docker compose down tokenhub
+	docker compose stop tokenhub
 
 restart:
-	docker compose down tokenhub
+	docker compose stop tokenhub
 	docker compose up -d tokenhub
 
 logs:
