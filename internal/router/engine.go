@@ -468,25 +468,40 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		defer cancel()
 	}
 
+	// Snapshot eligible models, adapters, and the full model set under the lock,
+	// then release the lock before any network calls. This prevents RegisterModel
+	// and RegisterAdapter write operations from blocking for the full provider round-trip.
 	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	tokensNeeded := EstimateTokens(req)
 	eligible := e.eligibleModels(tokensNeeded, p)
-
 	if len(eligible) == 0 {
+		e.mu.RUnlock()
 		return Decision{}, nil, errors.New("no eligible models registered")
 	}
-
 	outTok := estOutTokens(p)
 	hintModelID := ""
 	if req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode) {
 		hintModelID = req.ModelHint
 	}
+	// Snapshot adapters for all eligible providers plus the full model map for escalation.
+	adapters := make(map[string]Sender, len(eligible))
+	for _, m := range eligible {
+		if a, ok := e.adapters[m.ProviderID]; ok {
+			adapters[m.ProviderID] = a
+		}
+	}
+	modelSnap := make(map[string]Model, len(e.models))
+	for id, m := range e.models {
+		modelSnap[id] = m
+		if a, ok := e.adapters[m.ProviderID]; ok {
+			adapters[m.ProviderID] = a // also include escalation targets
+		}
+	}
+	e.mu.RUnlock()
 
 	// Try each eligible model in weight order, with escalation on failure.
 	for i, m := range eligible {
-		adapter := e.adapters[m.ProviderID]
+		adapter := adapters[m.ProviderID]
 		estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
 
 		slog.Info("routing request",
@@ -531,14 +546,14 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 
 		switch classified.Class {
 		case ErrContextOverflow:
-			// Find a model with larger context.
-			larger := e.findLargerContextModel(m, tokensNeeded*2)
+			// Find a model with larger context from the snapshot.
+			larger := findLargerContextModelIn(modelSnap, adapters, m, tokensNeeded*2)
 			if larger != nil {
 				slog.Info("escalating on context overflow",
 					slog.String("target_model", larger.ID),
 					slog.Int("context_tokens", larger.MaxContextTokens),
 				)
-				a2 := e.adapters[larger.ProviderID]
+				a2 := adapters[larger.ProviderID]
 				resp2, err2 := a2.Send(ctx, larger.ID, req)
 				if err2 == nil {
 					return Decision{
@@ -585,6 +600,27 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	}
 
 	return Decision{}, nil, errors.New("all providers failed")
+}
+
+// findLargerContextModelIn finds the smallest model with context larger than needed
+// from a pre-snapshotted model map and adapter map.
+func findLargerContextModelIn(models map[string]Model, adapters map[string]Sender, current Model, tokensNeeded int) *Model {
+	var best *Model
+	for _, m := range models {
+		if !m.Enabled || m.ID == current.ID {
+			continue
+		}
+		if _, ok := adapters[m.ProviderID]; !ok {
+			continue
+		}
+		if m.MaxContextTokens >= tokensNeeded && m.MaxContextTokens > current.MaxContextTokens {
+			if best == nil || m.MaxContextTokens < best.MaxContextTokens {
+				cp := m
+				best = &cp
+			}
+		}
+	}
+	return best
 }
 
 // RouteAndStream selects a model and opens a streaming connection.
@@ -830,6 +866,13 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 		MinWeight: d.PrimaryMinWeight,
 	}
 	eligible := e.eligibleModels(tokensNeeded, voterPolicy)
+	// Snapshot adapters for eligible models before releasing the lock.
+	voteAdapters := make(map[string]Sender, len(eligible))
+	for _, m := range eligible {
+		if a, ok := e.adapters[m.ProviderID]; ok {
+			voteAdapters[m.ProviderID] = a
+		}
+	}
 	e.mu.RUnlock()
 
 	// Exclude the explicit judge from voters to avoid duplication.
@@ -865,7 +908,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 
 	for i := 0; i < voters; i++ {
 		m := eligible[i%len(eligible)]
-		adapter, ok := e.adapters[m.ProviderID]
+		adapter, ok := voteAdapters[m.ProviderID]
 		if !ok {
 			continue
 		}

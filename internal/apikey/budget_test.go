@@ -202,13 +202,13 @@ func TestCheckBudget_DifferentKeys(t *testing.T) {
 	}
 }
 
-func TestCheckBudget_CacheBehavior(t *testing.T) {
+func TestCheckBudget_AlwaysFresh(t *testing.T) {
 	s := newTestStore(t)
 	bc := NewBudgetChecker(s)
 	ctx := context.Background()
 
 	rec := &store.APIKeyRecord{
-		ID:               "key-cache",
+		ID:               "key-fresh",
 		MonthlyBudgetUSD: 10.0,
 	}
 
@@ -219,50 +219,29 @@ func TestCheckBudget_CacheBehavior(t *testing.T) {
 		ProviderID:       "openai",
 		EstimatedCostUSD: 3.00,
 		StatusCode:       200,
-		APIKeyID:         "key-cache",
+		APIKeyID:         "key-fresh",
 	})
 
-	// First check populates cache.
+	// First check reads from DB: $3 < $10, should pass.
 	if err := bc.CheckBudget(ctx, rec); err != nil {
 		t.Fatalf("first check failed: %v", err)
 	}
 
-	// Verify cache is populated.
-	bc.mu.RLock()
-	_, cached := bc.cache["key-cache"]
-	bc.mu.RUnlock()
-	if !cached {
-		t.Error("expected cache to be populated after first check")
-	}
-
-	// Add more spending that would exceed budget.
+	// Add $8 more — total $11, exceeding the $10 budget.
 	_ = s.LogRequest(ctx, store.RequestLog{
 		Timestamp:        time.Now().UTC(),
 		ModelID:          "gpt-4",
 		ProviderID:       "openai",
 		EstimatedCostUSD: 8.00,
 		StatusCode:       200,
-		APIKeyID:         "key-cache",
+		APIKeyID:         "key-fresh",
 	})
 
-	// Second check should use cached value ($3) and still pass.
-	if err := bc.CheckBudget(ctx, rec); err != nil {
-		t.Errorf("second check should use cache: %v", err)
-	}
-
-	// Invalidate cache and check again -- should now fail.
-	bc.InvalidateCache("key-cache")
-
-	bc.mu.RLock()
-	_, cached = bc.cache["key-cache"]
-	bc.mu.RUnlock()
-	if cached {
-		t.Error("expected cache to be cleared after invalidation")
-	}
-
+	// Second check reads from DB directly — should see $11 and fail immediately,
+	// with no stale-cache window.
 	err := bc.CheckBudget(ctx, rec)
 	if err == nil {
-		t.Fatal("expected failure after cache invalidation with over-budget spend")
+		t.Fatal("expected second check to fail with fresh DB read showing over-budget spend")
 	}
 
 	budgetErr, ok := err.(*BudgetExceededError)
@@ -272,6 +251,9 @@ func TestCheckBudget_CacheBehavior(t *testing.T) {
 	if budgetErr.SpentUSD != 11.0 {
 		t.Errorf("expected spent $11.00, got $%.2f", budgetErr.SpentUSD)
 	}
+
+	// InvalidateCache is a no-op but must not panic.
+	bc.InvalidateCache("key-fresh")
 }
 
 func TestBudgetExceededError_Error(t *testing.T) {

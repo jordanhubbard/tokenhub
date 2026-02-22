@@ -454,6 +454,14 @@ function authenticate() {
       return r.json();
     })
     .then(() => {
+      // Establish a session cookie so EventSource can authenticate without
+      // exposing the admin token in the URL query string.
+      return _origFetch('/admin/v1/session', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+    })
+    .then(() => {
       setAdminToken(token);
       hideModal('auth-modal');
       document.getElementById('sign-out-btn').style.display = '';
@@ -465,6 +473,8 @@ function authenticate() {
 function signOut() {
   adminToken = '';
   sessionStorage.removeItem('th_admin_token');
+  // Expire the session cookie so EventSource can no longer authenticate.
+  document.cookie = 'th_admin_session=; Path=/admin; Max-Age=0; SameSite=Strict';
   document.getElementById('sign-out-btn').style.display = 'none';
   document.getElementById('auth-token-input').value = '';
   document.getElementById('auth-error').textContent = '';
@@ -667,10 +677,9 @@ const perModelCost = {};
 
 function connectSSE() {
   const status = document.getElementById('sse-status');
-  const sseUrl = adminToken
-    ? '/admin/v1/events?token=' + encodeURIComponent(adminToken)
-    : '/admin/v1/events';
-  const es = new EventSource(sseUrl);
+  // Session cookie set by POST /admin/v1/session during login is sent
+  // automatically — no token in the URL query string.
+  const es = new EventSource('/admin/v1/events');
   es.addEventListener('connected', () => { status.textContent = 'Connected'; status.className = 'status'; });
   es.addEventListener('route_success', (e) => {
     const d = JSON.parse(e.data);

@@ -145,6 +145,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// Auto-unlock vault from environment if TOKENHUB_VAULT_PASSWORD is set.
 	// This allows headless/automated deployments to skip interactive unlock.
 	if cfg.VaultPassword != "" && cfg.VaultEnabled {
+		logger.Warn("TOKENHUB_VAULT_PASSWORD is set: vault password is visible in the process environment — prefer a secrets manager or encrypted secret store in production")
 		if err := v.Unlock([]byte(cfg.VaultPassword)); err != nil {
 			logger.Error("failed to auto-unlock vault from TOKENHUB_VAULT_PASSWORD", slog.String("error", err.Error()))
 		} else {

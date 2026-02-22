@@ -185,6 +185,10 @@ func MountRoutes(r chi.Router, d Dependencies) {
 				"vault_initialized": d.Vault.Salt() != nil,
 			})
 		})
+		// Session cookie endpoint for EventSource/SSE clients that cannot set
+		// Authorization headers. Call this after authenticating with a Bearer token
+		// to receive a th_admin_session cookie for subsequent SSE connections.
+		r.Post("/session", AdminSessionHandler(d))
 
 		// API key management endpoints.
 		r.Post("/apikeys", APIKeysCreateHandler(d))
@@ -255,9 +259,10 @@ func mountDocs(r chi.Router) {
 	}
 }
 
-// adminAuthMiddleware checks for a valid Bearer token on admin endpoints.
-// It first checks the Authorization header, then falls back to a ?token=
-// query parameter (required for EventSource/SSE which cannot set headers).
+// adminAuthMiddleware checks for a valid admin token on admin endpoints.
+// It accepts:
+//  1. Authorization: Bearer <token> header (standard API clients)
+//  2. th_admin_session cookie (set by POST /admin/v1/session, used by EventSource/SSE)
 func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,8 +274,8 @@ func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
 			var provided string
 			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 				provided = strings.TrimPrefix(auth, "Bearer ")
-			} else if qt := r.URL.Query().Get("token"); qt != "" {
-				provided = qt
+			} else if c, err := r.Cookie("th_admin_session"); err == nil {
+				provided = c.Value
 			}
 
 			if provided == "" {

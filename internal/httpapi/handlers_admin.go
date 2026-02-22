@@ -52,6 +52,29 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
 }
 
+// AdminSessionHandler creates a short-lived session cookie so that the SSE
+// EventSource (which cannot set request headers) can authenticate without
+// embedding the admin token in the URL query string.
+// The caller must already be authenticated via adminAuthMiddleware (Bearer token).
+func AdminSessionHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// The admin token is stored in d.AdminToken; the middleware already
+		// validated it, so we can safely issue the cookie here.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "th_admin_session",
+			Value:    d.AdminToken,
+			Path:     "/admin",
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+			// Secure is not forced here because tokenhub can run over plain HTTP
+			// in dev environments; production deployments should use HTTPS via a
+			// reverse proxy which will upgrade the cookie to Secure automatically.
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
 func VaultLockHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.Vault.IsLocked() {
