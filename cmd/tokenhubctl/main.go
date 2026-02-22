@@ -89,7 +89,7 @@ func main() {
 	case "tsdb":
 		doTSDB(args)
 	case "help", "--help", "-h":
-		usage()
+		usageTo(os.Stdout)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		usage()
@@ -98,7 +98,11 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `tokenhubctl — CLI for the TokenHub admin API
+	usageTo(os.Stderr)
+}
+
+func usageTo(w io.Writer) {
+	fmt.Fprintf(w, `tokenhubctl — CLI for the TokenHub admin API
 
 Usage: tokenhubctl <command> [arguments]
 

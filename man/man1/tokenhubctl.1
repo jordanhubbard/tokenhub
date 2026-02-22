@@ -1,0 +1,368 @@
+.TH TOKENHUBCTL 1 "February 2026" "TokenHub" "TokenHub Manual"
+.SH NAME
+tokenhubctl \- command-line interface for the TokenHub admin API
+.SH SYNOPSIS
+.B tokenhubctl
+.I command
+.RI [ arguments ]
+.SH DESCRIPTION
+.B tokenhubctl
+is the administrative CLI for
+.BR TokenHub ,
+an OpenAI-compatible LLM proxy that provides multi-provider routing, vault-based
+credential management, API key governance, and observability.
+.PP
+All commands communicate with the TokenHub server over HTTP/JSON using the
+admin API.
+On startup,
+.B tokenhubctl
+automatically sources
+.I ~/.tokenhub/env
+(written by
+.BR "make start" )
+so the tool works out of the box without shell profile changes.
+.SH COMMANDS
+.SS General
+.TP
+.B status
+Show server URL, health status, active adapters and models, and vault state.
+.TP
+.B health
+Display per-provider health statistics: state, consecutive errors, average
+latency, and time of last successful request.
+.TP
+.B admin-token
+Print the admin bearer token.
+Checks, in order: the
+.B TOKENHUB_ADMIN_TOKEN
+environment variable, the file
+.IR ~/.tokenhub/.admin-token ,
+and the running Docker container
+.RI ( /data/.admin-token ).
+.TP
+.B version
+Print the
+.B tokenhubctl
+version string and exit.
+.TP
+.BR help " | " --help " | " \-h
+Print this help and exit (to standard output).
+.SS Vault Management
+.TP
+.BI "vault unlock " password
+Unlock the vault using the given admin password.
+Provider credentials are decrypted and loaded into the runtime engine.
+.TP
+.B vault lock
+Lock the vault.
+Loaded credentials are cleared from memory.
+.TP
+.BI "vault rotate " old-password " " new-password
+Re-encrypt all vault secrets with a new password without restarting the server.
+.SS Provider Management
+.TP
+.B provider list
+List all providers from both the persistent store and the running engine,
+showing type, base URL, credential store, enabled state, model count, and
+data source.
+.TP
+.BI "provider add " json
+Create or update a provider.
+.I json
+must be a JSON object with at minimum the fields
+.BR id ,
+.BR type ,
+and
+.BR base_url .
+Example:
+.RS
+.EX
+{"id":"openai","type":"openai","base_url":"https://api.openai.com","api_key":"sk-..."}
+.EE
+.RE
+.TP
+.BI "provider edit " "id json"
+Patch an existing provider identified by
+.I id
+with the supplied JSON fields.
+.TP
+.BI "provider delete " id
+Permanently delete a provider.
+.TP
+.BI "provider discover " id
+Query the provider for its available models and register any new ones.
+.SS Model Management
+.TP
+.B model list
+List all registered models with provider, weight, context window, per-token
+pricing, and enabled state.
+.TP
+.BI "model add " json
+Create or update a model entry.
+.TP
+.BI "model edit " "id json"
+Patch a model.
+Commonly patched fields:
+.BR weight ,
+.BR input_per_1k ,
+.BR output_per_1k ,
+.BR enabled .
+.TP
+.BI "model delete " id
+Delete a model entry.
+.TP
+.BI "model enable " id
+Set
+.B enabled=true
+on a model.
+.TP
+.BI "model disable " id
+Set
+.B enabled=false
+on a model.
+.SS Routing Configuration
+.TP
+.B routing get
+Print the current routing configuration as formatted JSON.
+.TP
+.BI "routing set " json
+Replace the routing configuration.
+Key fields include
+.BR default_mode ,
+.BR default_max_budget_usd ,
+and per-scope overrides.
+.SS API Key Management
+.TP
+.B apikey list
+List all API keys with ID, name, key prefix, scopes, enabled state, creation
+time, and last-used time.
+.TP
+.BI "apikey create " json
+Create a new API key.
+The full key value is printed once and never stored in plaintext.
+.I json
+fields:
+.B name
+(required),
+.B scopes
+(JSON array as string, e.g.
+.IR "[\(dqchat\(dq,\(dqplan\(dq]" ).
+.TP
+.BI "apikey rotate " id
+Generate a new secret for an existing API key.
+The new key value is printed once; the old key is immediately invalidated.
+.TP
+.BI "apikey edit " "id json"
+Patch an API key (e.g., rename, change scopes, enable/disable).
+.TP
+.BI "apikey delete " id
+Permanently delete an API key.
+.SS Observability
+.TP
+.BI "logs [--limit " N ]
+Show the most recent request logs in tabular form (default limit: 50).
+Columns: time, model, provider, routing mode, latency, cost, HTTP status.
+.TP
+.BI "audit [--limit " N ]
+Show the most recent admin audit log entries.
+Columns: time, action, resource, request ID.
+.TP
+.BI "rewards [--limit " N ]
+Show reward/scoring entries as JSON.
+.TP
+.B stats
+Show aggregated request statistics as JSON.
+.TP
+.B engine models
+List the models and provider adapters currently loaded in the routing engine.
+.TP
+.B events
+Stream real-time Server-Sent Events from the server (press
+.B Ctrl-C
+to stop).
+Each event line shows event type, model, provider, latency, and routing reason
+(or error message for
+.B route_error
+events).
+.SS Advanced
+.TP
+.BI "simulate " json
+Run a what-if routing simulation without sending a real request.
+Returns the model and provider that would be selected, the estimated cost,
+and the routing rationale.
+.TP
+.BI "tsdb query " args
+Query the time-series database.
+.I args
+are forwarded as URL query parameters (e.g.
+.IR "metric=request_count&from=2024-01-01" ).
+.TP
+.B tsdb metrics
+List all available TSDB metric names.
+.TP
+.B tsdb prune
+Remove TSDB data older than the configured retention window.
+.TP
+.BI "discover " provider-id
+Alias for
+.BR "provider discover" .
+.SH OPTIONS
+.TP
+.BI "--limit " N
+Accepted by
+.BR logs ,
+.BR audit ,
+and
+.BR rewards .
+Sets the maximum number of records returned (default:
+.BR 50 ).
+.SH ENVIRONMENT
+.TP
+.B TOKENHUB_URL
+Base URL of the TokenHub server.
+Default:
+.IR http://localhost:8090 .
+.TP
+.B TOKENHUB_ADMIN_TOKEN
+Bearer token used to authenticate admin API requests.
+If unset,
+.B tokenhubctl
+will attempt to read the token from
+.I ~/.tokenhub/.admin-token
+or from the running Docker container.
+.SH FILES
+.TP
+.I ~/.tokenhub/env
+Environment file auto-sourced on startup.
+Written by
+.B make start
+after the TokenHub container becomes healthy.
+Contains at minimum
+.B TOKENHUB_URL
+and
+.BR TOKENHUB_ADMIN_TOKEN .
+Explicit environment variables always take precedence over values in this file.
+Format: one
+.B KEY=VALUE
+pair per line; lines beginning with
+.B #
+are ignored.
+.TP
+.I ~/.tokenhub/.admin-token
+Plain-text file containing the admin bearer token for native (non-Docker)
+deployments.
+Read by the
+.B admin-token
+command when
+.B TOKENHUB_ADMIN_TOKEN
+is not set.
+.SH EXAMPLES
+Show server status and vault state:
+.PP
+.RS
+.EX
+tokenhubctl status
+.EE
+.RE
+.PP
+Unlock the vault:
+.PP
+.RS
+.EX
+tokenhubctl vault unlock "my-secret-password"
+.EE
+.RE
+.PP
+Register an OpenAI provider:
+.PP
+.RS
+.EX
+tokenhubctl provider add \\
+  '{"id":"openai","type":"openai","base_url":"https://api.openai.com","api_key":"sk-..."}'
+.EE
+.RE
+.PP
+List models and adjust routing weight:
+.PP
+.RS
+.EX
+tokenhubctl model list
+tokenhubctl model edit gpt-4o '{"weight":9}'
+.EE
+.RE
+.PP
+Set the routing policy to cheapest-model-first with a per-request budget:
+.PP
+.RS
+.EX
+tokenhubctl routing set \\
+  '{"default_mode":"cheap","default_max_budget_usd":0.02}'
+.EE
+.RE
+.PP
+Create an API key scoped to chat and plan:
+.PP
+.RS
+.EX
+tokenhubctl apikey create \\
+  '{"name":"my-app","scopes":"[\(dqchat\(dq,\(dqplan\(dq]"}'
+.EE
+.RE
+.PP
+Tail the last 100 request logs:
+.PP
+.RS
+.EX
+tokenhubctl logs --limit 100
+.EE
+.RE
+.PP
+Stream live routing events:
+.PP
+.RS
+.EX
+tokenhubctl events
+.EE
+.RE
+.PP
+Run a what-if routing simulation:
+.PP
+.RS
+.EX
+tokenhubctl simulate \\
+  '{"model":"gpt-4o","mode":"cheap","max_budget_usd":0.01}'
+.EE
+.RE
+.PP
+Discover and register models from a provider:
+.PP
+.RS
+.EX
+tokenhubctl provider discover openai
+.EE
+.RE
+.PP
+Print the admin token (useful for scripting):
+.PP
+.RS
+.EX
+export TOKENHUB_ADMIN_TOKEN=$(tokenhubctl admin-token)
+.EE
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+An error occurred (network failure, HTTP error, bad arguments, etc.).
+Error details are written to standard error.
+.SH SEE ALSO
+.BR tokenhub (1),
+.BR curl (1),
+.BR jq (1)
+.PP
+Full documentation is available at the project docs site and in
+.IR docs/src/admin/tokenhubctl.md .
+.SH AUTHORS
+The TokenHub project.

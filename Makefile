@@ -1,6 +1,7 @@
 .PHONY: build install package run start stop restart logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
 
 INSTALL_DIR ?= $(HOME)/.local/bin
+MAN_DIR     ?= $(HOME)/.local/share/man
 
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -s -w -X main.version=$(VERSION)
@@ -48,7 +49,10 @@ install:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
 	@mkdir -p $(INSTALL_DIR)
 	cp bin/tokenhub bin/tokenhubctl $(INSTALL_DIR)/
+	@mkdir -p $(MAN_DIR)/man1
+	cp man/man1/tokenhubctl.1 $(MAN_DIR)/man1/
 	@echo "Installed tokenhub and tokenhubctl to $(INSTALL_DIR)"
+	@echo "Installed man page to $(MAN_DIR)/man1 (run: man tokenhubctl)"
 
 # ──── Package ────
 
