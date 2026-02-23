@@ -86,6 +86,10 @@ func main() {
 		doEvents()
 	case "discover":
 		doDiscover(args)
+	case "model-test":
+		doModelTest(args)
+	case "provider-status":
+		doProviderStatus(args)
 	case "simulate":
 		doSimulate(args)
 	case "tsdb":
@@ -153,6 +157,9 @@ Commands:
   stats                       Show aggregated stats
   engine models               Show runtime engine models and adapters
   events                      Stream real-time SSE events
+
+  model-test <id> [api-key]   Send a test inference request through a model
+  provider-status <id>        Show full health details for one provider
 
   simulate <json>             Run a what-if routing simulation
   tsdb query <args>           Query TSDB
@@ -389,7 +396,7 @@ func doHealth() {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "PROVIDER\tSTATE\tERRORS\tAVG LATENCY\tLAST SUCCESS")
+	_, _ = fmt.Fprintln(tw, "PROVIDER\tSTATE\tCONSEC_ERR\tAVG LATENCY\tLAST SUCCESS\tLAST ERROR")
 	for _, p := range providers {
 		m, ok := p.(map[string]any)
 		if !ok {
@@ -397,10 +404,14 @@ func doHealth() {
 		}
 		id, _ := m["provider_id"].(string)
 		state, _ := m["state"].(string)
-		errs := fmtNum(m["consecutive_errors"])
+		errs := fmtNum(m["consec_errors"])
 		lat := fmtDuration(m["avg_latency_ms"])
-		last := fmtTime(m["last_success"])
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", id, state, errs, lat, last)
+		lastOK := fmtTime(m["last_success_at"])
+		lastErr, _ := m["last_error"].(string)
+		if len(lastErr) > 60 {
+			lastErr = lastErr[:57] + "..."
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", id, state, errs, lat, lastOK, lastErr)
 	}
 	_ = tw.Flush()
 }
@@ -860,6 +871,107 @@ func doDiscover(args []string) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\n", id, registered)
 	}
 	_ = tw.Flush()
+}
+
+func doModelTest(args []string) {
+	requireArgs(args, 1, "model-test <model-id> [api-key]")
+	modelID := args[0]
+
+	// Use provided key, then TOKENHUB_API_KEY env, then admin token as fallback.
+	apiKey := ""
+	if len(args) > 1 {
+		apiKey = args[1]
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("TOKENHUB_API_KEY")
+	}
+	if apiKey == "" {
+		apiKey = adminToken()
+	}
+
+	payload := fmt.Sprintf(`{"model":%s,"messages":[{"role":"user","content":"Say the word OK and nothing else."}],"max_tokens":5}`, jsonStr(modelID))
+	req, err := http.NewRequest("POST", baseURL()+"/v1/chat/completions", strings.NewReader(payload))
+	fatal(err)
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	latency := time.Since(start)
+	fatal(err)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("Model:      %s\n", modelID)
+	fmt.Printf("Status:     %d\n", resp.StatusCode)
+	fmt.Printf("Latency:    %v\n", latency.Round(time.Millisecond))
+	if resp.StatusCode == 200 {
+		var out map[string]any
+		if json.Unmarshal(body, &out) == nil {
+			if choices, ok := out["choices"].([]any); ok && len(choices) > 0 {
+				if ch, ok := choices[0].(map[string]any); ok {
+					if msg, ok := ch["message"].(map[string]any); ok {
+						content, _ := msg["content"].(string)
+						reasoning, _ := msg["reasoning_content"].(string)
+						if content != "" {
+							fmt.Printf("Response:   %s\n", content)
+						} else if reasoning != "" {
+							// Reasoning model: show partial reasoning (model is thinking-only within budget)
+							if len(reasoning) > 80 {
+								reasoning = reasoning[:77] + "..."
+							}
+							fmt.Printf("Response:   [reasoning] %s\n", reasoning)
+						} else {
+							fmt.Printf("Response:   (empty)\n")
+						}
+					}
+				}
+			}
+			if usage, ok := out["usage"].(map[string]any); ok {
+				fmt.Printf("Tokens:     in=%v out=%v\n", usage["prompt_tokens"], usage["completion_tokens"])
+			}
+			if mdl, ok := out["model"].(string); ok {
+				fmt.Printf("Model used: %s\n", mdl)
+			}
+		}
+	} else {
+		fmt.Printf("Error:      %s\n", string(body))
+	}
+}
+
+func doProviderStatus(args []string) {
+	requireArgs(args, 1, "provider-status <provider-id>")
+	id := args[0]
+
+	// Get health data and find the specific provider.
+	data := doGet("/admin/v1/health")
+	providers, _ := data["providers"].([]any)
+	for _, p := range providers {
+		m, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		if m["provider_id"] == id {
+			fmt.Printf("Provider:         %s\n", id)
+			fmt.Printf("State:            %s\n", m["state"])
+			fmt.Printf("Total requests:   %s\n", fmtNum(m["total_requests"]))
+			fmt.Printf("Total errors:     %s\n", fmtNum(m["total_errors"]))
+			fmt.Printf("Consec errors:    %s\n", fmtNum(m["consec_errors"]))
+			fmt.Printf("Avg latency:      %s\n", fmtDuration(m["avg_latency_ms"]))
+			fmt.Printf("Last success:     %s\n", fmtTime(m["last_success_at"]))
+			if le, _ := m["last_error"].(string); le != "" {
+				fmt.Printf("Last error:       %s\n", le)
+				fmt.Printf("Last error at:    %s\n", fmtTime(m["last_error_time"]))
+			}
+			if cu, _ := m["cooldown_until"].(string); cu != "" && cu != "0001-01-01T00:00:00Z" {
+				fmt.Printf("Cooldown until:   %s\n", fmtTime(m["cooldown_until"]))
+			}
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "provider %q not found in health data\n", id)
+	os.Exit(1)
 }
 
 func doSimulate(args []string) {
