@@ -22,10 +22,10 @@ context:
     conversation_session_id: 79042233-aced-48a5-9e83-c028ce02b796
     correlation_id: dispatch-bd-001-1771844067952199513
     dispatch_count: "2"
-    dispatch_history: '["agent-1771743829-Engineering Manager (Default)"]'
+    dispatch_history: '["agent-1771743829-Engineering Manager (Default)","agent-1771743829-Engineering Manager (Default)"]'
     failed_at: "2026-02-23T10:54:27Z"
     last_error: command parameter required
-    last_run_at: "2026-02-23T10:54:15Z"
+    last_run_at: "2026-02-23T10:54:27Z"
     last_run_error: 'action loop failed: context canceled'
     loop_detected: "false"
     provider_id: tokenhub
@@ -35,5 +35,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-23T10:54:08.659992452Z
-updatedat: 2026-02-23T10:54:27.960570339Z
+updatedat: 2026-02-23T10:54:27.967964668Z
 closedat: null
