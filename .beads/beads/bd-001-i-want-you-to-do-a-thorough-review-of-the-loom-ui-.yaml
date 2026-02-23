@@ -7,10 +7,10 @@ id: bd-001
 type: task
 title: I want you to do a thorough review of the loom UI; I see a lot of duplication of buttons and tabs on
 description: I want you to do a thorough review of the loom UI; I see a lot of duplication of buttons and tabs on the same screen
-status: in_progress
+status: open
 priority: 1
 projectid: tokenhub
-assignedto: exec-tokenhub-df1e497e
+assignedto: ""
 blockedby: []
 blocks: []
 relatedto: []
@@ -35,5 +35,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-23T10:54:08.659992452Z
-updatedat: 2026-02-23T10:54:15.46557495Z
+updatedat: 2026-02-23T10:54:25.495741839Z
 closedat: null
