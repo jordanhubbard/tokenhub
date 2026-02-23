@@ -1630,3 +1630,27 @@ func TestBodySizeLimitMiddleware(t *testing.T) {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
 }
+
+func TestNormalizeBaseURL(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"https://api.haimaker.ai", "https://api.haimaker.ai"},
+		{"https://api.haimaker.ai/", "https://api.haimaker.ai"},
+		{"https://api.haimaker.ai/v1", "https://api.haimaker.ai"},
+		{"https://api.haimaker.ai/v1/", "https://api.haimaker.ai"},
+		{"https://api.openai.com/v1", "https://api.openai.com"},
+		{"https://api.openai.com", "https://api.openai.com"},
+		{"https://api.openai.com/", "https://api.openai.com"},
+		{"http://localhost:8080/v1/", "http://localhost:8080"},
+		{"http://localhost:8080", "http://localhost:8080"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := normalizeBaseURL(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeBaseURL(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}

@@ -30,32 +30,59 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 	if p.BaseURL == "" {
 		return
 	}
-	apiKey := apiKeyOverride
-	if apiKey == "" && p.CredStore == "vault" && d.Vault != nil && !d.Vault.IsLocked() {
-		apiKey, _ = d.Vault.Get("provider:" + p.ID + ":api_key")
-	}
+	base := normalizeBaseURL(p.BaseURL)
 	timeout := d.ProviderTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
+	keyFunc := makeKeyFunc(d, p, apiKeyOverride)
+
 	var adapter router.Sender
 	switch p.Type {
 	case "anthropic":
-		adapter = anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout))
+		adapter = anthropic.New(p.ID, "", base, anthropic.WithTimeout(timeout), anthropic.WithKeyFunc(keyFunc))
 	case "vllm":
-		vllmOpts := []vllm.Option{vllm.WithTimeout(timeout)}
-		if apiKey != "" {
-			vllmOpts = append(vllmOpts, vllm.WithAPIKey(apiKey))
-		}
-		adapter = vllm.New(p.ID, p.BaseURL, vllmOpts...)
+		vllmOpts := []vllm.Option{vllm.WithTimeout(timeout), vllm.WithKeyFunc(keyFunc)}
+		adapter = vllm.New(p.ID, base, vllmOpts...)
 	case "openai", "":
-		adapter = openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout))
+		adapter = openai.New(p.ID, "", base, openai.WithTimeout(timeout), openai.WithKeyFunc(keyFunc))
 	default:
 		slog.Warn("unknown provider type, adapter not registered", slog.String("provider", p.ID), slog.String("type", p.Type))
 		return
 	}
 	d.Engine.RegisterAdapter(adapter)
-	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
+	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", base))
+}
+
+// normalizeBaseURL strips trailing slashes and common path suffixes like "/v1"
+// so the adapter can unconditionally append "/v1/..." without duplication.
+func normalizeBaseURL(raw string) string {
+	u := strings.TrimRight(raw, "/")
+	for _, suffix := range []string{"/v1", "/v2"} {
+		u = strings.TrimSuffix(u, suffix)
+	}
+	return strings.TrimRight(u, "/")
+}
+
+// makeKeyFunc returns a closure that resolves the API key on every call.
+// This ensures vault rotations, lock/unlock, and re-stored keys take effect
+// immediately without re-registering the adapter.
+func makeKeyFunc(d Dependencies, p store.ProviderRecord, apiKeyOverride string) func() string {
+	if apiKeyOverride != "" {
+		return func() string { return apiKeyOverride }
+	}
+	if p.CredStore == "vault" && d.Vault != nil {
+		vaultKey := "provider:" + p.ID + ":api_key"
+		return func() string {
+			if d.Vault.IsLocked() {
+				return ""
+			}
+			key, _ := d.Vault.Get(vaultKey)
+			return key
+		}
+	}
+	return func() string { return "" }
 }
 
 // addProbeTargetIfProbeable checks if the adapter just registered for providerID
@@ -282,6 +309,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "provider id required", http.StatusBadRequest)
 			return
 		}
+		req.BaseURL = normalizeBaseURL(req.BaseURL)
 
 		// Store API key in vault if provided.
 		if req.APIKey != "" && d.Vault != nil && !d.Vault.IsLocked() {
@@ -784,7 +812,7 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 		}
 		if v, ok := patch["base_url"]; ok {
 			if s, ok := v.(string); ok {
-				existing.BaseURL = s
+				existing.BaseURL = normalizeBaseURL(s)
 			}
 		}
 		if v, ok := patch["enabled"]; ok {

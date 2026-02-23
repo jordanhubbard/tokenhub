@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -876,20 +877,28 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 // newProviderAdapter constructs a runtime adapter for the given provider type,
 // credentials, and base URL. Returns an error for unknown provider types.
 func newProviderAdapter(provType, id, apiKey, baseURL string, timeout time.Duration) (router.Sender, error) {
+	base := normalizeBaseURL(baseURL)
+	keyFn := func() string { return apiKey }
 	switch provType {
 	case "anthropic":
-		return anthropic.New(id, apiKey, baseURL, anthropic.WithTimeout(timeout)), nil
+		return anthropic.New(id, "", base, anthropic.WithTimeout(timeout), anthropic.WithKeyFunc(keyFn)), nil
 	case "vllm":
-		opts := []vllm.Option{vllm.WithTimeout(timeout)}
-		if apiKey != "" {
-			opts = append(opts, vllm.WithAPIKey(apiKey))
-		}
-		return vllm.New(id, baseURL, opts...), nil
+		return vllm.New(id, base, vllm.WithTimeout(timeout), vllm.WithKeyFunc(keyFn)), nil
 	case "openai", "":
-		return openai.New(id, apiKey, baseURL, openai.WithTimeout(timeout)), nil
+		return openai.New(id, "", base, openai.WithTimeout(timeout), openai.WithKeyFunc(keyFn)), nil
 	default:
 		return nil, fmt.Errorf("unknown provider type %q", provType)
 	}
+}
+
+// normalizeBaseURL strips trailing slashes and common API version path
+// suffixes so adapters can unconditionally append "/v1/..." paths.
+func normalizeBaseURL(raw string) string {
+	u := strings.TrimRight(raw, "/")
+	for _, suffix := range []string{"/v1", "/v2"} {
+		u = strings.TrimSuffix(u, suffix)
+	}
+	return strings.TrimRight(u, "/")
 }
 
 // loadPersistedProviders reads provider records from the database and creates
