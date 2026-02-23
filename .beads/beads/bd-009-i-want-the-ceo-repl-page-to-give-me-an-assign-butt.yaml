@@ -10,7 +10,7 @@ description: I want the CEO repl page to give me an assign button to assign spec
 status: open
 priority: 1
 projectid: tokenhub
-assignedto: agent-1771743829-Engineering Manager (Default)
+assignedto: ""
 blockedby: []
 blocks: []
 relatedto: []
@@ -19,12 +19,15 @@ children: []
 tags: []
 context:
     conversation_session_id: a9bb3adf-ca53-469b-b813-afe11d6231a5
+    correlation_id: dispatch-bd-009-1771844138944664396
     dispatch_count: "1"
+    failed_at: "2026-02-23T10:55:38Z"
+    last_error: command parameter required
     redispatch_requested: "true"
     redispatch_requested_at: "2026-02-23T10:55:37Z"
 duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-23T10:55:33.533786989Z
-updatedat: 2026-02-23T10:55:38.992788869Z
+updatedat: 2026-02-23T10:55:38.997878219Z
 closedat: null
