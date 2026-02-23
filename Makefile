@@ -1,4 +1,4 @@
-.PHONY: build install package run start stop restart admin-key logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
+.PHONY: all build install package run start stop restart admin-key logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env help
 
 INSTALL_DIR ?= $(HOME)/.local/bin
 MAN_DIR     ?= $(HOME)/.local/share/man
@@ -162,6 +162,50 @@ release-major:
 	@./scripts/release.sh major
 
 release-patch: release
+
+# ──── Help ────
+
+help:
+	@echo "Available targets:"
+	@echo ""
+	@echo "Build:"
+	@echo "  make build              - Compile tokenhub and tokenhubctl"
+	@echo "  make install            - Build and install to ~/.local/bin"
+	@echo "  make package            - Build production Docker image"
+	@echo ""
+	@echo "Lifecycle:"
+	@echo "  make run                - Build and start (includes logs)"
+	@echo "  make start              - Start service (no rebuild)"
+	@echo "  make stop               - Stop service"
+	@echo "  make restart            - Stop and start service"
+	@echo "  make logs               - Tail service logs"
+	@echo "  make admin-key          - Output TOKENHUB_ADMIN_TOKEN from running container"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test               - Run unit tests"
+	@echo "  make test-race          - Run tests with race detector"
+	@echo "  make test-coverage      - Run tests with coverage report"
+	@echo "  make test-integration   - Run integration tests"
+	@echo "  make test-e2e           - Run end-to-end Temporal workflow tests"
+	@echo ""
+	@echo "Quality:"
+	@echo "  make vet                - Run go vet"
+	@echo "  make lint               - Run golangci-lint"
+	@echo ""
+	@echo "Documentation:"
+	@echo "  make docs               - Build HTML documentation"
+	@echo "  make docs-serve         - Serve docs with live reload on port 3000"
+	@echo ""
+	@echo "Release:"
+	@echo "  make release            - Bump patch version"
+	@echo "  make release-minor      - Bump minor version"
+	@echo "  make release-major      - Bump major version"
+	@echo "  make release-patch      - Alias for release"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  make builder            - Build/refresh builder image"
+	@echo "  make setup              - Setup Docker CLI symlinks (macOS only)"
+	@echo "  make clean              - Remove bin/, docs/book/, coverage.out"
 
 # ──── Clean ────
 
