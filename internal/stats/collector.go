@@ -76,6 +76,14 @@ func (c *Collector) Record(s Snapshot) {
 	c.mu.Unlock()
 }
 
+// Seed bulk-loads historical snapshots (e.g. from the database on startup)
+// so the dashboard is not blank after a restart.
+func (c *Collector) Seed(snapshots []Snapshot) {
+	c.mu.Lock()
+	c.snapshots = append(c.snapshots, snapshots...)
+	c.mu.Unlock()
+}
+
 // Prune removes snapshots older than maxAge.
 func (c *Collector) Prune() {
 	cutoff := time.Now().Add(-c.maxAge)

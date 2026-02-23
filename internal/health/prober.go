@@ -33,24 +33,47 @@ func DefaultProberConfig() ProberConfig {
 type Prober struct {
 	cfg     ProberConfig
 	tracker *Tracker
-	targets []Probeable
 	client  *http.Client
 	logger  *slog.Logger
 	stop    chan struct{}
 	done    chan struct{}
+
+	mu      sync.RWMutex
+	targets map[string]Probeable // keyed by provider ID
 }
 
 // NewProber creates a health check prober.
 func NewProber(cfg ProberConfig, tracker *Tracker, targets []Probeable, logger *slog.Logger) *Prober {
+	m := make(map[string]Probeable, len(targets))
+	for _, t := range targets {
+		m[t.ID()] = t
+	}
 	return &Prober{
 		cfg:     cfg,
 		tracker: tracker,
-		targets: targets,
+		targets: m,
 		client:  &http.Client{Timeout: cfg.ProbeTimeout},
 		logger:  logger,
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
+}
+
+// AddTarget registers a new probe target at runtime. If a target with the
+// same ID already exists it is replaced. Safe to call while the prober is running.
+func (p *Prober) AddTarget(t Probeable) {
+	p.mu.Lock()
+	p.targets[t.ID()] = t
+	p.mu.Unlock()
+	p.logger.Info("health prober: added target", slog.String("provider", t.ID()))
+}
+
+// RemoveTarget removes a probe target by ID. Safe to call while the prober is running.
+func (p *Prober) RemoveTarget(id string) {
+	p.mu.Lock()
+	delete(p.targets, id)
+	p.mu.Unlock()
+	p.logger.Info("health prober: removed target", slog.String("provider", id))
 }
 
 // Start begins the periodic probe loop in a goroutine.
@@ -84,8 +107,15 @@ func (p *Prober) run() {
 }
 
 func (p *Prober) probeAll() {
-	var wg sync.WaitGroup
+	p.mu.RLock()
+	snapshot := make([]Probeable, 0, len(p.targets))
 	for _, t := range p.targets {
+		snapshot = append(snapshot, t)
+	}
+	p.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, t := range snapshot {
 		wg.Add(1)
 		go func(target Probeable) {
 			defer wg.Done()

@@ -66,11 +66,9 @@ func computeActualCost(usage tokenUsage, estimatedCost float64, eng *router.Engi
 	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
 		return estimatedCost
 	}
-	for _, m := range eng.ListModels() {
-		if m.ID == modelID {
-			return (float64(usage.InputTokens)/1000)*m.InputPer1K +
-				(float64(usage.OutputTokens)/1000)*m.OutputPer1K
-		}
+	if m, ok := eng.GetModel(modelID); ok {
+		return (float64(usage.InputTokens)/1000)*m.InputPer1K +
+			(float64(usage.OutputTokens)/1000)*m.OutputPer1K
 	}
 	return estimatedCost
 }

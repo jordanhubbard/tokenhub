@@ -98,6 +98,9 @@ type EngineConfig struct {
 	DefaultMaxBudgetUSD float64
 	DefaultMaxLatencyMs int
 	MaxRetries          int
+	// ExplorationTemp controls softmax temperature for load distribution.
+	// 0 = always pick top model, 0.5 = moderate exploration, 1.0 = strong.
+	ExplorationTemp float64
 }
 
 type Engine struct {
@@ -147,10 +150,26 @@ func (e *Engine) RegisterAdapter(a Sender) {
 	e.adapters[a.ID()] = a
 }
 
+// UnregisterAdapter removes a provider adapter by ID. Models that reference
+// this provider remain registered but become ineligible for routing until a
+// new adapter with the same ID is registered.
+func (e *Engine) UnregisterAdapter(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.adapters, id)
+}
+
 func (e *Engine) RegisterModel(m Model) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.models[m.ID] = m
+}
+
+// UnregisterModel removes a model by ID so it is no longer eligible for routing.
+func (e *Engine) UnregisterModel(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.models, id)
 }
 
 // UpdateDefaults updates the runtime routing policy defaults.
@@ -392,18 +411,50 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	outTok := estOutTokens(p)
 	hintApplied := req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
 
-	top := eligible[0]
-	estCost := estimateCostUSD(tokensNeeded, outTok, top.InputPer1K, top.OutputPer1K)
-	reason := fmt.Sprintf("routed-weight-%d", top.Weight)
+	selected := softmaxSelect(eligible, e.cfg.ExplorationTemp)
+	estCost := estimateCostUSD(tokensNeeded, outTok, selected.InputPer1K, selected.OutputPer1K)
+	reason := fmt.Sprintf("routed-weight-%d", selected.Weight)
 	if hintApplied {
 		reason = "routed-hint-boost"
 	}
 	return Decision{
-		ModelID:          top.ID,
-		ProviderID:       top.ProviderID,
+		ModelID:          selected.ID,
+		ProviderID:       selected.ProviderID,
 		EstimatedCostUSD: estCost,
 		Reason:           reason,
 	}, eligible, nil
+}
+
+// softmaxSelect picks a model from the pre-sorted eligible list using
+// softmax-weighted random selection. Temperature controls exploration:
+//
+//	0.0 => always pick the top model (greedy)
+//	0.5 => moderate exploration across top candidates
+//	1.0 => strong exploration (nearly uniform among close scores)
+//
+// Models are already sorted best-first by eligibleModels, so their index
+// position serves as a proxy for relative score difference.
+func softmaxSelect(models []Model, temperature float64) Model {
+	if len(models) == 1 || temperature <= 0 {
+		return models[0]
+	}
+	weights := make([]float64, len(models))
+	for i := range models {
+		weights[i] = math.Exp(-float64(i) / temperature)
+	}
+	var sum float64
+	for _, w := range weights {
+		sum += w
+	}
+	r := rand.Float64() * sum
+	var cumulative float64
+	for i, w := range weights {
+		cumulative += w
+		if r <= cumulative {
+			return models[i]
+		}
+	}
+	return models[len(models)-1]
 }
 
 // GetAdapter returns the registered provider adapter for the given provider ID.

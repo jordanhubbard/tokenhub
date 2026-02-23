@@ -20,6 +20,7 @@ const (
 	EventWorkflowCompleted  EventType = "workflow_completed"
 	EventWorkflowFailed     EventType = "workflow_failed"
 	EventKeyRotationExpired EventType = "key_rotation_expired"
+	EventHeartbeat          EventType = "heartbeat"
 )
 
 // Event is a single routing event published on the bus.

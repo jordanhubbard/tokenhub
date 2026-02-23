@@ -32,6 +32,9 @@ type Registry struct {
 
 	// Store writes dropped due to errors (audit log, request log, reward log).
 	StoreDroppedTotal *prometheus.CounterVec
+
+	// Heartbeat counter incremented every heartbeat interval.
+	HeartbeatTotal prometheus.Counter
 }
 
 func New() *Registry {
@@ -87,12 +90,16 @@ func New() *Registry {
 			Name: "tokenhub_store_dropped_total",
 			Help: "Store writes dropped due to errors (audit/request/reward logs), by operation",
 		}, []string{"op"}),
+		HeartbeatTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tokenhub_heartbeat_total",
+			Help: "Heartbeat counter incremented every heartbeat interval",
+		}),
 	}
 	reg.MustRegister(
 		m.RequestsTotal, m.RequestLatency, m.CostUSD, m.TokensTotal,
 		m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal,
 		m.ProviderHealthState, m.RequestErrorsByStatus, m.ProviderSkipsTotal,
-		m.StoreDroppedTotal,
+		m.StoreDroppedTotal, m.HeartbeatTotal,
 	)
 	return m
 }

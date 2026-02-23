@@ -20,6 +20,7 @@ type Config struct {
 	DefaultMode         string
 	DefaultMaxBudget    float64
 	DefaultMaxLatencyMs int
+	ExplorationTemp     float64
 
 	ProviderTimeoutSecs int
 
@@ -62,6 +63,7 @@ func LoadConfig() (Config, error) {
 		DefaultMode: getEnv("TOKENHUB_DEFAULT_MODE", "normal"),
 		DefaultMaxBudget: getEnvFloat("TOKENHUB_DEFAULT_MAX_BUDGET_USD", 0.05),
 		DefaultMaxLatencyMs: getEnvInt("TOKENHUB_DEFAULT_MAX_LATENCY_MS", 20000),
+		ExplorationTemp:     getEnvFloat("TOKENHUB_EXPLORATION_TEMP", 0.3),
 
 		ProviderTimeoutSecs: getEnvInt("TOKENHUB_PROVIDER_TIMEOUT_SECS", 30),
 

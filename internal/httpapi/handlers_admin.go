@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/events"
+	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
 	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
@@ -41,7 +43,11 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 	case "anthropic":
 		adapter = anthropic.New(p.ID, apiKey, p.BaseURL, anthropic.WithTimeout(timeout))
 	case "vllm":
-		adapter = vllm.New(p.ID, p.BaseURL, vllm.WithTimeout(timeout))
+		vllmOpts := []vllm.Option{vllm.WithTimeout(timeout)}
+		if apiKey != "" {
+			vllmOpts = append(vllmOpts, vllm.WithAPIKey(apiKey))
+		}
+		adapter = vllm.New(p.ID, p.BaseURL, vllmOpts...)
 	case "openai", "":
 		adapter = openai.New(p.ID, apiKey, p.BaseURL, openai.WithTimeout(timeout))
 	default:
@@ -50,6 +56,21 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 	}
 	d.Engine.RegisterAdapter(adapter)
 	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", p.BaseURL))
+}
+
+// addProbeTargetIfProbeable checks if the adapter just registered for providerID
+// implements health.Probeable and, if so, adds it to the dynamic health prober.
+func addProbeTargetIfProbeable(d Dependencies, providerID string) {
+	if d.Prober == nil {
+		return
+	}
+	adapter := d.Engine.GetAdapter(providerID)
+	if adapter == nil {
+		return
+	}
+	if p, ok := adapter.(health.Probeable); ok {
+		d.Prober.AddTarget(p)
+	}
 }
 
 // AdminSessionHandler creates a short-lived session cookie so that the SSE
@@ -223,6 +244,7 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		registerProviderAdapter(d, req.ProviderRecord, req.APIKey)
+		addProbeTargetIfProbeable(d, req.ID)
 		if d.Store != nil {
 			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
@@ -273,6 +295,19 @@ func ProvidersDeleteHandler(d Dependencies) http.HandlerFunc {
 				jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+		}
+		d.Engine.UnregisterAdapter(id)
+		if d.Prober != nil {
+			d.Prober.RemoveTarget(id)
+		}
+		if d.EventBus != nil {
+			d.EventBus.Publish(events.Event{
+				Type:       events.EventHealthChange,
+				ProviderID: id,
+				OldState:   "unknown",
+				NewState:   "removed",
+				Reason:     "provider deleted",
+			})
 		}
 		if d.Store != nil {
 			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
@@ -393,6 +428,7 @@ func ModelsDeleteHandler(d Dependencies) http.HandlerFunc {
 				return
 			}
 		}
+		d.Engine.UnregisterModel(id)
 		if d.Store != nil {
 			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
@@ -565,7 +601,7 @@ func RoutingConfigSetHandler(d Dependencies) http.HandlerFunc {
 
 		// Validate routing config fields.
 		switch cfg.DefaultMode {
-		case "", "cheap", "normal", "high_confidence", "planning", "adversarial":
+		case "", "cheap", "normal", "high_confidence", "planning", "adversarial", "thompson":
 			// valid
 		default:
 			jsonError(w, "unknown default_mode", http.StatusBadRequest)
@@ -727,6 +763,7 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		registerProviderAdapter(d, *existing, apiKeyOverride)
+		addProbeTargetIfProbeable(d, id)
 		d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 			Timestamp: time.Now().UTC(),
 			Action:    "provider.patch",

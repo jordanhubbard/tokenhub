@@ -67,6 +67,11 @@ type Dependencies struct {
 	// Provider timeout for constructing new adapters at runtime.
 	ProviderTimeout time.Duration
 
+	// Prober is the health check prober (nil when probing is disabled).
+	// Used to dynamically add/remove probe targets when providers are
+	// created or deleted at runtime.
+	Prober *health.Prober
+
 	// StoreWriteQueue decouples store writes (request/reward logs) from the
 	// handler goroutine so SQLite contention does not add to client-visible
 	// latency. A dedicated goroutine drains the queue. When nil, writes are

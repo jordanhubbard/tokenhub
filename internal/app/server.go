@@ -57,7 +57,8 @@ type Server struct {
 	stopPrune    chan struct{} // signals TSDB prune goroutine to stop
 	stopLogPrune chan struct{} // signals log prune goroutine to stop
 	stopRotation chan struct{} // signals key rotation enforcement goroutine to stop
-	stopPricing  chan struct{} // signals pricing refresh goroutine to stop
+	stopPricing    chan struct{} // signals pricing refresh goroutine to stop
+	stopHeartbeat  chan struct{} // signals heartbeat goroutine to stop
 	apiKeyMgr    *apikey.Manager
 	eventBus     *events.Bus
 
@@ -121,6 +122,7 @@ func NewServer(cfg Config) (*Server, error) {
 		DefaultMode:         cfg.DefaultMode,
 		DefaultMaxBudgetUSD: cfg.DefaultMaxBudget,
 		DefaultMaxLatencyMs: cfg.DefaultMaxLatencyMs,
+		ExplorationTemp:     cfg.ExplorationTemp,
 	})
 	eng.SetSkipRecorder(m)
 
@@ -262,6 +264,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	bus := events.NewBus()
 	sc := stats.NewCollector()
+	seedStatsFromDB(sc, db, logger)
 
 	// Initialize embedded TSDB.
 	ts, err := tsdb.New(db.DB())
@@ -301,6 +304,7 @@ func NewServer(cfg Config) (*Server, error) {
 		stopLogPrune:     make(chan struct{}),
 		stopRotation:     make(chan struct{}),
 		stopPricing:      make(chan struct{}),
+		stopHeartbeat:    make(chan struct{}),
 		apiKeyMgr:        keyMgr,
 		eventBus:         bus,
 		storeWriteQueue:  storeWriteQueue,
@@ -322,6 +326,9 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.PricingRefreshEnabled {
 		go s.pricingRefreshLoop()
 	}
+
+	// Start heartbeat goroutine.
+	go s.heartbeatLoop(m, bus)
 
 	// Ensure admin endpoints are always protected. Auto-generate a token if
 	// the operator didn't set one, and log it so they can use it.
@@ -368,6 +375,7 @@ func NewServer(cfg Config) (*Server, error) {
 		RateLimiter:      rl,
 		RateLimitRPS:     cfg.RateLimitRPS,
 		ProviderTimeout:  time.Duration(cfg.ProviderTimeoutSecs) * time.Second,
+		Prober:           prober,
 		StoreWriteQueue:  storeWriteQueue,
 	}
 
@@ -459,6 +467,7 @@ func (s *Server) Close() error {
 	if s.stopPricing != nil {
 		close(s.stopPricing)
 	}
+	close(s.stopHeartbeat)
 	if s.stopBandit != nil {
 		s.stopBandit()
 	}
@@ -660,6 +669,64 @@ func (s *Server) refreshPricing() {
 	s.logger.Info("pricing refresh complete", slog.Int("updated", updated))
 }
 
+// seedStatsFromDB loads recent request logs from the database to pre-populate
+// the in-memory stats collector so the dashboard isn't blank after a restart.
+func seedStatsFromDB(sc *stats.Collector, db store.Store, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	logs, err := db.ListRequestLogs(ctx, 5000, 0)
+	if err != nil {
+		logger.Warn("failed to seed stats from DB", slog.String("error", err.Error()))
+		return
+	}
+	if len(logs) == 0 {
+		return
+	}
+	snapshots := make([]stats.Snapshot, 0, len(logs))
+	for _, l := range logs {
+		snapshots = append(snapshots, stats.Snapshot{
+			Timestamp:    l.Timestamp,
+			ModelID:      l.ModelID,
+			ProviderID:   l.ProviderID,
+			LatencyMs:    float64(l.LatencyMs),
+			CostUSD:      l.EstimatedCostUSD,
+			Success:      l.StatusCode < 500,
+			InputTokens:  l.InputTokens,
+			OutputTokens: l.OutputTokens,
+		})
+	}
+	sc.Seed(snapshots)
+	logger.Info("seeded stats from DB", slog.Int("snapshots", len(snapshots)))
+}
+
+// heartbeatLoop emits a periodic heartbeat event to the event bus and
+// increments the Prometheus heartbeat counter. External monitors can alert
+// if the counter stops incrementing, which would indicate a hung process.
+func (s *Server) heartbeatLoop(m *metrics.Registry, bus *events.Bus) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.HeartbeatTotal.Inc()
+			models := s.engine.ListModels()
+			adapters := s.engine.ListAdapterIDs()
+			enabledCount := 0
+			for _, mod := range models {
+				if mod.Enabled {
+					enabledCount++
+				}
+			}
+			bus.Publish(events.Event{
+				Type:   events.EventHeartbeat,
+				Reason: fmt.Sprintf("providers=%d models=%d", len(adapters), enabledCount),
+			})
+		case <-s.stopHeartbeat:
+			return
+		}
+	}
+}
+
 // loadCredentialsFile reads a JSON credentials file (default ~/.tokenhub/credentials)
 // and registers providers and models. Providers are persisted to the database and
 // API keys are stored in the vault (when unlocked). This is the primary mechanism
@@ -823,7 +890,11 @@ func newProviderAdapter(provType, id, apiKey, baseURL string, timeout time.Durat
 	case "anthropic":
 		return anthropic.New(id, apiKey, baseURL, anthropic.WithTimeout(timeout)), nil
 	case "vllm":
-		return vllm.New(id, baseURL, vllm.WithTimeout(timeout)), nil
+		opts := []vllm.Option{vllm.WithTimeout(timeout)}
+		if apiKey != "" {
+			opts = append(opts, vllm.WithAPIKey(apiKey))
+		}
+		return vllm.New(id, baseURL, opts...), nil
 	case "openai", "":
 		return openai.New(id, apiKey, baseURL, openai.WithTimeout(timeout)), nil
 	default:
