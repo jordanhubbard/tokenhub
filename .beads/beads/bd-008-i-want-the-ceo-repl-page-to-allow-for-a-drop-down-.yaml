@@ -1,0 +1,26 @@
+entitymetadata:
+    schemaversion: ""
+    attributes: {}
+    migratedat: null
+    migratedfrom: ""
+id: bd-008
+type: task
+title: I want the CEO repl page to allow for a drop-down menu which targets an agent specifically for the c
+description: 'I want the CEO repl page to allow for a drop-down menu which targets an agent specifically for the conversation rather than having to prefix as I am doing with "engineering manager: I want the CEO repl page to allow for a drop-down menu which targets an agent specifically for the conversation rather than having to prefix as I am doing "'
+status: open
+priority: 1
+projectid: tokenhub
+assignedto: agent-1771743829-Engineering Manager (Default)
+blockedby: []
+blocks: []
+relatedto: []
+parent: ""
+children: []
+tags: []
+context: {}
+duedate: null
+milestoneid: ""
+estimatedtime: 0
+createdat: 2026-02-23T10:54:55.573925435Z
+updatedat: 2026-02-23T10:54:55.743552515Z
+closedat: null
