@@ -18,6 +18,11 @@ services:
       - TOKENHUB_TEMPORAL_TASK_QUEUE=${TOKENHUB_TEMPORAL_TASK_QUEUE:-tokenhub-tasks}
     volumes:
       - tokenhub_data:/data
+    # Use the host's systemd-resolved so internal hostnames (e.g. NVIDIA VPN,
+    # Tailscale) resolve correctly inside the container. 172.21.0.1 is the
+    # Docker bridge gateway which forwards to the host resolver.
+    dns:
+      - 172.21.0.1
     healthcheck:
       test: ["CMD", "/tokenhub", "-healthcheck"]
       interval: 5s

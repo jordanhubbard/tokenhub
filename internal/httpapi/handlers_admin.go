@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -63,6 +66,35 @@ func normalizeBaseURL(raw string) string {
 		u = strings.TrimSuffix(u, suffix)
 	}
 	return strings.TrimRight(u, "/")
+}
+
+// checkBaseURLReachable attempts to resolve the hostname in baseURL and returns
+// an error with a clear message if DNS lookup fails. This catches misconfigured
+// or unreachable providers at registration time rather than silently storing
+// them and discovering the problem later in health probe logs.
+func checkBaseURLReachable(baseURL string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid base_url: %w", err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("base_url has no hostname: %q", baseURL)
+	}
+	// Skip DNS check for loopback/IP addresses — those don't need lookup.
+	if net.ParseIP(host) != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve hostname %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("hostname %q resolved to no addresses", host)
+	}
+	return nil
 }
 
 // makeKeyFunc returns a closure that resolves the API key on every call.
@@ -310,6 +342,14 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 		req.BaseURL = normalizeBaseURL(req.BaseURL)
+
+		// Fail fast if the container cannot resolve the provider hostname.
+		if req.BaseURL != "" {
+			if err := checkBaseURLReachable(req.BaseURL); err != nil {
+				jsonError(w, "base_url not reachable: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 
 		// Store API key in vault if provided.
 		if req.APIKey != "" && d.Vault != nil && !d.Vault.IsLocked() {
@@ -812,7 +852,14 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 		}
 		if v, ok := patch["base_url"]; ok {
 			if s, ok := v.(string); ok {
-				existing.BaseURL = normalizeBaseURL(s)
+				normalized := normalizeBaseURL(s)
+				if normalized != "" {
+					if err := checkBaseURLReachable(normalized); err != nil {
+						jsonError(w, "base_url not reachable: "+err.Error(), http.StatusBadRequest)
+						return
+					}
+				}
+				existing.BaseURL = normalized
 			}
 		}
 		if v, ok := patch["enabled"]; ok {
