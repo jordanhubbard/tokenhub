@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -726,6 +727,130 @@ func (s *Server) heartbeatLoop(m *metrics.Registry, bus *events.Bus) {
 //
 // The file must be owner-readable only (mode 0600 or 0400). It is idempotent:
 // providers and models are upserted, so the file can remain in place across restarts.
+func discoverModels(providerID, providerType, baseURL, apiKey string, timeout time.Duration, eng *router.Engine, db store.Store, logger *slog.Logger) error {
+	ctx := context.Background()
+	client := &http.Client{Timeout: timeout}
+
+	if providerType == "anthropic" {
+		return nil
+	}
+
+	modelsURL := normalizeBaseURL(baseURL) + "/v1/models"
+
+	var headers map[string]string
+	if apiKey != "" {
+		headers = map[string]string{
+			"Authorization": "Bearer " + apiKey,
+		}
+	}
+
+	resp, err := client.Get(modelsURL)
+	if err != nil {
+		logger.Warn("failed to discover models from provider",
+			slog.String("provider", providerID),
+			slog.String("type", providerType),
+			slog.String("error", err.Error()))
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	type modelEntry struct {
+		ID       string `json:"id"`
+		Object   string `json:"object,omitempty"`
+		OwnedBy  string `json:"owned_by,omitempty"`
+		CreatedAt int64  `json:"created,omitempty"`
+	}
+
+	type modelsResponse struct {
+		Data   []modelEntry `json:"data"`
+		Object string       `json:"object,omitempty"`
+	}
+
+	var parsed modelsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		var arr []modelEntry
+		if err2 := json.Unmarshal(body, &arr); err2 == nil {
+			parsed.Data = arr
+		} else {
+			return nil
+		}
+	}
+
+	discoveredCount := 0
+	for _, m := range parsed.Data {
+		if strings.HasPrefix(m.ID, "system.") || strings.HasPrefix(m.ID, "tech.") {
+			continue
+		}
+
+		existingModels := eng.ListModels()
+		autoLoaded := false
+		for _, em := range existingModels {
+			if em.ID == m.ID {
+				autoLoaded = true
+				break
+			}
+		}
+
+		if autoLoaded {
+			logger.Debug("skipping already registered model",
+				slog.String("model", m.ID),
+				slog.String("provider", providerID))
+			continue
+		}
+
+		model := router.Model{
+			ID:               m.ID,
+			ProviderID:       providerID,
+			Weight:           8,
+			MaxContextTokens: 128000,
+			InputPer1K:       0.0,
+			OutputPer1K:      0.0,
+			Enabled:          true,
+		}
+		eng.RegisterModel(model)
+
+		if db != nil {
+			if err := db.UpsertModel(ctx, store.ModelRecord{
+				ID:               m.ID,
+				ProviderID:       providerID,
+				Weight:           model.Weight,
+				MaxContextTokens: model.MaxContextTokens,
+				InputPer1K:       model.InputPer1K,
+				OutputPer1K:      model.OutputPer1K,
+				Enabled:          model.Enabled,
+			}); err != nil {
+				logger.Warn("failed to persist discovered model",
+					slog.String("model", m.ID),
+					slog.String("provider", providerID),
+					slog.String("error", err.Error()))
+				continue
+			}
+		}
+
+		logger.Info("discovered and registered model",
+			slog.String("model", m.ID),
+			slog.String("provider", providerID))
+		discoveredCount++
+	}
+
+	if discoveredCount > 0 {
+		logger.Info("discovered models from provider",
+			slog.String("provider", providerID),
+			slog.Int("count", discoveredCount))
+	}
+
+	return nil
+}
 func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db store.Store, timeout time.Duration, logger *slog.Logger) {
 	if path == "" {
 		return
