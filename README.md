@@ -2,6 +2,8 @@
 
 An LLM routing proxy that routes, arbitrates, and orchestrates requests across multiple providers to optimize cost, latency, reliability, and model quality.
 
+**[Documentation](https://jordanhubbard.github.io/tokenhub/)** -- Full user guide, admin guide, developer guide, and API reference. Also available inside the running service at `/docs/`.
+
 ## Feature Highlights
 
 - **Multi-objective routing engine** -- weighted model selection balancing cost, latency, failure rate, and model quality across OpenAI, Anthropic, and vLLM providers
@@ -36,7 +38,7 @@ TokenHub sits between clients and LLM providers as a reverse proxy. Its core com
 
 **Event Bus** -- In-memory pub/sub system that broadcasts routing events (success, error, escalation, health changes, workflow lifecycle) to SSE subscribers and the admin UI in real time.
 
-**Admin UI** -- Embedded single-page application served at `/admin` with panels for vault management, provider configuration, model registry, routing policy, health status, request/audit logs, API key management, reward data, and Temporal workflow visibility. Features a multi-step setup wizard, model discovery, what-if routing simulator, and real-time SSE decision feed.
+**Admin UI** -- Embedded single-page application served at `/admin` with panels for vault management, provider configuration, model registry, routing policy, health status, request/audit logs, API key management, reward data, and Temporal workflow visibility. Features a multi-step setup wizard, model discovery, what-if routing simulator, and real-time SSE decision feed. Full documentation is also served at `/docs/` within the running service.
 
 **tokenhubctl** -- Command-line interface for all admin operations. Covers vault, providers, models, routing, API keys, logs, events, and diagnostics. Useful for scripting and CI/CD pipelines.
 
@@ -99,7 +101,7 @@ make run     # builds image, starts compose, tails logs
 ```
 
 You can also register providers interactively via `tokenhubctl`, the admin API,
-or the admin UI's setup wizard. See the [Quick Start guide](docs/src/quickstart.md) for all options.
+or the admin UI's setup wizard. See the [Quick Start guide](https://jordanhubbard.github.io/tokenhub/quickstart.html) for all options.
 
 Providers and models persist in the database and are restored automatically on restart.
 
@@ -141,7 +143,7 @@ TokenHub is configured entirely via environment variables. See `.env.example` fo
 |----------|---------|-------------|
 | `TOKENHUB_CREDENTIALS_FILE` | `~/.tokenhub/credentials` | Path to external credentials JSON file |
 
-Providers are registered at runtime via `~/.tokenhub/credentials`, the admin API, `tokenhubctl`, or the admin UI. See [Provider Management](docs/src/admin/providers.md).
+Providers are registered at runtime via `~/.tokenhub/credentials`, the admin API, `tokenhubctl`, or the admin UI. See [Provider Management](https://jordanhubbard.github.io/tokenhub/admin/providers.html).
 
 ### Routing Defaults
 
@@ -190,7 +192,7 @@ Providers are registered at runtime via `~/.tokenhub/credentials`, the admin API
 | `GET` | `/healthz` | Health check. Returns adapter and model counts. |
 | `GET` | `/metrics` | Prometheus metrics endpoint. |
 | `GET` | `/admin` | Admin UI (single-page application). |
-| `GET` | `/docs/` | Rendered mdbook documentation (if built). |
+| `GET` | `/docs/` | Rendered mdbook documentation ([also on GitHub Pages](https://jordanhubbard.github.io/tokenhub/)) |
 
 The `/v1/chat` and `/v1/plan` endpoints accept an OpenAI-compatible message format:
 
