@@ -18,6 +18,7 @@ parent: ""
 children: []
 tags: []
 context:
+    conversation_session_id: 79042233-aced-48a5-9e83-c028ce02b796
     dispatch_count: "1"
     redispatch_requested: "true"
     redispatch_requested_at: "2026-02-23T10:54:11Z"
@@ -25,5 +26,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-23T10:54:08.659992452Z
-updatedat: 2026-02-23T10:54:12.490674251Z
+updatedat: 2026-02-23T10:54:13.627256115Z
 closedat: null
