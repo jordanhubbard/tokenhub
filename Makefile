@@ -33,13 +33,21 @@ setup:
 # ──── Builder image (cached) ────
 
 builder: setup
-	@$(DOCKER_BUILD) -q -t $(BUILDER_IMAGE) -f Dockerfile.dev . >/dev/null
+	@if docker image inspect $(BUILDER_IMAGE) >/dev/null 2>&1; then \
+		true; \
+	else \
+		echo "Building builder image (first time)..."; \
+		$(DOCKER_BUILD) -t $(BUILDER_IMAGE) -f Dockerfile.dev .; \
+	fi
 
 # ──── Build ────
 
 build: builder
-	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
-	$(DOCKER_RUN) go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
+	@echo "Compiling tokenhub..."
+	@$(DOCKER_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
+	@echo "Compiling tokenhubctl..."
+	@$(DOCKER_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
+	@echo "Build complete: bin/tokenhub bin/tokenhubctl"
 
 # ──── Install ────
 # Builds natively on the host (requires Go 1.24+) and installs to ~/.local/bin.
@@ -107,13 +115,13 @@ logs:
 # ──── Tests ────
 
 test: builder
-	$(DOCKER_RUN) go test ./...
+	$(DOCKER_RUN) go test -buildvcs=false ./...
 
 test-race: builder
-	$(DOCKER_RUN) go test -race ./...
+	$(DOCKER_RUN) go test -buildvcs=false -race ./...
 
 test-coverage: builder
-	$(DOCKER_RUN) go test -race -coverprofile=coverage.out ./...
+	$(DOCKER_RUN) go test -buildvcs=false -race -coverprofile=coverage.out ./...
 
 test-integration: package
 	@bash tests/integration.sh
@@ -124,7 +132,7 @@ test-e2e: package
 # ──── Code quality ────
 
 vet: builder
-	$(DOCKER_RUN) go vet ./...
+	$(DOCKER_RUN) go vet -buildvcs=false ./...
 
 lint: builder
 	$(DOCKER_RUN) golangci-lint run --concurrency=1
