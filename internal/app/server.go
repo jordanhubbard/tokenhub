@@ -330,8 +330,13 @@ func NewServer(cfg Config) (*Server, error) {
 	// Start heartbeat goroutine.
 	go s.heartbeatLoop(m, bus)
 
-	// Ensure admin endpoints are always protected. Auto-generate a token if
-	// the operator didn't set one, and log it so they can use it.
+	// Ensure admin endpoints are always protected. When no explicit token is
+	// set, first try to recover a previously-generated token from the data
+	// directory so the token is stable across restarts. Only generate a new
+	// one if no persisted token exists.
+	if cfg.AdminToken == "" {
+		cfg.AdminToken = readPersistedAdminToken(cfg.DBDSN)
+	}
 	if cfg.AdminToken == "" {
 		tokenBytes := make([]byte, 32)
 		if _, err := rand.Read(tokenBytes); err != nil {
@@ -970,6 +975,24 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 // docker compose exec and writes ~/.tokenhub/env on the host. The server never
 // writes to the host filesystem directly — that is always handled by the
 // Makefile, which is guaranteed to run in the host context.
+// readPersistedAdminToken reads a previously auto-generated admin token from
+// the data directory (the .admin-token file next to the SQLite database).
+// Returns empty string if not found or on any error.
+func readPersistedAdminToken(dbDSN string) string {
+	dsn := strings.TrimPrefix(dbDSN, "file:")
+	if i := strings.IndexByte(dsn, '?'); i >= 0 {
+		dsn = dsn[:i]
+	}
+	if dsn == "" || dsn == ":memory:" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(dsn), ".admin-token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func writeStateEnv(dbDSN, token string, logger *slog.Logger) {
 	dsn := strings.TrimPrefix(dbDSN, "file:")
 	if i := strings.IndexByte(dsn, '?'); i >= 0 {
