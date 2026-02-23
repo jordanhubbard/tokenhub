@@ -15,17 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
       - name: Build
-        run: make build
+        run: go build ./...
 
       - name: Vet
-        run: make vet
+        run: go vet ./...
 
       - name: Lint
-        run: make lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.10.1
 
       - name: Test
-        run: make test-race
+        run: go test -race ./...
 
   docker:
     runs-on: ubuntu-latest
