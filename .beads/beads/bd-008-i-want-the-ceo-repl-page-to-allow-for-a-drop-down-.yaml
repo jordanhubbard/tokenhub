@@ -10,7 +10,7 @@ description: 'I want the CEO repl page to allow for a drop-down menu which targe
 status: open
 priority: 1
 projectid: tokenhub
-assignedto: agent-1771743829-Engineering Manager (Default)
+assignedto: ""
 blockedby: []
 blocks: []
 relatedto: []
@@ -19,12 +19,15 @@ children: []
 tags: []
 context:
     conversation_session_id: b972534e-6ed7-48e7-a495-8d060026e5d0
+    correlation_id: dispatch-bd-008-1771844102881892745
     dispatch_count: "1"
+    failed_at: "2026-02-23T10:55:02Z"
+    last_error: command parameter required
     redispatch_requested: "true"
     redispatch_requested_at: "2026-02-23T10:55:00Z"
 duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-23T10:54:55.573925435Z
-updatedat: 2026-02-23T10:55:02.929484594Z
+updatedat: 2026-02-23T10:55:02.932810534Z
 closedat: null
