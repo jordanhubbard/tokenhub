@@ -2,15 +2,11 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -330,22 +326,11 @@ func NewServer(cfg Config) (*Server, error) {
 	// Start heartbeat goroutine.
 	go s.heartbeatLoop(m, bus)
 
-	// Ensure admin endpoints are always protected. When no explicit token is
-	// set, first try to recover a previously-generated token from the data
-	// directory so the token is stable across restarts. Only generate a new
-	// one if no persisted token exists.
-	if cfg.AdminToken == "" {
-		cfg.AdminToken = readPersistedAdminToken(cfg.DBDSN)
+	// Resolve the admin token with persistence: env var > persisted > new random.
+	adminTokenHolder, err := httpapi.NewAdminTokenHolder(cfg.AdminToken, cfg.DBDSN, logger)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.AdminToken == "" {
-		tokenBytes := make([]byte, 32)
-		if _, err := rand.Read(tokenBytes); err != nil {
-			return nil, fmt.Errorf("generate admin token: %w", err)
-		}
-		cfg.AdminToken = hex.EncodeToString(tokenBytes)
-		logger.Warn("TOKENHUB_ADMIN_TOKEN not set — auto-generated token written to data dir (retrieve with: tokenhubctl admin-token)")
-	}
-	writeStateEnv(cfg.DBDSN, cfg.AdminToken, logger)
 	if len(cfg.CORSOrigins) == 0 {
 		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")
 	}
@@ -374,7 +359,7 @@ func NewServer(cfg Config) (*Server, error) {
 		TSDB:             ts,
 		APIKeyMgr:        keyMgr,
 		BudgetChecker:    budgetChecker,
-		AdminToken:       cfg.AdminToken,
+		AdminToken:       adminTokenHolder,
 		IdempotencyCache: idemCache,
 		CircuitBreaker:   cb,
 		RateLimiter:      rl,
@@ -967,49 +952,6 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 	}
 	if len(models) > 0 {
 		logger.Info("loaded persisted models", slog.Int("count", len(models)))
-	}
-}
-
-// writeStateEnv writes startup state as key=value pairs next to the database.
-// For Docker deployments, make start reads /data/env from the container via
-// docker compose exec and writes ~/.tokenhub/env on the host. The server never
-// writes to the host filesystem directly — that is always handled by the
-// Makefile, which is guaranteed to run in the host context.
-// readPersistedAdminToken reads a previously auto-generated admin token from
-// the data directory (the .admin-token file next to the SQLite database).
-// Returns empty string if not found or on any error.
-func readPersistedAdminToken(dbDSN string) string {
-	dsn := strings.TrimPrefix(dbDSN, "file:")
-	if i := strings.IndexByte(dsn, '?'); i >= 0 {
-		dsn = dsn[:i]
-	}
-	if dsn == "" || dsn == ":memory:" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(dsn), ".admin-token"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func writeStateEnv(dbDSN, token string, logger *slog.Logger) {
-	dsn := strings.TrimPrefix(dbDSN, "file:")
-	if i := strings.IndexByte(dsn, '?'); i >= 0 {
-		dsn = dsn[:i]
-	}
-	if dsn == "" || dsn == ":memory:" {
-		return
-	}
-	dir := filepath.Dir(dsn)
-	envContent := []byte("TOKENHUB_ADMIN_TOKEN=" + token + "\n")
-	if err := os.WriteFile(filepath.Join(dir, "env"), envContent, 0600); err != nil {
-		logger.Warn("failed to write state env file", slog.String("error", err.Error()))
-	}
-	// Legacy: keep .admin-token for older tokenhubctl versions.
-	tokenContent := []byte(token + "\n")
-	if err := os.WriteFile(filepath.Join(dir, ".admin-token"), tokenContent, 0600); err != nil {
-		logger.Warn("failed to write admin token file", slog.String("error", err.Error()))
 	}
 }
 

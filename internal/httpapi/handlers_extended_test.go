@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -1473,7 +1474,8 @@ func TestHealthzResponseBody(t *testing.T) {
 func TestAdminAuthMiddleware(t *testing.T) {
 	// Create a server with admin auth enabled.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mw := adminAuthMiddleware("secret-token")
+		holder, _ := NewAdminTokenHolder("secret-token", ":memory:", slog.Default())
+		mw := adminAuthMiddleware(holder)
 		handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))

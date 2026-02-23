@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io/fs"
@@ -45,8 +44,9 @@ type Dependencies struct {
 	APIKeyMgr     *apikey.Manager
 	BudgetChecker *apikey.BudgetChecker
 
-	// Admin endpoint authentication token (empty = no auth).
-	AdminToken string
+	// Admin token holder for thread-safe read/rotate/replace.
+	// nil only in test harnesses (admin endpoints unprotected).
+	AdminToken *AdminTokenHolder
 
 	// Idempotency cache (nil = idempotency disabled).
 	IdempotencyCache *idempotency.Cache
@@ -187,10 +187,10 @@ func MountRoutes(r chi.Router, d Dependencies) {
 
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Use(bodySizeLimit(maxRequestBodySize))
-		// Protect admin endpoints when an admin token is configured.
-		// NewServer always sets a token (auto-generated if not provided),
-		// so this is only empty in test harnesses.
-		if d.AdminToken != "" {
+		// Protect admin endpoints when an admin token holder is configured.
+		// NewServer always creates a holder (auto-generated if not provided),
+		// so this is only nil in test harnesses.
+		if d.AdminToken != nil {
 			r.Use(adminAuthMiddleware(d.AdminToken))
 		}
 
@@ -205,6 +205,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		// Authorization headers. Call this after authenticating with a Bearer token
 		// to receive a th_admin_session cookie for subsequent SSE connections.
 		r.Post("/session", AdminSessionHandler(d))
+		r.Post("/admin-token/rotate", AdminTokenRotateHandler(d))
 
 		// API key management endpoints.
 		r.Post("/apikeys", APIKeysCreateHandler(d))
@@ -279,7 +280,10 @@ func mountDocs(r chi.Router) {
 // It accepts:
 //  1. Authorization: Bearer <token> header (standard API clients)
 //  2. th_admin_session cookie (set by POST /admin/v1/session, used by EventSource/SSE)
-func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
+//
+// The token holder is read on every request so that runtime rotations take
+// effect immediately without restarting the server.
+func adminAuthMiddleware(holder *AdminTokenHolder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientIP := r.Header.Get("X-Real-IP")
@@ -299,7 +303,7 @@ func adminAuthMiddleware(token string) func(http.Handler) http.Handler {
 				http.Error(w, "missing admin token", http.StatusUnauthorized)
 				return
 			}
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			if !holder.ConstantTimeEqual(provided) {
 				slog.Warn("admin auth: invalid token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid admin token", http.StatusUnauthorized)
 				return

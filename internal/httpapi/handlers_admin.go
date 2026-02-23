@@ -79,11 +79,11 @@ func addProbeTargetIfProbeable(d Dependencies, providerID string) {
 // The caller must already be authenticated via adminAuthMiddleware (Bearer token).
 func AdminSessionHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// The admin token is stored in d.AdminToken; the middleware already
-		// validated it, so we can safely issue the cookie here.
+		// The middleware already validated the caller's token, so we can
+		// safely issue a session cookie using the current admin token.
 		http.SetCookie(w, &http.Cookie{
 			Name:     "th_admin_session",
-			Value:    d.AdminToken,
+			Value:    d.AdminToken.Get(),
 			Path:     "/admin",
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
@@ -93,6 +93,69 @@ func AdminSessionHandler(d Dependencies) http.HandlerFunc {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
+// AdminTokenRotateHandler rotates the admin token. If a "token" field is
+// provided in the request body, it replaces the current token with that
+// value; otherwise a new random token is generated. The new token is
+// persisted to the data directory and returned in the response.
+//
+// POST /admin/v1/admin-token/rotate
+func AdminTokenRotateHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.AdminToken == nil {
+			jsonError(w, "admin token management not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		var req struct {
+			Token string `json:"token"`
+		}
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+
+		var newToken string
+		var err error
+		if req.Token != "" {
+			if len(req.Token) < 16 {
+				jsonError(w, "token must be at least 16 characters", http.StatusBadRequest)
+				return
+			}
+			d.AdminToken.Replace(req.Token, slog.Default())
+			newToken = req.Token
+		} else {
+			newToken, err = d.AdminToken.Rotate(slog.Default())
+			if err != nil {
+				jsonError(w, "rotate failed: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if d.EventBus != nil {
+			d.EventBus.Publish(events.Event{
+				Type:   events.EventHealthChange,
+				Reason: "admin token rotated",
+			})
+		}
+		if d.Store != nil {
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "admin_token.rotate",
+				Resource:  "admin",
+				RequestID: middleware.GetReqID(r.Context()),
+			}))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    true,
+			"token": newToken,
+		})
 	}
 }
 

@@ -56,6 +56,8 @@ func main() {
 		fmt.Printf("tokenhubctl %s\n", version)
 	case "admin-token":
 		doAdminToken()
+	case "rotate-admin-token":
+		doRotateAdminToken(args)
 	case "status":
 		doStatus()
 	case "health":
@@ -115,6 +117,7 @@ Environment:
 
 Commands:
   admin-token                 Print the admin token (env, file, or Docker)
+  rotate-admin-token [token]   Rotate admin token (random if no token given)
   status                      Show server info and vault state
   health                      Show provider health stats
 
@@ -318,6 +321,26 @@ func doAdminToken() {
 
 	fmt.Fprintln(os.Stderr, "admin token not found — set TOKENHUB_ADMIN_TOKEN or ensure the service is running")
 	os.Exit(1)
+}
+
+func doRotateAdminToken(args []string) {
+	var body string
+	if len(args) > 0 {
+		body = `{"token":"` + args[0] + `"}`
+	} else {
+		body = "{}"
+	}
+	result := doPost("/admin/v1/admin-token/rotate", body)
+	ok, _ := result["ok"].(bool)
+	token, _ := result["token"].(string)
+	if !ok || token == "" {
+		fmt.Fprintln(os.Stderr, "rotation failed:", result)
+		os.Exit(1)
+	}
+	fmt.Println("Admin token rotated.")
+	fmt.Println("New token:", token)
+	fmt.Println()
+	fmt.Println("Update your environment or run: make _write-env")
 }
 
 func doStatus() {
