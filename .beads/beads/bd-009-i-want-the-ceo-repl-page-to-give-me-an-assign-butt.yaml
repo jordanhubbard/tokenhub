@@ -1,0 +1,26 @@
+entitymetadata:
+    schemaversion: ""
+    attributes: {}
+    migratedat: null
+    migratedfrom: ""
+id: bd-009
+type: task
+title: I want the CEO repl page to give me an assign button to assign specific agents to a project with one
+description: I want the CEO repl page to give me an assign button to assign specific agents to a project with one button click
+status: open
+priority: 1
+projectid: tokenhub
+assignedto: agent-1771743829-Engineering Manager (Default)
+blockedby: []
+blocks: []
+relatedto: []
+parent: ""
+children: []
+tags: []
+context: {}
+duedate: null
+milestoneid: ""
+estimatedtime: 0
+createdat: 2026-02-23T10:55:33.533786989Z
+updatedat: 2026-02-23T10:55:33.546616684Z
+closedat: null
