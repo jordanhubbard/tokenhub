@@ -37,7 +37,7 @@ func loadEnvFile() {
 			continue
 		}
 		if os.Getenv(strings.TrimSpace(k)) == "" {
-			os.Setenv(strings.TrimSpace(k), strings.TrimSpace(v))
+			_ = os.Setenv(strings.TrimSpace(k), strings.TrimSpace(v))
 		}
 	}
 }
@@ -104,7 +104,7 @@ func usage() {
 }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintf(w, `tokenhubctl — CLI for the TokenHub admin API
+	_, _ = fmt.Fprintf(w, `tokenhubctl — CLI for the TokenHub admin API
 
 Usage: tokenhubctl <command> [arguments]
 
@@ -205,35 +205,35 @@ func doRequest(method, path string, body io.Reader) (*http.Response, error) {
 func doGet(path string) map[string]any {
 	resp, err := doRequest("GET", path, nil)
 	fatal(err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readJSON(resp)
 }
 
 func doPost(path, bodyJSON string) map[string]any {
 	resp, err := doRequest("POST", path, strings.NewReader(bodyJSON))
 	fatal(err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readJSON(resp)
 }
 
 func doPatch(path, bodyJSON string) map[string]any {
 	resp, err := doRequest("PATCH", path, strings.NewReader(bodyJSON))
 	fatal(err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readJSON(resp)
 }
 
 func doPut(path, bodyJSON string) map[string]any {
 	resp, err := doRequest("PUT", path, strings.NewReader(bodyJSON))
 	fatal(err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readJSON(resp)
 }
 
 func doDelete(path string) map[string]any {
 	resp, err := doRequest("DELETE", path, nil)
 	fatal(err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readJSON(resp)
 }
 
@@ -347,7 +347,7 @@ func doStatus() {
 	info := doGet("/admin/v1/info")
 	healthResp, err := doRequest("GET", "/healthz", nil)
 	fatal(err)
-	defer healthResp.Body.Close()
+	defer func() { _ = healthResp.Body.Close() }()
 	hData, _ := io.ReadAll(healthResp.Body)
 	var h map[string]any
 	_ = json.Unmarshal(hData, &h)
@@ -389,7 +389,7 @@ func doHealth() {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "PROVIDER\tSTATE\tERRORS\tAVG LATENCY\tLAST SUCCESS")
+	_, _ = fmt.Fprintln(tw, "PROVIDER\tSTATE\tERRORS\tAVG LATENCY\tLAST SUCCESS")
 	for _, p := range providers {
 		m, ok := p.(map[string]any)
 		if !ok {
@@ -400,9 +400,9 @@ func doHealth() {
 		errs := fmtNum(m["consecutive_errors"])
 		lat := fmtDuration(m["avg_latency_ms"])
 		last := fmtTime(m["last_success"])
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", id, state, errs, lat, last)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", id, state, errs, lat, last)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func doVault(args []string) {
@@ -476,7 +476,7 @@ func doProviders(args []string) {
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tTYPE\tBASE URL\tCREDS\tENABLED\tMODELS\tSOURCE")
+		_, _ = fmt.Fprintln(tw, "ID\tTYPE\tBASE URL\tCREDS\tENABLED\tMODELS\tSOURCE")
 		for id := range allIDs {
 			sp := storeMap[id]
 			typ := "openai"
@@ -511,9 +511,9 @@ func doProviders(args []string) {
 					baseURL = stripHealthSuffix(ep)
 				}
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", id, typ, baseURL, creds, enabled, modelCount, source)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", id, typ, baseURL, creds, enabled, modelCount, source)
 		}
-		tw.Flush()
+		_ = tw.Flush()
 		return
 	}
 
@@ -554,7 +554,7 @@ func doModels(args []string) {
 			return
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "MODEL\tPROVIDER\tWEIGHT\tCONTEXT\tIN $/1K\tOUT $/1K\tENABLED")
+		_, _ = fmt.Fprintln(tw, "MODEL\tPROVIDER\tWEIGHT\tCONTEXT\tIN $/1K\tOUT $/1K\tENABLED")
 		for _, m := range models {
 			mm, _ := m.(map[string]any)
 			id, _ := mm["id"].(string)
@@ -567,9 +567,9 @@ func doModels(args []string) {
 			if mm["enabled"] == false {
 				enabled = "no"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, pid, weight, ctx, in, out, enabled)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, pid, weight, ctx, in, out, enabled)
 		}
-		tw.Flush()
+		_ = tw.Flush()
 		return
 	}
 
@@ -643,7 +643,7 @@ func doAPIKeys(args []string) {
 			return
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tPREFIX\tSCOPES\tENABLED\tCREATED\tLAST USED")
+		_, _ = fmt.Fprintln(tw, "ID\tNAME\tPREFIX\tSCOPES\tENABLED\tCREATED\tLAST USED")
 		for _, k := range keys {
 			m, _ := k.(map[string]any)
 			id, _ := m["id"].(string)
@@ -656,9 +656,9 @@ func doAPIKeys(args []string) {
 			}
 			created := fmtTime(m["created_at"])
 			lastUsed := fmtTime(m["last_used_at"])
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, name, prefix, scopes, enabled, created, lastUsed)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, name, prefix, scopes, enabled, created, lastUsed)
 		}
-		tw.Flush()
+		_ = tw.Flush()
 		return
 	}
 
@@ -710,7 +710,7 @@ func doLogs(args []string) {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "TIME\tMODEL\tPROVIDER\tMODE\tLATENCY\tCOST\tSTATUS")
+	_, _ = fmt.Fprintln(tw, "TIME\tMODEL\tPROVIDER\tMODE\tLATENCY\tCOST\tSTATUS")
 	for _, l := range logs {
 		m, _ := l.(map[string]any)
 		ts := fmtTime(m["timestamp"])
@@ -720,9 +720,9 @@ func doLogs(args []string) {
 		lat := fmtDuration(m["latency_ms"])
 		cost := fmtCost(m["cost_usd"])
 		status := fmtNum(m["status_code"])
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", ts, model, prov, mode, lat, cost, status)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", ts, model, prov, mode, lat, cost, status)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func doAudit(args []string) {
@@ -734,16 +734,16 @@ func doAudit(args []string) {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "TIME\tACTION\tRESOURCE\tREQUEST ID")
+	_, _ = fmt.Fprintln(tw, "TIME\tACTION\tRESOURCE\tREQUEST ID")
 	for _, l := range logs {
 		m, _ := l.(map[string]any)
 		ts := fmtTime(m["timestamp"])
 		action, _ := m["action"].(string)
 		resource, _ := m["resource"].(string)
 		reqID, _ := m["request_id"].(string)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ts, action, resource, reqID)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ts, action, resource, reqID)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func doRewards(args []string) {
@@ -777,7 +777,7 @@ func doEngine(args []string) {
 		}
 		fmt.Printf("\nModels: %d\n", len(models))
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "  MODEL\tPROVIDER\tWEIGHT\tCONTEXT\tENABLED")
+		_, _ = fmt.Fprintln(tw, "  MODEL\tPROVIDER\tWEIGHT\tCONTEXT\tENABLED")
 		for _, m := range models {
 			mm, _ := m.(map[string]any)
 			id, _ := mm["id"].(string)
@@ -788,9 +788,9 @@ func doEngine(args []string) {
 			if mm["enabled"] == false {
 				enabled = "no"
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", id, pid, weight, ctx, enabled)
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", id, pid, weight, ctx, enabled)
 		}
-		tw.Flush()
+		_ = tw.Flush()
 		return
 	}
 	fmt.Fprintf(os.Stderr, "usage: tokenhubctl engine models\n")
@@ -800,7 +800,7 @@ func doEngine(args []string) {
 func doEvents() {
 	resp, err := doRequest("GET", "/admin/v1/events", nil)
 	fatal(err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	fmt.Println("Streaming events (Ctrl-C to stop)...")
 	buf := make([]byte, 4096)
@@ -849,7 +849,7 @@ func doDiscover(args []string) {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL ID\tREGISTERED")
+	_, _ = fmt.Fprintln(tw, "MODEL ID\tREGISTERED")
 	for _, m := range models {
 		mm, _ := m.(map[string]any)
 		id, _ := mm["id"].(string)
@@ -857,9 +857,9 @@ func doDiscover(args []string) {
 		if mm["registered"] == true {
 			registered = "yes"
 		}
-		fmt.Fprintf(tw, "%s\t%s\n", id, registered)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\n", id, registered)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func doSimulate(args []string) {

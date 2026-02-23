@@ -313,8 +313,3 @@ func adminAuthMiddleware(holder *AdminTokenHolder) func(http.Handler) http.Handl
 	}
 }
 
-// readSeeker combines io.ReadSeeker for http.ServeContent.
-type readSeeker interface {
-	Read(p []byte) (n int, err error)
-	Seek(offset int64, whence int) (int64, error)
-}

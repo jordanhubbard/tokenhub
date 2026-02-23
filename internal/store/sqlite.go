@@ -57,12 +57,6 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
-// schemaVersion records a completed migration.
-type schemaVersion struct {
-	version   int
-	name      string
-	appliedAt time.Time
-}
 
 // migration is a versioned, ordered schema change.
 // run receives a *sql.DB and must be idempotent (safe to call on already-migrated databases).

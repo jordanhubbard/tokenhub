@@ -68,7 +68,7 @@ func ProviderDiscoverHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "failed to reach provider: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
