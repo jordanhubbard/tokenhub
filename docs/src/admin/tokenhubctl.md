@@ -49,6 +49,23 @@ The `admin-token` command retrieves the admin token by checking, in order:
 This avoids the need to parse server logs. The token file is written
 automatically by the server at startup (whether auto-generated or set via env).
 
+#### Rotating the Admin Token
+
+```bash
+tokenhubctl rotate-admin-token           # Generate a new random token
+tokenhubctl rotate-admin-token <token>   # Replace with a specific token
+```
+
+After rotation, update your local environment:
+
+```bash
+make _write-env   # Sync token from container to ~/.tokenhub/env
+```
+
+The new token takes effect immediately (no restart required) and is persisted
+to the data directory so it survives restarts. The old token is invalidated
+instantly.
+
 ### Vault
 
 ```bash

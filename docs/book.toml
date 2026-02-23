@@ -14,7 +14,7 @@ default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/jordanhubbard/tokenhub"
 edit-url-template = "https://github.com/jordanhubbard/tokenhub/edit/main/docs/{path}"
-site-url = "/docs/"
+site-url = "/tokenhub/"
 no-section-label = false
 
 [output.html.search]
