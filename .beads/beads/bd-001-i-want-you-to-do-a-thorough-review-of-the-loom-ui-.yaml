@@ -1,0 +1,26 @@
+entitymetadata:
+    schemaversion: ""
+    attributes: {}
+    migratedat: null
+    migratedfrom: ""
+id: bd-001
+type: task
+title: I want you to do a thorough review of the loom UI; I see a lot of duplication of buttons and tabs on
+description: I want you to do a thorough review of the loom UI; I see a lot of duplication of buttons and tabs on the same screen
+status: in_progress
+priority: 1
+projectid: tokenhub
+assignedto: agent-1771743829-Engineering Manager (Default)
+blockedby: []
+blocks: []
+relatedto: []
+parent: ""
+children: []
+tags: []
+context: {}
+duedate: null
+milestoneid: ""
+estimatedtime: 0
+createdat: 2026-02-23T10:54:08.659992452Z
+updatedat: 2026-02-23T10:54:08.723836847Z
+closedat: null
