@@ -18,16 +18,22 @@ parent: ""
 children: []
 tags: []
 context:
+    agent_id: agent-1771743829-Engineering Manager (Default)
     conversation_session_id: b972534e-6ed7-48e7-a495-8d060026e5d0
     correlation_id: dispatch-bd-008-1771844102881892745
     dispatch_count: "1"
+    dispatch_history: '["agent-1771743829-Engineering Manager (Default)"]'
     failed_at: "2026-02-23T10:55:02Z"
     last_error: command parameter required
+    last_run_at: "2026-02-23T10:55:05Z"
+    last_run_error: 'action loop failed: context canceled'
+    loop_detected: "false"
+    provider_id: tokenhub
     redispatch_requested: "true"
     redispatch_requested_at: "2026-02-23T10:55:00Z"
 duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-23T10:54:55.573925435Z
-updatedat: 2026-02-23T10:55:02.932810534Z
+updatedat: 2026-02-23T10:55:05.161981357Z
 closedat: null
