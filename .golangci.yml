@@ -1,0 +1,45 @@
+version: "2"
+
+linters:
+  enable:
+    - gosec
+
+issues:
+  exclude-rules:
+    # math/rand is intentional in the router — used for Thompson sampling and
+    # retry jitter, not for security-sensitive operations (those use crypto/rand).
+    - path: internal/router/
+      linters: [gosec]
+      text: "G404"
+
+    # tokenhubctl explicitly shells out to `docker exec` by design; the
+    # container name comes from the user's own config, not untrusted input.
+    - path: cmd/tokenhubctl/
+      linters: [gosec]
+      text: "G204"
+
+    # Health-check URL is constructed from the server's own listen address,
+    # not from external input.
+    - path: cmd/tokenhub/main\.go
+      linters: [gosec]
+      text: "G107"
+
+    # File paths in admin_token.go are rooted at os.UserHomeDir() or a
+    # server-configured data directory, not at user-supplied input.
+    - path: internal/httpapi/admin_token\.go
+      linters: [gosec]
+      text: "G304"
+
+    # Same for tokenhubctl reading ~/.tokenhub/* files.
+    - path: cmd/tokenhubctl/main\.go
+      linters: [gosec]
+      text: "G304"
+
+    # Credentials file path comes from os.UserHomeDir() in server.go.
+    - path: internal/app/server\.go
+      linters: [gosec]
+      text: "G304"
+
+    # Test files are not production attack surface.
+    - path: _test\.go
+      linters: [gosec]

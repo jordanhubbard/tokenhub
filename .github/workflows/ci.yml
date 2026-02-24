@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write  # required for uploading Trivy SARIF results
 
 jobs:
   build-and-test:
@@ -42,3 +43,19 @@ jobs:
 
       - name: Build Docker image
         run: make package
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: tokenhub:latest
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
