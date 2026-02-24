@@ -1,9 +1,22 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/jordanhubbard/tokenhub/internal/router"
 )
+
+// discardLogger returns a logger that discards all output, suitable for tests.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestLoadConfigDefaults(t *testing.T) {
 	// Unset all TOKENHUB_ env vars to ensure defaults are used.
@@ -218,5 +231,172 @@ func TestServerReload(t *testing.T) {
 	}
 	if srv.cfg.LogLevel != "debug" {
 		t.Errorf("after Reload LogLevel = %q, want %q", srv.cfg.LogLevel, "debug")
+	}
+}
+
+// newTestEngine creates a minimal router.Engine suitable for testing.
+func newTestEngine() *router.Engine {
+	return router.NewEngine(router.EngineConfig{})
+}
+
+func TestAutoloadModelsForProvider_Basic(t *testing.T) {
+	// Spin up a mock HTTP server that returns an OpenAI-compatible model list.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		type modelEntry struct {
+			ID string `json:"id"`
+		}
+		type resp struct {
+			Data []modelEntry `json:"data"`
+		}
+		_ = json.NewEncoder(w).Encode(resp{Data: []modelEntry{
+			{ID: "model-a"},
+			{ID: "model-b"},
+		}})
+	}))
+	defer srv.Close()
+
+	eng := newTestEngine()
+	autoloadModelsForProvider(context.Background(), "test-provider", "", srv.URL, nil, eng, nil, discardLogger())
+
+	models := eng.ListModels()
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(models))
+	}
+	ids := map[string]bool{}
+	for _, m := range models {
+		ids[m.ID] = true
+		if m.ProviderID != "test-provider" {
+			t.Errorf("model %q has ProviderID %q, want %q", m.ID, m.ProviderID, "test-provider")
+		}
+		if !m.Enabled {
+			t.Errorf("model %q should be enabled", m.ID)
+		}
+		if m.Weight != 5 {
+			t.Errorf("model %q has Weight %d, want 5", m.ID, m.Weight)
+		}
+	}
+	if !ids["model-a"] || !ids["model-b"] {
+		t.Errorf("unexpected model IDs: %v", ids)
+	}
+}
+
+func TestAutoloadModelsForProvider_SkipsExplicitModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type modelEntry struct {
+			ID string `json:"id"`
+		}
+		type resp struct {
+			Data []modelEntry `json:"data"`
+		}
+		_ = json.NewEncoder(w).Encode(resp{Data: []modelEntry{
+			{ID: "model-a"},
+			{ID: "model-b"},
+		}})
+	}))
+	defer srv.Close()
+
+	eng := newTestEngine()
+	explicit := map[string]bool{"model-a": true}
+	autoloadModelsForProvider(context.Background(), "p", "", srv.URL, explicit, eng, nil, discardLogger())
+
+	models := eng.ListModels()
+	if len(models) != 1 {
+		t.Fatalf("expected 1 model, got %d: %v", len(models), models)
+	}
+	if models[0].ID != "model-b" {
+		t.Errorf("expected model-b, got %q", models[0].ID)
+	}
+}
+
+func TestAutoloadModelsForProvider_PlainArrayResponse(t *testing.T) {
+	// Some providers return a plain JSON array instead of {data: [...]}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type modelEntry struct {
+			ID string `json:"id"`
+		}
+		_ = json.NewEncoder(w).Encode([]modelEntry{{ID: "m1"}, {ID: "m2"}})
+	}))
+	defer srv.Close()
+
+	eng := newTestEngine()
+	autoloadModelsForProvider(context.Background(), "p", "", srv.URL, nil, eng, nil, discardLogger())
+
+	models := eng.ListModels()
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(models))
+	}
+}
+
+func TestAutoloadModelsForProvider_ProviderError(t *testing.T) {
+	// Provider returns an HTTP error – should log and not register anything.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	eng := newTestEngine()
+	autoloadModelsForProvider(context.Background(), "p", "", srv.URL, nil, eng, nil, discardLogger())
+
+	if models := eng.ListModels(); len(models) != 0 {
+		t.Errorf("expected 0 models on provider error, got %d", len(models))
+	}
+}
+
+func TestLoadCredentialsFile_AutoloadModels(t *testing.T) {
+	// Spin up a mock provider that serves /v1/models.
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		type modelEntry struct {
+			ID string `json:"id"`
+		}
+		type resp struct {
+			Data []modelEntry `json:"data"`
+		}
+		_ = json.NewEncoder(w).Encode(resp{Data: []modelEntry{
+			{ID: "auto-model-1"},
+			{ID: "auto-model-2"},
+		}})
+	}))
+	defer mockProvider.Close()
+
+	// Write a credentials file with autoload_models=true.
+	creds := map[string]any{
+		"providers": []map[string]any{
+			{
+				"id":              "auto-provider",
+				"type":            "openai",
+				"base_url":        mockProvider.URL,
+				"autoload_models": true,
+			},
+		},
+		"models": []map[string]any{},
+	}
+	data, _ := json.Marshal(creds)
+
+	f, err := os.CreateTemp(t.TempDir(), "creds*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if err := os.Chmod(f.Name(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := newTestEngine()
+	loadCredentialsFile(f.Name(), eng, nil, nil, 30*1000*1000*1000, discardLogger())
+
+	models := eng.ListModels()
+	if len(models) != 2 {
+		t.Fatalf("expected 2 autoloaded models, got %d", len(models))
 	}
 }

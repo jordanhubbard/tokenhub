@@ -89,7 +89,7 @@ mkdir -p ~/.tokenhub && chmod 700 ~/.tokenhub
 cat > ~/.tokenhub/credentials << 'EOF'
 {
   "providers": [
-    {"id": "my-provider", "type": "openai", "base_url": "https://api.example.com", "api_key": "sk-..."}
+    {"id": "my-provider", "type": "openai", "base_url": "https://api.example.com", "api_key": "sk-...", "autoload_models": true}
   ],
   "models": [
     {"id": "my-model", "provider_id": "my-provider", "weight": 8, "max_context_tokens": 128000}
@@ -99,6 +99,8 @@ EOF
 chmod 600 ~/.tokenhub/credentials
 make run     # builds image, starts compose, tails logs
 ```
+
+Set `"autoload_models": true` on a provider to automatically discover and register all models exposed by its `/v1/models` endpoint at startup. Autoloaded models receive a default weight of 5 and can be overridden by explicit entries in the `models` list.
 
 You can also register providers interactively via `tokenhubctl`, the admin API,
 or the admin UI's setup wizard. See the [Quick Start guide](https://jordanhubbard.github.io/tokenhub/quickstart.html) for all options.

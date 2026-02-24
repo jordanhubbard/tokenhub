@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -757,11 +758,12 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 	}
 
 	type credProvider struct {
-		ID      string `json:"id"`
-		Type    string `json:"type"`
-		BaseURL string `json:"base_url"`
-		APIKey  string `json:"api_key"`
-		Enabled *bool  `json:"enabled"` // nil = true
+		ID             string `json:"id"`
+		Type           string `json:"type"`
+		BaseURL        string `json:"base_url"`
+		APIKey         string `json:"api_key"`
+		Enabled        *bool  `json:"enabled"`         // nil = true
+		AutoloadModels bool   `json:"autoload_models"` // fetch all models from provider on startup
 	}
 	type credModel struct {
 		ID               string  `json:"id"`
@@ -837,6 +839,23 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 		}
 	}
 
+	// Build a set of models explicitly listed in the credentials file so that
+	// autoloaded models don't overwrite them.
+	explicitModels := make(map[string]bool, len(creds.Models))
+	for _, m := range creds.Models {
+		if m.ID != "" {
+			explicitModels[m.ID] = true
+		}
+	}
+
+	// Autoload models for providers that have autoload_models=true.
+	for _, p := range creds.Providers {
+		if !p.AutoloadModels {
+			continue
+		}
+		autoloadModelsForProvider(ctx, p.ID, p.APIKey, p.BaseURL, explicitModels, eng, db, logger)
+	}
+
 	for _, m := range creds.Models {
 		if m.ID == "" || m.ProviderID == "" {
 			logger.Warn("skipping credentials model: id and provider_id required", slog.String("id", m.ID))
@@ -872,6 +891,85 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 		slog.Int("providers", len(creds.Providers)),
 		slog.Int("models", len(creds.Models)),
 	)
+}
+
+// autoloadModelsForProvider fetches the model list from a provider's /v1/models
+// endpoint and registers any models not already present in explicitModels. It
+// uses the provided API key for authentication if non-empty. Models discovered
+// this way are registered with sensible defaults (weight=5, enabled=true) and
+// can be overridden by explicit entries in the credentials file.
+func autoloadModelsForProvider(ctx context.Context, providerID, apiKey, baseURL string, explicitModels map[string]bool, eng *router.Engine, db store.Store, logger *slog.Logger) {
+	modelsURL := normalizeBaseURL(baseURL) + "/v1/models"
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		logger.Warn("autoload_models: failed to build request", slog.String("provider", providerID), slog.String("error", err.Error()))
+		return
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Warn("autoload_models: failed to reach provider", slog.String("provider", providerID), slog.String("error", err.Error()))
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		logger.Warn("autoload_models: failed to read response", slog.String("provider", providerID), slog.String("error", err.Error()))
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("autoload_models: provider returned error", slog.String("provider", providerID), slog.Int("status", resp.StatusCode))
+		return
+	}
+
+	type modelEntry struct {
+		ID string `json:"id"`
+	}
+	type modelsResponse struct {
+		Data []modelEntry `json:"data"`
+	}
+
+	var parsed modelsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		// Some providers return a plain array instead of {data: [...]}.
+		var arr []modelEntry
+		if err2 := json.Unmarshal(body, &arr); err2 != nil {
+			logger.Warn("autoload_models: failed to parse response", slog.String("provider", providerID), slog.String("error", err.Error()))
+			return
+		}
+		parsed.Data = arr
+	}
+
+	count := 0
+	for _, m := range parsed.Data {
+		if m.ID == "" || explicitModels[m.ID] {
+			continue
+		}
+		model := router.Model{
+			ID:         m.ID,
+			ProviderID: providerID,
+			Weight:     5,
+			Enabled:    true,
+		}
+		eng.RegisterModel(model)
+		if db != nil {
+			if err := db.UpsertModel(ctx, store.ModelRecord{
+				ID: m.ID, ProviderID: providerID, Weight: 5, Enabled: true,
+			}); err != nil {
+				logger.Warn("autoload_models: failed to persist model", slog.String("provider", providerID), slog.String("model", m.ID), slog.String("error", err.Error()))
+			}
+		}
+		count++
+	}
+	logger.Info("autoload_models: registered models", slog.String("provider", providerID), slog.Int("count", count))
 }
 
 // newProviderAdapter constructs a runtime adapter for the given provider type,
