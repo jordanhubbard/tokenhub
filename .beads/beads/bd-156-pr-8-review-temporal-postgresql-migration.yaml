@@ -7,10 +7,10 @@ id: bd-156
 type: task
 title: 'PR #8: Review Temporal PostgreSQL migration'
 description: 'PR #8 from lesserevil (https://github.com/jordanhubbard/tokenhub/pull/8) and issue #7: ''Fix Temporal to use PostgreSQL instead of SQLite''. The tokenhub stack already uses PostgreSQL for other state — Temporal should use it too for consistency and production readiness. Review the implementation carefully: check Temporal config changes, PostgreSQL schema setup, connection pooling. This is bd-150''s companion work on the tokenhub side. Merge if solid.'
-status: open
+status: closed
 priority: 0
 projectid: tokenhub
-assignedto: ""
+assignedto: exec-tokenhub-0fee23b1
 blockedby: []
 blocks: []
 relatedto: []
@@ -18,6 +18,21 @@ parent: ""
 children: []
 tags: []
 context:
+    close_reason: |-
+        CANNOT COMPLETE - PR #8 NOT ACCESSIBLE
+
+        Findings:
+        1. PR #8 branch is not available locally and cannot be fetched
+        2. The bead description is INCORRECT - it claims 'tokenhub stack already uses PostgreSQL' but investigation shows:
+           - TokenHub uses SQLite (internal/store/sqlite.go)
+           - Temporal uses SQLite (DB=sqlite in docker-compose.yaml)
+           - E2E tests use SQLite
+        3. No PostgreSQL references exist anywhere in the codebase
+
+        Recommendation:
+        - If PostgreSQL migration is desired, it should be a NEW implementation, not a review of existing work
+        - The PR #8 may not exist or may have been closed/deleted
+        - Consider creating a new bead for 'Implement Temporal PostgreSQL migration' if this is still desired
     dispatch_count: "98"
     error_history: '[{"timestamp":"2026-02-24T02:15:29.675667045Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":89},{"timestamp":"2026-02-24T02:15:29.67575511Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":89},{"timestamp":"2026-02-24T02:15:53.589087355Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":90},{"timestamp":"2026-02-24T02:15:53.589126459Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":90},{"timestamp":"2026-02-24T02:16:17.546809801Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":91},{"timestamp":"2026-02-24T02:16:17.546890122Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":91},{"timestamp":"2026-02-24T02:16:41.476871649Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":92},{"timestamp":"2026-02-24T02:16:41.476938386Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":92},{"timestamp":"2026-02-24T02:17:07.711165596Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":93},{"timestamp":"2026-02-24T02:17:07.711217645Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":93},{"timestamp":"2026-02-24T02:17:37.265361483Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":94},{"timestamp":"2026-02-24T02:17:37.26541014Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":94},{"timestamp":"2026-02-24T02:18:02.366279572Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":95},{"timestamp":"2026-02-24T02:18:02.366320453Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":95},{"timestamp":"2026-02-24T02:18:26.565440519Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":96},{"timestamp":"2026-02-24T02:18:26.565510631Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":96},{"timestamp":"2026-02-24T02:18:50.561441302Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":97},{"timestamp":"2026-02-24T02:18:50.561487863Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":97},{"timestamp":"2026-02-24T02:19:16.691696507Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":98},{"timestamp":"2026-02-24T02:19:16.691761148Z","error":"LLM call failed on iteration 1: unexpected status code 502: {\"error\":{\"message\":\"all providers failed\",\"type\":\"server_error\",\"code\":null}}\n","dispatch":98}]'
     escalated_to_ceo_at: "2026-02-24T01:43:10Z"
@@ -36,5 +51,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-24T01:31:16.052016644Z
-updatedat: 2026-02-24T02:19:16.691863101Z
-closedat: null
+updatedat: 2026-02-24T02:19:38.326467221Z
+closedat: 2026-02-24T02:19:38.326465301Z
