@@ -1,4 +1,4 @@
-.PHONY: build install package run start stop restart admin-key logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
+.PHONY: help build install package run start stop restart admin-key logs test test-race test-integration test-e2e vet lint clean docs docs-serve release release-major release-minor release-patch builder setup _write-env
 
 INSTALL_DIR ?= $(HOME)/.local/bin
 MAN_DIR     ?= $(HOME)/.local/share/man
@@ -21,18 +21,22 @@ DOCKER_BUILD := $(shell docker buildx version >/dev/null 2>&1 && echo "docker bu
 # Host port the tokenhub container exposes (must match docker-compose.yaml).
 TOKENHUB_PORT ?= 8090
 
+# ──── Help ────
+
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
+
 # ──── Host setup ────
 
-# setup aligns the host Docker CLI to the best available configuration.
-# On macOS with Homebrew-installed Docker, stale Docker Desktop symlinks in
-# ~/.docker/cli-plugins/ shadow the working Homebrew binaries.
-# No-op on Linux.
-setup:
+setup: ## Align host Docker CLI to best available configuration
 	@scripts/setup-docker.sh
 
 # ──── Builder image (cached) ────
 
-builder: setup
+builder: setup ## Build the development container image (cached)
 	@if docker image inspect $(BUILDER_IMAGE) >/dev/null 2>&1; then \
 		true; \
 	else \
@@ -42,7 +46,7 @@ builder: setup
 
 # ──── Build ────
 
-build: builder
+build: builder ## Compile tokenhub and tokenhubctl binaries
 	@echo "Compiling tokenhub..."
 	@$(DOCKER_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
 	@echo "Compiling tokenhubctl..."
@@ -50,9 +54,8 @@ build: builder
 	@echo "Build complete: bin/tokenhub bin/tokenhubctl"
 
 # ──── Install ────
-# Builds natively on the host (requires Go 1.24+) and installs to ~/.local/bin.
 
-install:
+install: ## Build natively and install to ~/.local/bin (requires Go 1.24+)
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
 	@mkdir -p $(INSTALL_DIR)
@@ -64,28 +67,26 @@ install:
 
 # ──── Package ────
 
-# package builds the production container image and tags it as both
-# tokenhub:<version> (for pinning) and tokenhub:latest (for compose).
-package: setup
+package: setup ## Build production container image
 	$(DOCKER_BUILD) -t tokenhub:$(VERSION) -t tokenhub:latest .
 
 # ──── Lifecycle ────
 
-run: package
+run: package ## Build, start container, and follow logs
 	docker compose up -d
 	docker compose logs -f tokenhub
 
-start:
+start: ## Start tokenhub container
 	docker compose up -d tokenhub
 	@$(MAKE) -s _write-env
 
-admin-key: start
+admin-key: start ## Print the admin API key
 	@grep '^TOKENHUB_ADMIN_TOKEN=' $(HOME)/.tokenhub/env | cut -d= -f2-
 
-stop:
+stop: ## Stop tokenhub container
 	docker compose stop tokenhub
 
-restart:
+restart: ## Restart tokenhub container
 	docker compose stop tokenhub
 	docker compose up -d tokenhub
 	@$(MAKE) -s _write-env
@@ -109,61 +110,57 @@ _write-env:
 	done; \
 	echo "Warning: could not write ~/.tokenhub/env — run: tokenhubctl admin-token"
 
-logs:
+logs: ## Follow tokenhub container logs
 	docker compose logs -f tokenhub
 
 # ──── Tests ────
 
-test: builder
+test: builder ## Run unit tests in container
 	$(DOCKER_RUN) go test -buildvcs=false ./...
 
-test-race:
+test-race: ## Run tests with race detector (native)
 	go test -race ./...
 
-test-coverage:
+test-coverage: ## Run tests with coverage report
 	go test -race -coverprofile=coverage.out ./...
 
-test-integration: package
+test-integration: package ## Run integration tests
 	@bash tests/integration.sh
 
-test-e2e: package
+test-e2e: package ## Run end-to-end tests
 	@bash tests/e2e-temporal.sh
 
 # ──── Code quality ────
 
-vet: builder
+vet: builder ## Run go vet
 	$(DOCKER_RUN) go vet -buildvcs=false ./...
 
-lint: builder
+lint: builder ## Run golangci-lint
 	$(DOCKER_RUN) golangci-lint run --concurrency=1
 
 # ──── Docs ────
 
-docs: builder
+docs: builder ## Build documentation
 	$(DOCKER_RUN) sh -c "cd docs && mdbook build"
 
-docs-serve: builder
+docs-serve: builder ## Serve documentation locally on port 3000
 	docker run --rm -v $(CURDIR):/src -w /src -p 3000:3000 $(BUILDER_IMAGE) \
 		sh -c "cd docs && mdbook serve -n 0.0.0.0"
 
 # ──── Release ────
-#   make release              # Bump patch version (x.y.Z)
-#   make release-minor        # Bump minor version (x.Y.0)
-#   make release-major        # Bump major version (X.0.0)
-#   BATCH=yes make release    # Non-interactive mode
 
-release:
+release: ## Bump patch version and release (x.y.Z)
 	@./scripts/release.sh patch
 
-release-minor:
+release-minor: ## Bump minor version and release (x.Y.0)
 	@./scripts/release.sh minor
 
-release-major:
+release-major: ## Bump major version and release (X.0.0)
 	@./scripts/release.sh major
 
-release-patch: release
+release-patch: release ## Alias for release
 
 # ──── Clean ────
 
-clean:
+clean: ## Remove build artifacts
 	rm -rf bin/ docs/book/ coverage.out
