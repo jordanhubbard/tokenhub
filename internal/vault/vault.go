@@ -371,7 +371,16 @@ func (v *Vault) RotatePassword(oldPassword, newPassword []byte) error {
 // autoLockLoop runs in a goroutine and locks the vault after a period of
 // inactivity. It checks every minute (or more frequently for short durations)
 // and exits when signalled via stopAutoLock.
+// A zero autoLockAfter duration disables auto-locking entirely.
 func (v *Vault) autoLockLoop() {
+	// Zero duration means auto-lock is disabled. Just wait for the stop signal
+	// (e.g. on explicit Lock() call or shutdown). This is the correct behaviour
+	// for headless deployments that provide TOKENHUB_VAULT_PASSWORD.
+	if v.autoLockAfter == 0 {
+		<-v.stopAutoLock
+		return
+	}
+
 	// Use a check interval that is the lesser of 1 minute or half the
 	// auto-lock duration, so short test durations still work correctly.
 	interval := time.Minute

@@ -357,6 +357,24 @@ func TestRotatePasswordWhileLocked(t *testing.T) {
 	}
 }
 
+func TestAutoLockDisabled(t *testing.T) {
+	// WithAutoLockDuration(0) should disable auto-locking entirely.
+	v, err := New(true, WithAutoLockDuration(0))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := v.Unlock([]byte("a-strong-password-for-testing!!")); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	// Wait well past a normal auto-lock window; the vault must stay unlocked.
+	time.Sleep(100 * time.Millisecond)
+
+	if v.IsLocked() {
+		t.Error("expected vault to stay unlocked when auto-lock is disabled (duration=0)")
+	}
+}
+
 func TestAutoLockTouch(t *testing.T) {
 	v, err := New(true, WithAutoLockDuration(150*time.Millisecond))
 	if err != nil {

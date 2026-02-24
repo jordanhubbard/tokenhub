@@ -112,7 +112,13 @@ func NewServer(cfg Config) (*Server, error) {
 	rl := ratelimit.New(cfg.RateLimitRPS, cfg.RateLimitBurst, time.Second,
 		ratelimit.WithCounter(m.RateLimitedTotal))
 
-	v, err := vault.New(cfg.VaultEnabled)
+	var vaultOpts []vault.Option
+	if cfg.VaultPassword != "" {
+		// Headless deployment: auto-unlock from TOKENHUB_VAULT_PASSWORD env var.
+		// Disable auto-lock so the vault stays open for the lifetime of the process.
+		vaultOpts = append(vaultOpts, vault.WithAutoLockDuration(0))
+	}
+	v, err := vault.New(cfg.VaultEnabled, vaultOpts...)
 	if err != nil {
 		return nil, err
 	}
