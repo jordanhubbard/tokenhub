@@ -7,10 +7,10 @@ id: bd-154
 type: task
 title: 'PR #5: Review and merge ''make help'' target'
 description: 'Community PR from lesserevil (https://github.com/jordanhubbard/tokenhub/pull/5): ''Add make help target to display all available make targets''. Closes issue #3. Review the Makefile changes and merge — this is a simple usability improvement for developers. Also close issue #3 once merged.'
-status: open
+status: in_progress
 priority: 2
 projectid: tokenhub
-assignedto: ""
+assignedto: exec-tokenhub-fb2764d4
 blockedby: []
 blocks: []
 relatedto: []
@@ -35,5 +35,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-24T01:31:15.78181694Z
-updatedat: 2026-02-24T06:32:26.521906329Z
+updatedat: 2026-02-24T06:32:43.120453575Z
 closedat: null
