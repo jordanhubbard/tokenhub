@@ -4,7 +4,6 @@ linters:
   enable:
     - gosec
 
-issues:
   exclusions:
     rules:
       # math/rand is intentional in the router — used for Thompson sampling and
