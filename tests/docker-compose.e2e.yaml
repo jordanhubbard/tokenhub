@@ -19,7 +19,7 @@ services:
       retries: 20
 
   mock-provider:
-    image: nginx:alpine
+    image: nginx:latest
     volumes:
       - ./mock-provider.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:

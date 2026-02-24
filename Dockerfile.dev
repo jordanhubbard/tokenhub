@@ -2,10 +2,10 @@
 # Contains all tools needed for build, test, lint, and docs.
 # Used by Makefile targets — no host Go/tools required.
 
-FROM golang:1.24-alpine
+FROM golang:1.24-bookworm
 
 ARG TARGETARCH
-RUN apk add --no-cache git ca-certificates curl bash
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl bash && rm -rf /var/lib/apt/lists/*
 
 ARG MDBOOK_VERSION=0.4.44
 RUN case "${TARGETARCH}" in \

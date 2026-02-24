@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- Build stage: Go binary + documentation ---
-FROM golang:1.24-alpine AS build
+FROM golang:1.24-bookworm AS build
 ARG VERSION=dev
 WORKDIR /src
 
@@ -10,7 +10,7 @@ WORKDIR /src
 # (Dockerfile.dev) for `make lint`. Keeping it out of the production build
 # avoids a 15 MB download from GitHub's CDN which frequently times out.
 ARG TARGETARCH
-RUN apk add --no-cache git ca-certificates curl bash
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl bash && rm -rf /var/lib/apt/lists/*
 
 ARG MDBOOK_VERSION=0.4.44
 RUN case "${TARGETARCH}" in \
@@ -32,10 +32,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/tokenhub ./cmd/tokenhub
 RUN cd docs && mdbook build
 
-# --- Runtime stage: Alpine for modernc.org/sqlite compatibility ---
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates curl && \
-    adduser -D tokenhub
+# --- Runtime stage: Ubuntu for modernc.org/sqlite compatibility ---
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --no-create-home --shell /usr/sbin/nologin tokenhub
 WORKDIR /
 COPY --from=build /out/tokenhub /tokenhub
 COPY --from=build /src/docs/book /docs/book

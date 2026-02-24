@@ -45,7 +45,7 @@ services:
           cpus: "2"
 
   postgres:
-    image: postgres:12-alpine
+    image: postgres:12
     environment:
       - POSTGRES_DB=temporal
       - POSTGRES_USER=temporal
@@ -103,11 +103,11 @@ services:
           cpus: "0.5"
 
   # PLACEHOLDER: vLLM service for development only
-  # This uses nginx:alpine as a mock service for local development.
+  # This uses nginx as a mock service for local development.
   # In production, replace this with an actual vLLM instance running a real language model.
   # For example: image: vllm/vllm-openai:latest
   vllm-1:
-    image: nginx:alpine
+    image: nginx:latest
     ports:
       - "8000:80"
     restart: unless-stopped
