@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"io"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -744,14 +743,15 @@ func discoverModels(providerID, providerType, baseURL, apiKey string, timeout ti
 
 	modelsURL := normalizeBaseURL(baseURL) + "/v1/models"
 
-	var headers map[string]string
+	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil
+	}
 	if apiKey != "" {
-		headers = map[string]string{
-			"Authorization": "Bearer " + apiKey,
-		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := client.Get(modelsURL)
+	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("failed to discover models from provider",
 			slog.String("provider", providerID),
