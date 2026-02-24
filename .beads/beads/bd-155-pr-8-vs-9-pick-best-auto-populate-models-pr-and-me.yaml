@@ -7,10 +7,10 @@ id: bd-155
 type: task
 title: 'PR #8 vs #9: Pick best ''auto-populate models'' PR and merge'
 description: 'There are TWO open PRs for issue #4 ''Add option to auto-populate models for providers'': PR #6 by lesserevil (https://github.com/jordanhubbard/tokenhub/pull/6) and PR #9 by copilot-swe-agent (https://github.com/jordanhubbard/tokenhub/pull/9) titled ''Add autoload_models option to provider credentials''. Compare both implementations. Pick the better one, provide feedback on the other, and merge the winner. Close issue #4 once done.'
-status: open
+status: in_progress
 priority: 1
 projectid: tokenhub
-assignedto: ""
+assignedto: exec-tokenhub-5699c58b
 blockedby: []
 blocks: []
 relatedto: []
@@ -33,5 +33,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-24T01:31:15.927166681Z
-updatedat: 2026-02-24T02:31:31.973640098Z
+updatedat: 2026-02-24T02:31:45.844718145Z
 closedat: null
