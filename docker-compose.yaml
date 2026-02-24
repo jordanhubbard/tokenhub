@@ -21,8 +21,11 @@ services:
     # Use the host's systemd-resolved so internal hostnames (e.g. NVIDIA VPN,
     # Tailscale) resolve correctly inside the container. 172.21.0.1 is the
     # Docker bridge gateway which forwards to the host resolver.
+    # 1.1.1.1 is a fallback for when the bridge DNS cannot resolve external
+    # hostnames (e.g. api.anthropic.com, api.openai.com).
     dns:
       - 172.21.0.1
+      - 1.1.1.1
     healthcheck:
       test: ["CMD", "/tokenhub", "-healthcheck"]
       interval: 5s

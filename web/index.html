@@ -781,10 +781,14 @@ function renderWizard() {
       body.innerHTML = `<div class="field"><label>Base URL</label><input id="wiz-url" value="${s.url}" placeholder="${defaults[s.type]}" style="width:100%" oninput="wizardState.url=this.value"></div><p style="font-size:12px;color:#666;margin-top:8px">For local vLLM/Ollama, use your machine's LAN address (e.g. http://192.168.1.50:8000)</p>`;
       actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" onclick="wizardNext()">Next</button>`;
       break;
-    case 2: // Credentials
-      body.innerHTML = `<div class="field"><label>API Key ${s.type==='vllm' ? '(optional for local)' : ''}</label><input type="password" id="wiz-key" value="${s.key}" placeholder="${s.type==='vllm'?'Leave blank for no auth':'sk-...'}" style="width:100%" oninput="wizardState.key=this.value"></div><p style="font-size:12px;color:#666;margin-top:8px">${s.type==='vllm' ? 'Most local vLLM instances need no key.' : 'The key will be stored in the encrypted vault.'}</p>`;
+    case 2: { // Credentials
+      const vaultWarning = wizardState._vaultLocked ? `<div style="background:#3a2000;border:1px solid #ff8c00;border-radius:4px;padding:10px;margin-bottom:12px;font-size:12px;color:#ffb347">&#9888; The vault is locked. Unlock it from Settings before adding an API key.</div>` : '';
+      body.innerHTML = `${vaultWarning}<div class="field"><label>API Key ${s.type==='vllm' ? '(optional for local)' : ''}</label><input type="password" id="wiz-key" value="${s.key}" placeholder="${s.type==='vllm'?'Leave blank for no auth':'sk-...'}" style="width:100%" oninput="wizardState.key=this.value"></div><p style="font-size:12px;color:#666;margin-top:8px">${s.type==='vllm' ? 'Most local vLLM instances need no key.' : 'The key will be stored in the encrypted vault.'}</p>`;
       actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" onclick="wizardNext()">Next</button>`;
+      // Fetch vault status to show warning if locked
+      fetch('/admin/v1/info').then(r=>r.json()).then(info => { if (info.vault_locked) { wizardState._vaultLocked = true; renderWizard(); } }).catch(()=>{});
       break;
+    }
     case 3: // Test connection
       body.innerHTML = `<p style="margin-bottom:12px">Testing connection to <strong>${s.url}</strong>...</p><div id="wiz-test-result"></div>`;
       actions.innerHTML = `<button class="btn" onclick="wizardBack()">Back</button><button class="btn primary" id="wiz-test-next" disabled onclick="wizardNext()">Next</button>`;
@@ -815,7 +819,7 @@ function wizardTestConnection() {
   const body = { id: wizardState.id, type: wizardState.type, base_url: wizardState.url, enabled: true };
   if (wizardState.key) body.api_key = wizardState.key;
   fetch('/admin/v1/providers', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
-    .then(r => { if (!r.ok) throw new Error('Failed to register'); return r.json(); })
+    .then(r => r.json().then(data => { if (!r.ok) throw new Error(data.error || 'Failed to register'); return data; }))
     .then(() => {
       // Test by hitting healthz on the provider (or /v1/models).
       return fetch(`/admin/v1/providers/${encodeURIComponent(wizardState.id)}/discover`);
@@ -827,8 +831,9 @@ function wizardTestConnection() {
       document.getElementById('wiz-test-next').disabled = false;
     })
     .catch(err => {
-      el.innerHTML = `<div class="test-result fail">Connection failed: ${err.message}</div><p style="font-size:12px;color:#666;margin-top:8px">The provider was registered but could not be reached. You can still proceed and add models manually.</p>`;
-      document.getElementById('wiz-test-next').disabled = false;
+      const isRegFail = err.message.includes('vault') || err.message.includes('register');
+      el.innerHTML = `<div class="test-result fail">${err.message}</div>${isRegFail ? '' : '<p style="font-size:12px;color:#666;margin-top:8px">The provider was registered but could not be reached. You can still proceed and add models manually.</p>'}`;
+      document.getElementById('wiz-test-next').disabled = isRegFail;
     });
 }
 

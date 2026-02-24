@@ -22,7 +22,7 @@ func ProviderDiscoverHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Look up provider base URL from the store.
+		// Look up provider base URL and type from the store.
 		if d.Store == nil {
 			jsonError(w, "no store configured", http.StatusInternalServerError)
 			return
@@ -33,9 +33,11 @@ func ProviderDiscoverHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 		var baseURL string
+		var providerType string
 		for _, p := range providers {
 			if p.ID == providerID {
 				baseURL = p.BaseURL
+				providerType = p.Type
 				break
 			}
 		}
@@ -56,9 +58,15 @@ func ProviderDiscoverHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		// Try to get the API key from the vault for authenticated requests.
+		// Use provider-type-specific auth headers.
 		if d.Vault != nil && !d.Vault.IsLocked() {
 			if key, err := d.Vault.Get("provider:" + providerID + ":api_key"); err == nil && key != "" {
-				req.Header.Set("Authorization", "Bearer "+key)
+				if providerType == "anthropic" {
+					req.Header.Set("x-api-key", key)
+					req.Header.Set("anthropic-version", "2023-06-01")
+				} else {
+					req.Header.Set("Authorization", "Bearer "+key)
+				}
 			}
 		}
 

@@ -352,7 +352,11 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		// Store API key in vault if provided.
-		if req.APIKey != "" && d.Vault != nil && !d.Vault.IsLocked() {
+		if req.APIKey != "" {
+			if d.Vault == nil || d.Vault.IsLocked() {
+				jsonError(w, "vault is locked: unlock the vault before adding an API key", http.StatusBadRequest)
+				return
+			}
 			if err := d.Vault.Set("provider:"+req.ID+":api_key", req.APIKey); err != nil {
 				jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -874,7 +878,11 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 		}
 		// Handle API key update.
 		if v, ok := patch["api_key"]; ok {
-			if s, ok := v.(string); ok && s != "" && d.Vault != nil && !d.Vault.IsLocked() {
+			if s, ok := v.(string); ok && s != "" {
+				if d.Vault == nil || d.Vault.IsLocked() {
+					jsonError(w, "vault is locked: unlock the vault before updating an API key", http.StatusBadRequest)
+					return
+				}
 				if err := d.Vault.Set("provider:"+id+":api_key", s); err != nil {
 					jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
 					return
