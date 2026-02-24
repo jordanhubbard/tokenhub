@@ -40,6 +40,30 @@ linters:
         linters: [gosec]
         text: "G304"
 
+      # credProvider is a local (unexported) struct used only to deserialize a
+      # credentials config file; it does not expose the key value externally.
+      - path: internal/app/server\.go
+        linters: [gosec]
+        text: "G117"
+
+      # slog's structured key=value format prevents log-injection newline attacks;
+      # IP and path are logged only for audit visibility, not user-facing output.
+      - path: internal/apikey/middleware\.go
+        linters: [gosec]
+        text: "G706"
+
+      # TOKENHUB_URL is an operator-set env var (defaulting to localhost); there
+      # is no external attacker input involved in constructing the request URL.
+      - path: cmd/tokenhubctl/main\.go
+        linters: [gosec]
+        text: "G704"
+
+      # Output is written to os.Stderr in a CLI tool — XSS does not apply to
+      # terminal output; there is no HTTP response context here.
+      - path: cmd/tokenhubctl/main\.go
+        linters: [gosec]
+        text: "G705"
+
       # Test files are not production attack surface.
       - path: _test\.go
         linters: [gosec]
