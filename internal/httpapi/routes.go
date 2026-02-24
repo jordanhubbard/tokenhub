@@ -211,6 +211,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Post("/apikeys", APIKeysCreateHandler(d))
 		r.Get("/apikeys", APIKeysListHandler(d))
 		r.Post("/apikeys/{id}/rotate", APIKeysRotateHandler(d))
+		r.Post("/apikeys/{id}/paid", APIKeysPaidHandler(d))
 		r.Patch("/apikeys/{id}", APIKeysPatchHandler(d))
 		r.Delete("/apikeys/{id}", APIKeysDeleteHandler(d))
 

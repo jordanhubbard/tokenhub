@@ -130,6 +130,12 @@
     .pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
     .pagination .page-info { font-size: 12px; color: #8a8d9a; margin-left: auto; }
     .toggle-switch { cursor: pointer; font-size: 18px; }
+    .slide-toggle { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
+    .slide-toggle input { opacity: 0; width: 0; height: 0; }
+    .slide-toggle .slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #3a1b1b; border-radius: 20px; transition: 0.25s; }
+    .slide-toggle .slider::before { content: ''; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: #e0e0e0; border-radius: 50%; transition: 0.25s; }
+    .slide-toggle input:checked + .slider { background: #1b5e20; }
+    .slide-toggle input:checked + .slider::before { transform: translateX(16px); }
     .auth-error { color: #f44336; font-size: 13px; margin-top: 8px; min-height: 18px; }
     @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .panel.full-width { grid-column: 1; } }
     .model-rank-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #1f2233; font-size: 12px; }
@@ -141,6 +147,11 @@
     .rank-weight { min-width: 40px; color: #ffc107; font-size: 11px; }
     .pricing-warn { color: #e8a040; cursor: pointer; }
     .pricing-local { color: #8a8d9a; }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(206,147,216,0.6); }
+      70% { box-shadow: 0 0 0 12px rgba(206,147,216,0); }
+      100% { box-shadow: 0 0 0 0 rgba(206,147,216,0); }
+    }
   </style>
 </head>
 <body>
@@ -273,7 +284,7 @@
         <button class="btn primary" onclick="openWizard()">Add Your First Provider</button>
       </div>
       <div class="table-wrap" id="providers-table-wrap">
-        <table class="admin-table"><thead><tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <table class="admin-table"><thead><tr><th>ID</th><th>Type</th><th>Base URL</th><th>Cred Store</th><th>Cost</th><th>Enabled</th><th>Actions</th></tr></thead>
         <tbody id="providers-body"></tbody></table>
       </div>
     </div>
@@ -326,18 +337,33 @@
 
     <!-- Topology Graph -->
     <div class="panel graph">
-      <h2>Request Flow <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0">(live)</span></h2>
-      <div class="legend">
+      <h2>Request Flow <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0">(live)</span>
+        <button class="btn sm" style="float:right;margin-top:-2px" onclick="cy.fit(undefined,20);cy.center()" title="Re-center the graph view">Recenter</button>
+      </h2>
+      <div class="legend" style="flex-wrap:wrap;gap:8px 16px">
         <div class="legend-item"><div class="legend-dot" style="background:#2196f3"></div> Gateway</div>
         <div class="legend-item"><div class="legend-dot" style="background:#ce93d8"></div> Provider</div>
         <div class="legend-item"><div class="legend-dot" style="background:#4caf50"></div> Model</div>
+        <span style="color:#444;margin:0 2px">|</span>
+        <div class="legend-item" style="font-size:10px;color:#666">Edge width = traffic volume</div>
+        <div class="legend-item" style="font-size:10px"><span style="color:#4caf50">&#9679;</span><span style="color:#666"> &lt;500ms</span></div>
+        <div class="legend-item" style="font-size:10px"><span style="color:#ffc107">&#9679;</span><span style="color:#666"> &lt;2s</span></div>
+        <div class="legend-item" style="font-size:10px"><span style="color:#f44336">&#9679;</span><span style="color:#666"> &gt;2s</span></div>
+        <div class="legend-item" style="font-size:10px;color:#666">Node size = throughput</div>
       </div>
       <div id="cy"></div>
     </div>
 
     <!-- Overview + Trends -->
     <div class="panel">
-      <h2>Overview</h2>
+      <h2>Overview
+        <span id="overview-window-tabs" class="tabs" style="display:inline-flex;float:right;margin-top:-4px;gap:4px">
+          <button class="active" onclick="switchOverviewWindow('1d',this)">1d</button>
+          <button onclick="switchOverviewWindow('5d',this)">5d</button>
+          <button onclick="switchOverviewWindow('30d',this)">30d</button>
+          <button onclick="switchOverviewWindow('90d',this)">90d</button>
+        </span>
+      </h2>
       <div class="stat-row">
         <div class="stat-box"><div class="value" id="total-requests">0</div><div class="label">Requests</div></div>
         <div class="stat-box"><div class="value" id="total-tokens">0</div><div class="label">Tokens</div></div>
@@ -346,10 +372,18 @@
         <div class="stat-box"><div class="value" id="error-rate">0%</div><div class="label">Errors</div></div>
       </div>
       <h2 style="margin-top:12px">Trends</h2>
-      <div class="tabs" id="trend-tabs">
-        <button class="active" onclick="switchTrend('cost',this)">Cost</button>
-        <button onclick="switchTrend('tokens',this)">Tokens</button>
-        <button onclick="switchTrend('latency',this)">Latency</button>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div class="tabs" id="trend-tabs" style="margin-bottom:0">
+          <button class="active" onclick="switchTrend('cost',this)">Cost</button>
+          <button onclick="switchTrend('tokens',this)">Tokens</button>
+          <button onclick="switchTrend('latency',this)">Latency</button>
+          <button onclick="switchTrend('errors',this)">Errors</button>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:4px">
+          <button class="btn sm" onclick="trendPageBack()" title="Older">&larr;</button>
+          <span id="trend-range-label" style="font-size:10px;color:#666;min-width:60px;text-align:center"></span>
+          <button class="btn sm" onclick="trendPageForward()" title="Newer">&rarr;</button>
+        </div>
       </div>
       <div id="trend-chart"></div>
     </div>
@@ -513,9 +547,11 @@ const cy = cytoscape({
       'label': 'data(edgeLabel)', 'font-size': '9px', 'color': '#666',
       'text-rotation': 'autorotate', 'text-outline-width': 1, 'text-outline-color': '#0f1117'
     }},
-    { selector: '.flash', style: { 'line-color': '#64b5f6', 'target-arrow-color': '#64b5f6', 'opacity': 1, 'width': 4 }}
+    { selector: '.flash', style: { 'line-color': '#64b5f6', 'target-arrow-color': '#64b5f6', 'opacity': 1, 'width': 4 }},
+    { selector: '.pulse', style: { 'border-width': 6, 'border-opacity': 0.6 }}
   ],
   layout: { name: 'cose', animate: false },
+  userZoomingEnabled: true, userPanningEnabled: true, boxSelectionEnabled: false,
   elements: [{ data: { id: 'tokenhub', label: 'TokenHub', color: '#2196f3', size: 55, borderWidth: 0, borderColor: '#2196f3' } }]
 });
 
@@ -567,13 +603,29 @@ function animateEdge(providerId, modelId, latencyMs, costUSD) {
   edge.addClass('flash');
   setTimeout(() => edge.removeClass('flash'), 400);
 
-  // Size provider node by throughput.
+  // Size provider node by throughput and pulse on activity.
   providerLatency[providerId] = (providerLatency[providerId] || 0) + 1;
   const provNode = cy.getElementById(providerId);
   if (provNode.length) {
-    provNode.data('size', Math.min(40 + Math.log2(providerLatency[providerId] + 1) * 5, 70));
-    provNode.data('borderWidth', 2);
+    const baseSize = Math.min(40 + Math.log2(providerLatency[providerId] + 1) * 5, 70);
     provNode.data('borderColor', latencyColor(avgLat));
+    // Bubble pulse: briefly expand node then shrink back.
+    provNode.data('size', baseSize + 8);
+    provNode.data('borderWidth', 6);
+    provNode.addClass('pulse');
+    setTimeout(() => {
+      provNode.data('size', baseSize);
+      provNode.data('borderWidth', 2);
+      provNode.removeClass('pulse');
+    }, 500);
+  }
+
+  // Also pulse the model node briefly.
+  const mdlNode = cy.getElementById(modelId);
+  if (mdlNode.length) {
+    const mdlBase = parseFloat(mdlNode.data('size')) || 30;
+    mdlNode.data('size', mdlBase + 5);
+    setTimeout(() => mdlNode.data('size', 30), 400);
   }
 }
 
@@ -626,8 +678,13 @@ function updateChart() {
     path.datum(trendData[key]).attr('d', line);
   });
 
-  const fmt = currentTrendMetric === 'cost' ? d => `$${d.toFixed(3)}` : d => `${d.toFixed(0)}ms`;
-  chartG.select('.x-axis').call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat('%H:%M')).tickSize(3));
+  const fmt = currentTrendMetric === 'cost' ? d => `$${d.toFixed(3)}`
+    : currentTrendMetric === 'tokens' ? d => d >= 1000 ? `${(d/1000).toFixed(0)}k` : `${d.toFixed(0)}`
+    : currentTrendMetric === 'errors' ? d => `${d.toFixed(0)}`
+    : d => `${d.toFixed(0)}ms`;
+  const hours = overviewWindows[currentOverviewWindow] || 24;
+  const xFmt = hours <= 24 ? d3.timeFormat('%H:%M') : hours <= 120 ? d3.timeFormat('%a %H:%M') : d3.timeFormat('%b %d');
+  chartG.select('.x-axis').call(d3.axisBottom(xScale).ticks(5).tickFormat(xFmt).tickSize(3));
   chartG.select('.y-axis').call(d3.axisLeft(yScale).ticks(4).tickFormat(fmt).tickSize(3));
   chartG.selectAll('.tick text').attr('fill', '#666').attr('font-size', '10px');
   chartG.selectAll('.tick line').attr('stroke', '#333');
@@ -646,13 +703,26 @@ function updateChart() {
 }
 
 function fetchTrend(metric) {
-  const start = new Date(Date.now() - 3600000).toISOString();
-  fetch(`/admin/v1/tsdb/query?metric=${metric}&start=${start}&step=60000`)
+  const hours = overviewWindows[currentOverviewWindow] || 24;
+  // Compute step to keep ~200 buckets for any window size.
+  const stepMs = Math.max(60000, Math.round(hours * 3600000 / 200));
+  const end = new Date(Date.now() - trendPageOffset * hours * 3600000);
+  const start = new Date(end.getTime() - hours * 3600000);
+  // Update range label.
+  const label = document.getElementById('trend-range-label');
+  if (label) {
+    const fmtDate = d => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const fmtTime = d => d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    label.textContent = hours <= 24
+      ? `${fmtTime(start)} - ${fmtTime(end)}`
+      : `${fmtDate(start)} - ${fmtDate(end)}`;
+  }
+  fetch(`/admin/v1/tsdb/query?metric=${metric}&start=${start.toISOString()}&end=${end.toISOString()}&step=${stepMs}`)
     .then(r => r.json())
     .then(data => {
       // Clear old trend data.
       for (const k of Object.keys(trendData)) delete trendData[k];
-      if (!data.series || data.series.length === 0) return;
+      if (!data.series || data.series.length === 0) { updateChart(); return; }
       data.series.forEach(s => {
         const key = s.model_id || s.provider_id || metric;
         trendData[key] = (s.points || []).map(p => ({ time: new Date(p.t), value: p.v }));
@@ -661,11 +731,64 @@ function fetchTrend(metric) {
     }).catch(() => {});
 }
 
+// Overview window config: maps button label to hours of TSDB data.
+const overviewWindows = { '1d': 24, '5d': 120, '30d': 720, '90d': 2160 };
+let currentOverviewWindow = '1d';
+let trendPageOffset = 0; // 0 = most recent, positive = pages back in time
+
+function switchOverviewWindow(win, btn) {
+  currentOverviewWindow = win;
+  trendPageOffset = 0;
+  document.querySelectorAll('#overview-window-tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  fetchOverviewFromTSDB();
+  fetchTrend(currentTrendMetric);
+}
+
+function fetchOverviewFromTSDB() {
+  const hours = overviewWindows[currentOverviewWindow] || 24;
+  const end = new Date(Date.now() - trendPageOffset * hours * 3600000);
+  const start = new Date(end.getTime() - hours * 3600000);
+  // Query cost, tokens, latency, and errors from TSDB and aggregate locally.
+  Promise.all([
+    fetch(`/admin/v1/tsdb/query?metric=cost&start=${start.toISOString()}&end=${end.toISOString()}`).then(r=>r.json()).catch(()=>({series:[]})),
+    fetch(`/admin/v1/tsdb/query?metric=tokens&start=${start.toISOString()}&end=${end.toISOString()}`).then(r=>r.json()).catch(()=>({series:[]})),
+    fetch(`/admin/v1/tsdb/query?metric=latency&start=${start.toISOString()}&end=${end.toISOString()}`).then(r=>r.json()).catch(()=>({series:[]})),
+    fetch(`/admin/v1/tsdb/query?metric=errors&start=${start.toISOString()}&end=${end.toISOString()}`).then(r=>r.json()).catch(()=>({series:[]}))
+  ]).then(([costData, tokenData, latencyData, errorData]) => {
+    let totalCost = 0, totalTok = 0, totalLat = 0, totalReq = 0, totalErr = 0;
+    (costData.series || []).forEach(s => (s.points || []).forEach(p => { totalCost += p.v; totalReq++; }));
+    (tokenData.series || []).forEach(s => (s.points || []).forEach(p => { totalTok += p.v; }));
+    (latencyData.series || []).forEach(s => (s.points || []).forEach(p => { totalLat += p.v; }));
+    (errorData.series || []).forEach(s => (s.points || []).forEach(p => { totalErr += p.v; }));
+    const latReq = (latencyData.series || []).reduce((n, s) => n + (s.points || []).length, 0);
+    const allReq = totalReq + totalErr;
+    document.getElementById('total-requests').textContent = allReq.toLocaleString();
+    document.getElementById('total-tokens').textContent = totalTok.toLocaleString();
+    document.getElementById('total-cost').textContent = `$${totalCost.toFixed(4)}`;
+    document.getElementById('avg-latency').textContent = latReq > 0 ? `${Math.round(totalLat / latReq)}ms` : '0ms';
+    document.getElementById('error-rate').textContent = allReq > 0 ? `${(totalErr / allReq * 100).toFixed(1)}%` : '0%';
+  });
+}
+
 function switchTrend(metric, btn) {
   currentTrendMetric = metric;
+  trendPageOffset = 0;
   document.querySelectorAll('#trend-tabs button').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   fetchTrend(metric);
+}
+
+function trendPageBack() {
+  trendPageOffset++;
+  fetchTrend(currentTrendMetric);
+  fetchOverviewFromTSDB();
+}
+
+function trendPageForward() {
+  if (trendPageOffset > 0) trendPageOffset--;
+  fetchTrend(currentTrendMetric);
+  fetchOverviewFromTSDB();
 }
 
 // ============================
@@ -688,15 +811,23 @@ function connectSSE() {
     perModelCost[d.model_id] = (perModelCost[d.model_id] || 0) + (d.cost_usd || 0);
     animateEdge(d.provider_id, d.model_id, d.latency_ms, d.cost_usd);
     appendFeedEntry(d, false);
-    refreshStats();
 
-    // Push into per-model trend data for live chart.
-    const key = d.model_id || 'unknown';
-    if (!trendData[key]) trendData[key] = [];
-    const val = currentTrendMetric === 'cost' ? (d.cost_usd || 0) : (d.latency_ms || 0);
-    trendData[key].push({ time: new Date(d.timestamp || Date.now()), value: val });
-    if (trendData[key].length > 200) trendData[key].shift();
-    updateChart();
+    // Only live-update the overview counters when viewing current 1d window.
+    if (currentOverviewWindow === '1d' && trendPageOffset === 0) {
+      refreshStats();
+    }
+
+    // Push into per-model trend data for live chart (only when at live edge).
+    if (trendPageOffset === 0) {
+      const key = d.model_id || 'unknown';
+      if (!trendData[key]) trendData[key] = [];
+      const val = currentTrendMetric === 'cost' ? (d.cost_usd || 0)
+        : currentTrendMetric === 'tokens' ? (d.total_tokens || 0)
+        : (d.latency_ms || 0);
+      trendData[key].push({ time: new Date(d.timestamp || Date.now()), value: val });
+      if (trendData[key].length > 200) trendData[key].shift();
+      updateChart();
+    }
   });
   es.addEventListener('route_error', (e) => {
     const d = JSON.parse(e.data);
@@ -734,18 +865,8 @@ function refreshStats() {
 }
 
 function seedStatsFromServer() {
-  fetch('/admin/v1/stats').then(r => r.json()).then(data => {
-    const globals = data.global || [];
-    const g24h = globals.find(g => g.window === '24h') || globals.find(g => g.window === '1h') || globals[0];
-    if (g24h) {
-      totalRequests = g24h.request_count || 0;
-      totalErrors = g24h.error_count || 0;
-      totalLatency = (g24h.avg_latency_ms || 0) * (g24h.request_count || 1);
-      cumulativeCost = g24h.total_cost_usd || 0;
-      totalTokens = g24h.total_tokens || 0;
-      refreshStats();
-    }
-  }).catch(() => {});
+  // Seed overview from TSDB for the selected window.
+  fetchOverviewFromTSDB();
 }
 
 // ============================
@@ -905,11 +1026,18 @@ function runSimulation() {
 // Provider + Model Management
 // ============================
 let adapterInfoMap = {};
+let providerCosts = {};
 function fetchProviders() {
   Promise.all([
     fetch('/admin/v1/providers').then(r => r.json()).catch(() => ({ items: [] })),
-    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ adapters: [], models: [], adapter_info: [] }))
-  ]).then(([storeData, engineData]) => {
+    fetch('/admin/v1/engine/models').then(r => r.json()).catch(() => ({ adapters: [], models: [], adapter_info: [] })),
+    fetch('/admin/v1/stats').then(r => r.json()).catch(() => ({ by_provider: {} }))
+  ]).then(([storeData, engineData, statsData]) => {
+    // Build per-provider cost lookup from stats.
+    providerCosts = {};
+    const byProv = statsData.by_provider || {};
+    const provWindows = byProv['24h'] || byProv['1h'] || byProv['5m'] || byProv['1m'] || [];
+    provWindows.forEach(s => { if (s.provider_id) providerCosts[s.provider_id] = s.total_cost_usd || 0; });
     const storeProviders = Array.isArray(storeData.items) ? storeData.items : [];
     const storeMap = {};
     storeProviders.forEach(p => { storeMap[p.id] = p; });
@@ -957,9 +1085,12 @@ function fetchProviders() {
       tbody.innerHTML = allProviders.map(p => {
         const src = p._runtime ? '<span style="color:#64b5f6;font-size:11px">runtime</span>' : p.cred_store;
         const urlDisplay = p.base_url ? p.base_url : '<span style="color:#666">-</span>';
+        const cost = providerCosts[p.id];
+        const costCell = cost !== undefined ? `<span style="color:#4caf50">$${cost.toFixed(4)}</span>` : '<span style="color:#666">-</span>';
         return `<tr>
           <td>${p.id}</td><td>${p.type}</td><td style="font-family:monospace;font-size:12px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.base_url}">${urlDisplay}</td><td>${src}</td>
-          <td>${p.enabled ? '<span style="color:#4caf50">yes</span>' : '<span style="color:#f44336">no</span>'}</td>
+          <td>${costCell}</td>
+          <td><label class="slide-toggle"><input type="checkbox" ${p.enabled?'checked':''} onchange="toggleProvider('${p.id}',this.checked)"><span class="slider"></span></label></td>
           <td><button class="btn sm" onclick="editProvider('${p.id}','${p.type}','${encodeURIComponent(p.base_url)}',${p.enabled})">Edit</button> <button class="btn sm" onclick="discoverModels('${p.id}')">Discover</button> <button class="btn danger sm" onclick="deleteProvider('${p.id}')">Delete</button></td>
         </tr>`;
       }).join('');
@@ -1007,6 +1138,13 @@ function saveProvider() {
     .then(r => { if (!r.ok) throw 0; return r.json(); })
     .then(() => { showToast('Provider updated', 'success'); hideModal('edit-provider-modal'); fetchProviders(); })
     .catch(() => showToast('Failed to update provider', 'error'));
+}
+
+function toggleProvider(id, enabled) {
+  fetch('/admin/v1/providers/' + encodeURIComponent(id), { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) })
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(() => fetchProviders())
+    .catch(() => showToast('Failed', 'error'));
 }
 
 function deleteProvider(id) {
@@ -1060,7 +1198,7 @@ function fetchModels() {
       tbody.innerHTML = allModels.map(m => `<tr>
         <td style="font-family:monospace;font-size:12px">${m.id}</td><td>${m.provider_id}</td><td>${m.weight}</td><td>${m.max_context_tokens||'-'}</td>
         <td colspan="2">${pricingCell(m, providerTypes)}</td>
-        <td><span class="toggle-switch" onclick="toggleModel('${m.id}',${!m.enabled})">${m.enabled?'&#9989;':'&#10060;'}</span></td>
+        <td><label class="slide-toggle"><input type="checkbox" ${m.enabled?'checked':''} onchange="toggleModel('${m.id}',this.checked)"><span class="slider"></span></label></td>
         <td><button class="btn sm" onclick="editModel('${m.id}','${m.provider_id}',${m.weight},${m.max_context_tokens||0},${m.input_per_1k||0},${m.output_per_1k||0},${m.enabled})">Edit</button> <button class="btn danger sm" onclick="deleteModel('${m.id}')">Delete</button></td>
       </tr>`).join('');
     }
@@ -1314,14 +1452,49 @@ function fetchRequestLogs() {
 function requestLogPrev() { requestLogOffset = Math.max(0, requestLogOffset - 50); fetchRequestLogs(); }
 function requestLogNext() { requestLogOffset += 50; fetchRequestLogs(); }
 
+function budgetCell(k) {
+  if (k.monthly_budget_usd <= 0) {
+    return `<span style="cursor:pointer;color:#8a8d9a" onclick="editBudget('${k.id}',0)" title="Click to set a budget">unlimited</span>`;
+  }
+  const spent = k.current_spend_usd || 0;
+  const exceeded = spent >= k.monthly_budget_usd;
+  const spentStr = '$' + spent.toFixed(2);
+  const budgetStr = '$' + k.monthly_budget_usd.toFixed(2);
+  const color = exceeded ? '#f44336' : '#4caf50';
+  let html = `<span style="cursor:pointer" onclick="editBudget('${k.id}',${k.monthly_budget_usd})" title="Click to edit budget">`;
+  html += `<span style="color:${color}">${spentStr}</span><span style="color:#8a8d9a"> / ${budgetStr}</span>`;
+  if (exceeded) html += ` <span style="color:#f44336;font-size:11px">EXCEEDED</span>`;
+  html += `</span>`;
+  html += ` <button class="btn sm" style="margin-left:4px;font-size:10px;padding:1px 6px" onclick="markPaid('${k.id}')" title="Reset spend to $0 (payment received)">Paid</button>`;
+  return html;
+}
+
+function editBudget(id, current) {
+  const val = prompt('Monthly budget USD (0 = unlimited):', current);
+  if (val === null) return;
+  const f = parseFloat(val);
+  if (isNaN(f) || f < 0) { showToast('Invalid budget amount', 'error'); return; }
+  fetch('/admin/v1/apikeys/' + encodeURIComponent(id), {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ monthly_budget_usd: f })
+  }).then(r => { if (!r.ok) throw 0; showToast('Budget updated', 'success'); fetchAPIKeys(); })
+    .catch(() => showToast('Failed to update budget', 'error'));
+}
+
+function markPaid(id) {
+  if (!confirm('Reset spend counter for this key? (Presumes payment received)')) return;
+  fetch('/admin/v1/apikeys/' + encodeURIComponent(id) + '/paid', { method: 'POST' })
+    .then(r => { if (!r.ok) throw 0; showToast('Budget spend reset', 'success'); fetchAPIKeys(); })
+    .catch(() => showToast('Failed', 'error'));
+}
+
 function fetchAPIKeys() {
   fetch('/admin/v1/apikeys').then(r=>r.json()).then(data => {
     const keys = data.keys || [];
     document.getElementById('apikeys-body').innerHTML = keys.length === 0
       ? '<tr><td colspan="8" style="color:#8a8d9a;text-align:center">No keys</td></tr>'
       : keys.map(k => {
-        const budget = k.monthly_budget_usd > 0 ? '$'+k.monthly_budget_usd.toFixed(2) : 'unlimited';
-        return `<tr><td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key_prefix}...</td><td>${k.scopes||'[]'}</td><td>${k.created_at?new Date(k.created_at).toLocaleDateString():'-'}</td><td>${k.last_used_at?new Date(k.last_used_at).toLocaleString():'never'}</td><td>${budget}</td><td style="color:${k.enabled?'#4caf50':'#f44336'}">${k.enabled?'yes':'no'}</td><td><button class="btn sm" onclick="rotateKey('${k.id}')">Rotate</button> <button class="btn sm" onclick="toggleKey('${k.id}',${!k.enabled})">${k.enabled?'Disable':'Enable'}</button> <button class="btn danger sm" onclick="revokeKey('${k.id}')">Revoke</button></td></tr>`;
+        return `<tr><td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key_prefix}...</td><td>${k.scopes||'[]'}</td><td>${k.created_at?new Date(k.created_at).toLocaleDateString():'-'}</td><td>${k.last_used_at?new Date(k.last_used_at).toLocaleString():'never'}</td><td>${budgetCell(k)}</td><td style="color:${k.enabled?'#4caf50':'#f44336'}">${k.enabled?'yes':'no'}</td><td><button class="btn sm" onclick="rotateKey('${k.id}')">Rotate</button> <button class="btn sm" onclick="toggleKey('${k.id}',${!k.enabled})">${k.enabled?'Disable':'Enable'}</button> <button class="btn danger sm" onclick="revokeKey('${k.id}')">Revoke</button></td></tr>`;
       }).join('');
   }).catch(() => {});
 }

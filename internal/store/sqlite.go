@@ -238,6 +238,9 @@ var schemaMigrations = []migration{
 	sqlMigration(7, "add_api_keys_rate_limit_rps",
 		`ALTER TABLE api_keys ADD COLUMN rate_limit_rps INTEGER NOT NULL DEFAULT 0`,
 	),
+	sqlMigration(8, "add_api_keys_budget_reset_at",
+		`ALTER TABLE api_keys ADD COLUMN budget_reset_at TEXT`,
+	),
 }
 
 // Migrate applies all pending schema migrations in version order.
@@ -489,14 +492,28 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 	return logs, rows.Err()
 }
 
-// GetMonthlySpend returns the total estimated cost for an API key in the current month.
+// GetMonthlySpend returns the total estimated cost for an API key since the later
+// of the current month start or the key's budget_reset_at timestamp.
 func (s *SQLiteStore) GetMonthlySpend(ctx context.Context, apiKeyID string) (float64, error) {
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	cutoff := monthStart
+
+	// If a budget reset timestamp exists and is after the month start, use it.
+	var budgetReset sql.NullString
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT budget_reset_at FROM api_keys WHERE id = ?`, apiKeyID).Scan(&budgetReset)
+	if budgetReset.Valid {
+		resetTime := parseTime(budgetReset.String)
+		if resetTime.After(cutoff) {
+			cutoff = resetTime
+		}
+	}
+
 	var total float64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM request_logs WHERE api_key_id = ? AND timestamp >= ?`,
-		apiKeyID, monthStart.Format(time.RFC3339)).Scan(&total)
+		apiKeyID, cutoff.Format(time.RFC3339)).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("get monthly spend: %w", err)
 	}
@@ -559,7 +576,7 @@ func (s *SQLiteStore) LogReward(ctx context.Context, entry RewardEntry) error {
 // API Keys
 
 func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key APIKeyRecord) error {
-	var lastUsed, expires *string
+	var lastUsed, expires, budgetReset *string
 	if key.LastUsedAt != nil {
 		t := key.LastUsedAt.UTC().Format(time.RFC3339)
 		lastUsed = &t
@@ -568,34 +585,36 @@ func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key APIKeyRecord) error 
 		t := key.ExpiresAt.UTC().Format(time.RFC3339)
 		expires = &t
 	}
+	if key.BudgetResetAt != nil {
+		t := key.BudgetResetAt.UTC().Format(time.RFC3339)
+		budgetReset = &t
+	}
 	enabledInt := 0
 	if key.Enabled {
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO api_keys (id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps, budget_reset_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.ID, key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
 		key.CreatedAt.UTC().Format(time.RFC3339), lastUsed, expires,
-		key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.RateLimitRPS)
+		key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.RateLimitRPS, budgetReset)
 	return err
 }
 
-func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error) {
+// apiKeyCols is the column list for all api_keys queries.
+const apiKeyCols = `id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps, budget_reset_at`
+
+// scanAPIKey scans a row into an APIKeyRecord.
+func scanAPIKey(scanner interface{ Scan(dest ...any) error }) (APIKeyRecord, error) {
 	var k APIKeyRecord
 	var createdAt string
-	var lastUsed, expires sql.NullString
+	var lastUsed, expires, budgetReset sql.NullString
 	var enabledInt int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
-		 FROM api_keys WHERE id = ?`, id).
-		Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+	err := scanner.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
+		&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS, &budgetReset)
 	if err != nil {
-		return nil, err
+		return k, err
 	}
 	k.CreatedAt = parseTime(createdAt)
 	if lastUsed.Valid {
@@ -606,14 +625,30 @@ func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, 
 		t := parseTime(expires.String)
 		k.ExpiresAt = &t
 	}
+	if budgetReset.Valid {
+		t := parseTime(budgetReset.String)
+		k.BudgetResetAt = &t
+	}
 	k.Enabled = enabledInt != 0
+	return k, nil
+}
+
+func (s *SQLiteStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+apiKeyCols+` FROM api_keys WHERE id = ?`, id)
+	k, err := scanAPIKey(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	return &k, nil
 }
 
 func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]APIKeyRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
-		 FROM api_keys WHERE key_prefix = ? AND enabled = 1`, prefix)
+		`SELECT `+apiKeyCols+` FROM api_keys WHERE key_prefix = ? AND enabled = 1`, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -621,24 +656,10 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 
 	var keys []APIKeyRecord
 	for rows.Next() {
-		var k APIKeyRecord
-		var createdAt string
-		var lastUsed, expires sql.NullString
-		var enabledInt int
-		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS); err != nil {
+		k, err := scanAPIKey(rows)
+		if err != nil {
 			return nil, err
 		}
-		k.CreatedAt = parseTime(createdAt)
-		if lastUsed.Valid {
-			t := parseTime(lastUsed.String)
-			k.LastUsedAt = &t
-		}
-		if expires.Valid {
-			t := parseTime(expires.String)
-			k.ExpiresAt = &t
-		}
-		k.Enabled = enabledInt != 0
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
@@ -646,8 +667,7 @@ func (s *SQLiteStore) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]
 
 func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
-		 FROM api_keys ORDER BY created_at DESC`)
+		`SELECT `+apiKeyCols+` FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -655,24 +675,10 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 
 	var keys []APIKeyRecord
 	for rows.Next() {
-		var k APIKeyRecord
-		var createdAt string
-		var lastUsed, expires sql.NullString
-		var enabledInt int
-		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS); err != nil {
+		k, err := scanAPIKey(rows)
+		if err != nil {
 			return nil, err
 		}
-		k.CreatedAt = parseTime(createdAt)
-		if lastUsed.Valid {
-			t := parseTime(lastUsed.String)
-			k.LastUsedAt = &t
-		}
-		if expires.Valid {
-			t := parseTime(expires.String)
-			k.ExpiresAt = &t
-		}
-		k.Enabled = enabledInt != 0
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
@@ -684,7 +690,7 @@ func (s *SQLiteStore) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 func (s *SQLiteStore) ListExpiredRotationKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps
+		`SELECT `+apiKeyCols+`
 		 FROM api_keys
 		 WHERE rotation_days > 0
 		   AND enabled = 1
@@ -697,31 +703,17 @@ func (s *SQLiteStore) ListExpiredRotationKeys(ctx context.Context) ([]APIKeyReco
 
 	var keys []APIKeyRecord
 	for rows.Next() {
-		var k APIKeyRecord
-		var createdAt string
-		var lastUsed, expires sql.NullString
-		var enabledInt int
-		if err := rows.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Scopes,
-			&createdAt, &lastUsed, &expires, &k.RotationDays, &enabledInt, &k.MonthlyBudgetUSD, &k.RateLimitRPS); err != nil {
+		k, err := scanAPIKey(rows)
+		if err != nil {
 			return nil, err
 		}
-		k.CreatedAt = parseTime(createdAt)
-		if lastUsed.Valid {
-			t := parseTime(lastUsed.String)
-			k.LastUsedAt = &t
-		}
-		if expires.Valid {
-			t := parseTime(expires.String)
-			k.ExpiresAt = &t
-		}
-		k.Enabled = enabledInt != 0
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
 }
 
 func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key APIKeyRecord) error {
-	var lastUsed, expires *string
+	var lastUsed, expires, budgetReset *string
 	if key.LastUsedAt != nil {
 		t := key.LastUsedAt.UTC().Format(time.RFC3339)
 		lastUsed = &t
@@ -730,15 +722,19 @@ func (s *SQLiteStore) UpdateAPIKey(ctx context.Context, key APIKeyRecord) error 
 		t := key.ExpiresAt.UTC().Format(time.RFC3339)
 		expires = &t
 	}
+	if key.BudgetResetAt != nil {
+		t := key.BudgetResetAt.UTC().Format(time.RFC3339)
+		budgetReset = &t
+	}
 	enabledInt := 0
 	if key.Enabled {
 		enabledInt = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?, monthly_budget_usd=?, rate_limit_rps=?
+		`UPDATE api_keys SET key_hash=?, key_prefix=?, name=?, scopes=?, last_used_at=?, expires_at=?, rotation_days=?, enabled=?, monthly_budget_usd=?, rate_limit_rps=?, budget_reset_at=?
 		 WHERE id=?`,
 		key.KeyHash, key.KeyPrefix, key.Name, key.Scopes,
-		lastUsed, expires, key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.RateLimitRPS, key.ID)
+		lastUsed, expires, key.RotationDays, enabledInt, key.MonthlyBudgetUSD, key.RateLimitRPS, budgetReset, key.ID)
 	return err
 }
 

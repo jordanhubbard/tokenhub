@@ -242,13 +242,17 @@ func recordObservability(d Dependencies, p observeParams) {
 		})
 	}
 
-	// --- TSDB (only on success) ---
-	if d.TSDB != nil && p.Success {
+	// --- TSDB ---
+	if d.TSDB != nil {
 		now := time.Now().UTC()
 		d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "latency", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(p.LatencyMs)})
-		d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: p.CostUSD})
-		if total := p.InputTokens + p.OutputTokens; total > 0 {
-			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "tokens", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(total)})
+		if p.Success {
+			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: p.CostUSD})
+			if total := p.InputTokens + p.OutputTokens; total > 0 {
+				d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "tokens", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(total)})
+			}
+		} else {
+			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "errors", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: 1})
 		}
 	}
 

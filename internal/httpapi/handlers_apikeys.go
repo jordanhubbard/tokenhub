@@ -109,12 +109,29 @@ func APIKeysListHandler(d Dependencies) http.HandlerFunc {
 		if keys == nil {
 			keys = []store.APIKeyRecord{}
 		}
+
+		// Compute current spend for each key with a budget.
+		type keyWithSpend struct {
+			store.APIKeyRecord
+			CurrentSpendUSD *float64 `json:"current_spend_usd,omitempty"`
+		}
+		enriched := make([]keyWithSpend, len(keys))
+		for i, k := range keys {
+			enriched[i] = keyWithSpend{APIKeyRecord: k}
+			if k.MonthlyBudgetUSD > 0 {
+				spent, err := d.Store.GetMonthlySpend(r.Context(), k.ID)
+				if err == nil {
+					enriched[i].CurrentSpendUSD = &spent
+				}
+			}
+		}
+
 		// KeyHash is already excluded via json:"-" tag.
-		total := len(keys)
+		total := len(enriched)
 		limit, offset := parsePagination(r)
-		keys = paginateSlice(keys, offset, limit)
+		enriched = paginateSlice(enriched, offset, limit)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"keys":   keys,
+			"keys":   enriched,
 			"total":  total,
 			"limit":  limit,
 			"offset": offset,
@@ -252,6 +269,51 @@ func APIKeysPatchHandler(d Dependencies) http.HandlerFunc {
 			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
 				Timestamp: time.Now().UTC(),
 				Action:    "apikey.update",
+				Resource:  id,
+				RequestID: middleware.GetReqID(r.Context()),
+			}))
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
+// APIKeysPaidHandler handles POST /admin/v1/apikeys/{id}/paid — resets budget spend.
+// This sets budget_reset_at to now, so spend is counted from this point forward.
+func APIKeysPaidHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.APIKeyMgr == nil {
+			jsonError(w, "api key management not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		id := chi.URLParam(r, "id")
+		if id == "" {
+			jsonError(w, "key id required", http.StatusBadRequest)
+			return
+		}
+
+		rec, err := d.Store.GetAPIKey(r.Context(), id)
+		if err != nil {
+			jsonError(w, "store error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if rec == nil {
+			jsonError(w, "api key not found", http.StatusNotFound)
+			return
+		}
+
+		now := time.Now().UTC()
+		rec.BudgetResetAt = &now
+		if err := d.Store.UpdateAPIKey(r.Context(), *rec); err != nil {
+			jsonError(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if d.Store != nil {
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: now,
+				Action:    "apikey.budget_paid",
 				Resource:  id,
 				RequestID: middleware.GetReqID(r.Context()),
 			}))
