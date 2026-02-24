@@ -7,10 +7,10 @@ id: bd-156
 type: task
 title: 'PR #8: Review Temporal PostgreSQL migration'
 description: 'PR #8 from lesserevil (https://github.com/jordanhubbard/tokenhub/pull/8) and issue #7: ''Fix Temporal to use PostgreSQL instead of SQLite''. The tokenhub stack already uses PostgreSQL for other state — Temporal should use it too for consistency and production readiness. Review the implementation carefully: check Temporal config changes, PostgreSQL schema setup, connection pooling. This is bd-150''s companion work on the tokenhub side. Merge if solid.'
-status: open
+status: blocked
 priority: 1
 projectid: tokenhub
-assignedto: ""
+assignedto: agent-1771743829-Engineering Manager (Default)
 blockedby: []
 blocks: []
 relatedto: []
@@ -26,9 +26,12 @@ context:
     loop_detected: "true"
     loop_detected_at: "2026-02-24T01:35:52Z"
     loop_detected_reason: Repeated provider errors (6 attempts) - provider unavailable or unhealthy
+    ralph_blocked_at: "2026-02-24T01:36:01Z"
+    ralph_blocked_reason: 'auto-blocked by Ralph: Repeated provider errors (6 attempts) - provider unavailable or unhealthy'
+    redispatch_requested: "false"
 duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-24T01:31:16.052016644Z
-updatedat: 2026-02-24T01:35:52.331164406Z
+updatedat: 2026-02-24T01:36:01.911258545Z
 closedat: null
