@@ -865,7 +865,7 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 
 	info, err := os.Stat(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || os.IsPermission(err) {
 			return
 		}
 		logger.Warn("credentials file stat error", slog.String("path", path), slog.String("error", err.Error()))
