@@ -83,7 +83,7 @@ package: setup ## Build production container image
 
 deploy: build ## Compile and inject binary into running image, then restart (no internet required)
 	@echo "Injecting bin/tokenhub into tokenhub:latest..."
-	@printf 'FROM tokenhub:latest\nCOPY bin/tokenhub /tokenhub\n' | docker build -t tokenhub:latest -f - .
+	@printf 'FROM tokenhub:latest\nUSER root\nCOPY bin/tokenhub /tokenhub\nCOPY scripts/docker-entrypoint.sh /entrypoint.sh\nRUN chmod +x /entrypoint.sh\nENTRYPOINT ["/entrypoint.sh"]\n' | docker build -t tokenhub:latest -f - .
 	@$(MAKE) -s restart
 
 # ──── Lifecycle ────

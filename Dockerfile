@@ -41,8 +41,10 @@ WORKDIR /
 COPY --from=build /out/tokenhub /tokenhub
 COPY --from=build /src/docs/book /docs/book
 COPY --from=build /src/config/config.example.yaml /config/config.yaml
-USER tokenhub
+COPY scripts/docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+# Run as root so the entrypoint can fix /data ownership, then drops to tokenhub.
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
   CMD ["curl", "-sf", "http://localhost:8080/healthz"]
-ENTRYPOINT ["/tokenhub"]
+ENTRYPOINT ["/entrypoint.sh"]
