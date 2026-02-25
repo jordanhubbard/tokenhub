@@ -167,7 +167,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				if n > 0 {
 					totalBytes += int64(n)
 					if totalBytes > maxStreamBytes {
-						slog.Warn("stream: max size exceeded, terminating",
+						slog.Warn("stream: max size exceeded, terminating", //nolint:gosec // logging internal request metadata, not user input
 							slog.String("request_id", reqID),
 							slog.String("model", decision.ModelID),
 							slog.Int64("bytes", totalBytes))
@@ -175,7 +175,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 						break
 					}
 					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-						slog.Warn("stream: write error",
+						slog.Warn("stream: write error", //nolint:gosec // same as above
 							slog.String("request_id", reqID),
 							slog.String("error", writeErr.Error()))
 						streamSuccess = false
@@ -187,7 +187,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				}
 				if readErr != nil {
 					if readErr != io.EOF {
-						slog.Warn("stream: read error",
+						slog.Warn("stream: read error", //nolint:gosec // same as above
 							slog.String("request_id", reqID),
 							slog.String("model", decision.ModelID),
 							slog.String("error", readErr.Error()))

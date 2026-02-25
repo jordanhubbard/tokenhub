@@ -603,7 +603,7 @@ func (s *Server) refreshPricing() {
 		s.logger.Warn("pricing refresh: build request failed", slog.String("error", err.Error()))
 		return
 	}
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := http.DefaultClient.Do(httpReq) //nolint:gosec // fetching public LiteLLM pricing JSON, not user-supplied URL
 	if err != nil {
 		s.logger.Warn("pricing refresh: fetch failed", slog.String("error", err.Error()))
 		return
@@ -929,7 +929,7 @@ func autoloadModelsForProvider(ctx context.Context, providerID, apiKey, baseURL 
 	}
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is operator-configured provider endpoint, not user input
 	if err != nil {
 		logger.Warn("autoload_models: failed to reach provider", slog.String("provider", providerID), slog.String("error", err.Error()))
 		return

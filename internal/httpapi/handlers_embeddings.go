@@ -80,7 +80,7 @@ func EmbeddingsHandler(d Dependencies) http.HandlerFunc {
 			client.Timeout = 30 * time.Second
 		}
 		start := time.Now()
-		resp, err := client.Do(proxyReq)
+		resp, err := client.Do(proxyReq) //nolint:gosec // URL is operator-configured provider endpoint, not user input
 		if err != nil {
 			slog.Warn("embeddings: provider request failed",
 				slog.String("provider", providerID),
