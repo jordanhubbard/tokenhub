@@ -7,7 +7,18 @@ VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo de
 LDFLAGS   := -s -w -X main.version=$(VERSION)
 
 BUILDER_IMAGE := tokenhub-builder
-DOCKER_RUN    := docker run --rm \
+GOLANG_IMAGE  := golang:1.24-bookworm
+
+# Used by build/test/vet — only needs Go, no extra tools.
+COMPILE_RUN := docker run --rm \
+	-v $(CURDIR):/src \
+	-v tokenhub-gomod:/go/pkg/mod \
+	-v tokenhub-gocache:/root/.cache/go-build \
+	-w /src \
+	$(GOLANG_IMAGE)
+
+# Used by lint/docs — needs the full builder image with golangci-lint and mdbook.
+DOCKER_RUN  := docker run --rm \
 	-v $(CURDIR):/src \
 	-v tokenhub-gomod:/go/pkg/mod \
 	-v tokenhub-gocache:/root/.cache/go-build \
@@ -46,11 +57,11 @@ builder: setup ## Build the development container image (cached)
 
 # ──── Build ────
 
-build: builder ## Compile tokenhub and tokenhubctl binaries
+build: ## Compile tokenhub and tokenhubctl binaries
 	@echo "Compiling tokenhub..."
-	@$(DOCKER_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
+	@$(COMPILE_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhub ./cmd/tokenhub
 	@echo "Compiling tokenhubctl..."
-	@$(DOCKER_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
+	@$(COMPILE_RUN) go build -buildvcs=false -trimpath -ldflags="$(LDFLAGS)" -o bin/tokenhubctl ./cmd/tokenhubctl
 	@echo "Build complete: bin/tokenhub bin/tokenhubctl"
 
 # ──── Install ────
@@ -115,8 +126,8 @@ logs: ## Follow tokenhub container logs
 
 # ──── Tests ────
 
-test: builder ## Run unit tests in container
-	$(DOCKER_RUN) go test -buildvcs=false ./...
+test: ## Run unit tests in container
+	$(COMPILE_RUN) go test -buildvcs=false ./...
 
 test-race: ## Run tests with race detector (native)
 	go test -race ./...
@@ -132,8 +143,8 @@ test-e2e: package ## Run end-to-end tests
 
 # ──── Code quality ────
 
-vet: builder ## Run go vet
-	$(DOCKER_RUN) go vet -buildvcs=false ./...
+vet: ## Run go vet
+	$(COMPILE_RUN) go vet -buildvcs=false ./...
 
 lint: builder ## Run golangci-lint
 	$(DOCKER_RUN) golangci-lint run --concurrency=1
@@ -159,50 +170,6 @@ release-major: ## Bump major version and release (X.0.0)
 	@./scripts/release.sh major
 
 release-patch: release ## Alias for release
-
-# ──── Help ────
-
-help:
-	@echo "Available targets:"
-	@echo ""
-	@echo "Build:"
-	@echo "  make build              - Compile tokenhub and tokenhubctl"
-	@echo "  make install            - Build and install to ~/.local/bin"
-	@echo "  make package            - Build production Docker image"
-	@echo ""
-	@echo "Lifecycle:"
-	@echo "  make run                - Build and start (includes logs)"
-	@echo "  make start              - Start service (no rebuild)"
-	@echo "  make stop               - Stop service"
-	@echo "  make restart            - Stop and start service"
-	@echo "  make logs               - Tail service logs"
-	@echo "  make admin-key          - Output TOKENHUB_ADMIN_TOKEN from running container"
-	@echo ""
-	@echo "Testing:"
-	@echo "  make test               - Run unit tests"
-	@echo "  make test-race          - Run tests with race detector"
-	@echo "  make test-coverage      - Run tests with coverage report"
-	@echo "  make test-integration   - Run integration tests"
-	@echo "  make test-e2e           - Run end-to-end Temporal workflow tests"
-	@echo ""
-	@echo "Quality:"
-	@echo "  make vet                - Run go vet"
-	@echo "  make lint               - Run golangci-lint"
-	@echo ""
-	@echo "Documentation:"
-	@echo "  make docs               - Build HTML documentation"
-	@echo "  make docs-serve         - Serve docs with live reload on port 3000"
-	@echo ""
-	@echo "Release:"
-	@echo "  make release            - Bump patch version"
-	@echo "  make release-minor      - Bump minor version"
-	@echo "  make release-major      - Bump major version"
-	@echo "  make release-patch      - Alias for release"
-	@echo ""
-	@echo "Maintenance:"
-	@echo "  make builder            - Build/refresh builder image"
-	@echo "  make setup              - Setup Docker CLI symlinks (macOS only)"
-	@echo "  make clean              - Remove bin/, docs/book/, coverage.out"
 
 # ──── Clean ────
 
