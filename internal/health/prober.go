@@ -145,7 +145,7 @@ func (p *Prober) probe(target Probeable) {
 	}
 
 	start := time.Now()
-	resp, err := p.client.Do(req) //nolint:gosec // URL is operator-configured provider endpoint, not user input
+	resp, err := p.client.Do(req)
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	if err != nil {

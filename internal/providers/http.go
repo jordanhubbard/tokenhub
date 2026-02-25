@@ -52,7 +52,7 @@ func DoRequest(ctx context.Context, client *http.Client, url string, payload any
 	// Propagate W3C trace context (traceparent/tracestate) to the provider.
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	resp, err := client.Do(req) //nolint:gosec // URL is operator-configured provider endpoint, not user input
+	resp, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "request failed")
@@ -122,7 +122,7 @@ func DoStreamRequest(ctx context.Context, client *http.Client, url string, paylo
 	// Propagate W3C trace context (traceparent/tracestate) to the provider.
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	resp, err := client.Do(req) //nolint:gosec // URL is operator-configured provider endpoint, not user input
+	resp, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "request failed")

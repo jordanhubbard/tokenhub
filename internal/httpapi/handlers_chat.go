@@ -27,7 +27,7 @@ const maxStreamBytes = 100 * 1024 * 1024
 // and reward logs that should not block the response but must be observable.
 func (d Dependencies) warnOnErr(op string, err error) {
 	if err != nil {
-		slog.Warn("store operation failed", slog.String("op", op), slog.String("error", err.Error())) //nolint:gosec // logging internal op name and error string, not user input
+		slog.Warn("store operation failed", slog.String("op", op), slog.String("error", err.Error()))
 		if d.Metrics != nil {
 			d.Metrics.StoreDroppedTotal.WithLabelValues(op).Inc()
 		}
@@ -167,7 +167,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				if n > 0 {
 					totalBytes += int64(n)
 					if totalBytes > maxStreamBytes {
-						slog.Warn("stream: max size exceeded, terminating", //nolint:gosec // logging internal request metadata, not user input
+						slog.Warn("stream: max size exceeded, terminating",
 							slog.String("request_id", reqID),
 							slog.String("model", decision.ModelID),
 							slog.Int64("bytes", totalBytes))
@@ -175,7 +175,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 						break
 					}
 					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-						slog.Warn("stream: write error", //nolint:gosec // same as above
+						slog.Warn("stream: write error",
 							slog.String("request_id", reqID),
 							slog.String("error", writeErr.Error()))
 						streamSuccess = false
@@ -187,7 +187,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				}
 				if readErr != nil {
 					if readErr != io.EOF {
-						slog.Warn("stream: read error", //nolint:gosec // same as above
+						slog.Warn("stream: read error",
 							slog.String("request_id", reqID),
 							slog.String("model", decision.ModelID),
 							slog.String("error", readErr.Error()))

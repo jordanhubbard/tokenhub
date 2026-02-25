@@ -26,7 +26,7 @@ func Middleware(cache *Cache) func(http.Handler) http.Handler {
 				}
 				w.Header().Set("Idempotency-Replay", "true")
 				w.WriteHeader(e.StatusCode)
-				_, _ = w.Write(e.Response) //nolint:gosec // replaying a previously captured HTTP response, not user-injected content
+				_, _ = w.Write(e.Response)
 				return
 			}
 

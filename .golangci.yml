@@ -19,32 +19,48 @@ linters:
         text: "G204"
 
       # Health-check URL is constructed from the server's own listen address,
-      # not from external input.
+      # not from external input. (G107 = legacy rule ID, G704 = new taint-aware ID)
       - path: cmd/tokenhub/main\.go
         linters: [gosec]
-        text: "G107"
+        text: "G107|G704"
 
       # File paths in admin_token.go are rooted at os.UserHomeDir() or a
       # server-configured data directory, not at user-supplied input.
+      # (G304 = legacy rule ID, G703 = new taint-aware ID)
       - path: internal/httpapi/admin_token\.go
         linters: [gosec]
-        text: "G304"
+        text: "G304|G703"
 
       # Same for tokenhubctl reading ~/.tokenhub/* files.
       - path: cmd/tokenhubctl/main\.go
         linters: [gosec]
-        text: "G304"
+        text: "G304|G703|G704|G705"
 
-      # Credentials file path comes from os.UserHomeDir() in server.go.
+      # Credentials file path comes from os.UserHomeDir() or TOKENHUB_CREDENTIALS_FILE
+      # env var, not user-supplied input. Provider HTTP calls use operator-configured
+      # URLs. credProvider struct deserializes a config file, not a hardcoded secret.
       - path: internal/app/server\.go
         linters: [gosec]
-        text: "G304"
+        text: "G304|G703|G704|G117|G101"
 
-      # credProvider is a local (unexported) struct used only to deserialize a
-      # credentials config file; it does not expose the key value externally.
-      - path: internal/app/server\.go
+      # All outbound HTTP calls in the provider layer use operator-configured
+      # base URLs registered via the admin API, not user-supplied input.
+      - path: internal/providers/http\.go
         linters: [gosec]
-        text: "G117"
+        text: "G704"
+
+      # Health prober calls operator-configured provider endpoints.
+      - path: internal/health/prober\.go
+        linters: [gosec]
+        text: "G704"
+
+      # Handler HTTP calls proxy to operator-configured provider endpoints.
+      # slog structured logging uses internal metadata (request_id, model, op),
+      # not user-supplied strings. ProviderUpsertRequest.APIKey is a DTO field.
+      # Idempotency middleware replays a previously captured HTTP response.
+      - path: internal/httpapi/
+        linters: [gosec]
+        text: "G704|G706|G117|G705"
 
       # slog's structured key=value format prevents log-injection newline attacks;
       # IP and path are logged only for audit visibility, not user-facing output.
@@ -52,17 +68,16 @@ linters:
         linters: [gosec]
         text: "G706"
 
-      # TOKENHUB_URL is an operator-set env var (defaulting to localhost); there
-      # is no external attacker input involved in constructing the request URL.
-      - path: cmd/tokenhubctl/main\.go
-        linters: [gosec]
-        text: "G704"
-
-      # Output is written to os.Stderr in a CLI tool — XSS does not apply to
-      # terminal output; there is no HTTP response context here.
-      - path: cmd/tokenhubctl/main\.go
+      # Idempotency middleware replays a cached HTTP response — not user-injected HTML.
+      - path: internal/idempotency/middleware\.go
         linters: [gosec]
         text: "G705"
+
+      # apiKeyCols is a SQL column list constant; the name contains "key" but
+      # there are no hardcoded credentials here.
+      - path: internal/store/sqlite\.go
+        linters: [gosec]
+        text: "G101"
 
       # Test files are not production attack surface.
       - path: _test\.go

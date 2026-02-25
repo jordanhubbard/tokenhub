@@ -603,7 +603,7 @@ func (s *Server) refreshPricing() {
 		s.logger.Warn("pricing refresh: build request failed", slog.String("error", err.Error()))
 		return
 	}
-	resp, err := http.DefaultClient.Do(httpReq) //nolint:gosec // fetching public LiteLLM pricing JSON, not user-supplied URL
+	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		s.logger.Warn("pricing refresh: fetch failed", slog.String("error", err.Error()))
 		return
@@ -748,7 +748,7 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 		return
 	}
 
-	info, err := os.Stat(path) //nolint:gosec // path comes from TOKENHUB_CREDENTIALS_FILE or os.UserHomeDir(), not user input
+	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) || os.IsPermission(err) {
 			return
@@ -767,7 +767,7 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 		return
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // same as above
+	data, err := os.ReadFile(path)
 	if err != nil {
 		logger.Warn("failed to read credentials file", slog.String("path", path), slog.String("error", err.Error()))
 		return
@@ -929,7 +929,7 @@ func autoloadModelsForProvider(ctx context.Context, providerID, apiKey, baseURL 
 	}
 
 	client := &http.Client{}
-	resp, err := client.Do(req) //nolint:gosec // URL is operator-configured provider endpoint, not user input
+	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("autoload_models: failed to reach provider", slog.String("provider", providerID), slog.String("error", err.Error()))
 		return
