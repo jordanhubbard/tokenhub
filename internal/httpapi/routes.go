@@ -178,7 +178,6 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		if d.APIKeyMgr != nil {
 			r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker, d.RateLimiter, d.RateLimitRPS))
 		}
-		r.Post("/chat", ChatHandler(d))
 		r.Post("/chat/completions", ChatCompletionsHandler(d))
 		r.Post("/embeddings", EmbeddingsHandler(d))
 		r.Get("/models", ModelsListPublicHandler(d))

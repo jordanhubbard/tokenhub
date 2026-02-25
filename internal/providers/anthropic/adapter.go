@@ -77,21 +77,18 @@ func (a *Adapter) HealthEndpoint() string {
 }
 
 func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (router.ProviderResponse, error) {
-	messages := make([]map[string]string, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-	}
+	system, messages := splitMessages(req.Messages)
 
 	payload := map[string]any{
 		"model":    model,
 		"messages": messages,
 	}
+	if system != "" {
+		payload["system"] = system
+	}
 	// Merge client parameters
 	for k, v := range req.Parameters {
-		if k != "model" && k != "messages" {
+		if k != "model" && k != "messages" && k != "system" {
 			payload[k] = v
 		}
 	}
@@ -124,21 +121,18 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 
 // SendStream sends a streaming request and returns the raw SSE response body.
 func (a *Adapter) SendStream(ctx context.Context, model string, req router.Request) (io.ReadCloser, error) {
-	messages := make([]map[string]string, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-	}
+	system, messages := splitMessages(req.Messages)
 
 	payload := map[string]any{
 		"model":    model,
 		"messages": messages,
 		"stream":   true,
 	}
+	if system != "" {
+		payload["system"] = system
+	}
 	for k, v := range req.Parameters {
-		if k != "model" && k != "messages" && k != "stream" {
+		if k != "model" && k != "messages" && k != "system" && k != "stream" {
 			payload[k] = v
 		}
 	}
@@ -147,6 +141,26 @@ func (a *Adapter) SendStream(ctx context.Context, model string, req router.Reque
 	}
 
 	return a.makeStreamRequest(ctx, "/v1/messages", payload)
+}
+
+// splitMessages separates system messages from the conversation messages.
+// Anthropic requires the system prompt as a top-level field rather than as
+// a message with role "system". Multiple system messages are joined with newlines.
+func splitMessages(msgs []router.Message) (system string, filtered []map[string]string) {
+	for _, msg := range msgs {
+		if msg.Role == "system" {
+			if system != "" {
+				system += "\n"
+			}
+			system += msg.Content
+		} else {
+			filtered = append(filtered, map[string]string{
+				"role":    msg.Role,
+				"content": msg.Content,
+			})
+		}
+	}
+	return system, filtered
 }
 
 func (a *Adapter) authHeaders() map[string]string {

@@ -136,117 +136,6 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-func TestChatSuccess(t *testing.T) {
-	ts, eng, _ := setupTestServer(t)
-	defer ts.Close()
-
-	mock := &mockSender{
-		id: "test-provider",
-		resp: json.RawMessage(`{"choices":[{"message":{"content":"Hello!"}}]}`),
-	}
-	eng.RegisterAdapter(mock)
-	eng.RegisterModel(router.Model{
-		ID: "test-model", ProviderID: "test-provider",
-		Weight: 5, MaxContextTokens: 4096, Enabled: true,
-	})
-
-	body, _ := json.Marshal(ChatRequest{
-		Request: router.Request{
-			Messages: []router.Message{{Role: "user", Content: "hi"}},
-		},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var chatResp ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if chatResp.NegotiatedModel != "test-model" {
-		t.Errorf("expected test-model, got %s", chatResp.NegotiatedModel)
-	}
-	if chatResp.RoutingReason == "" {
-		t.Error("expected routing reason to be set")
-	}
-	if chatResp.Response == nil {
-		t.Error("expected response body")
-	}
-}
-
-func TestChatBadJSON(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
-	defer ts.Close()
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader([]byte("not json")))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", resp.StatusCode)
-	}
-}
-
-func TestChatNoEligibleModels(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
-	defer ts.Close()
-
-	body, _ := json.Marshal(ChatRequest{
-		Request: router.Request{
-			Messages: []router.Message{{Role: "user", Content: "hi"}},
-		},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Errorf("expected 502, got %d", resp.StatusCode)
-	}
-}
-
-func TestChatWithPolicy(t *testing.T) {
-	ts, eng, _ := setupTestServer(t)
-	defer ts.Close()
-
-	mock := &mockSender{
-		id: "p1",
-		resp: json.RawMessage(`{"choices":[{"message":{"content":"ok"}}]}`),
-	}
-	eng.RegisterAdapter(mock)
-	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
-
-	body, _ := json.Marshal(ChatRequest{
-		Policy: &PolicyHint{Mode: "cheap", MinWeight: 1},
-		Request: router.Request{
-			Messages: []router.Message{{Role: "user", Content: "hi"}},
-		},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
-	}
-}
-
 func TestPlanSuccess(t *testing.T) {
 	ts, eng, _ := setupTestServer(t)
 	defer ts.Close()
@@ -351,12 +240,11 @@ func TestModelsUpsert(t *testing.T) {
 	}
 
 	// Now verify the model is usable via chat
-	chatBody, _ := json.Marshal(ChatRequest{
-		Request: router.Request{
-			Messages: []router.Message{{Role: "user", Content: "hi"}},
-		},
+	chatBody, _ := json.Marshal(CompletionsRequest{
+		Model:    "new-model",
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
 	})
-	chatResp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(chatBody))
+	chatResp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(chatBody))
 	if err != nil {
 		t.Fatalf("chat request failed: %v", err)
 	}
@@ -550,43 +438,6 @@ func TestVaultLockUnlockCycle(t *testing.T) {
 }
 
 func TestChatWithDirectives(t *testing.T) {
-	ts, eng, _ := setupTestServer(t)
-	defer ts.Close()
-
-	mock := &mockSender{
-		id:   "p1",
-		resp: json.RawMessage(`{"choices":[{"message":{"content":"cheap reply"}}]}`),
-	}
-	eng.RegisterAdapter(mock)
-	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
-
-	// Include @@tokenhub directive in message content.
-	body, _ := json.Marshal(ChatRequest{
-		Request: router.Request{
-			Messages: []router.Message{
-				{Role: "user", Content: "@@tokenhub mode=cheap\nHello"},
-			},
-		},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var chatResp ChatResponse
-	_ = json.NewDecoder(resp.Body).Decode(&chatResp)
-	if chatResp.NegotiatedModel != "m1" {
-		t.Errorf("expected m1, got %s", chatResp.NegotiatedModel)
-	}
-}
-
-func TestRequestLogsEndpoint(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()
 
@@ -773,14 +624,13 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 	sub := bus.Subscribe(10)
 	defer bus.Unsubscribe(sub)
 
-	body, _ := json.Marshal(ChatRequest{
-		Request: router.Request{
-			Messages: []router.Message{{Role: "user", Content: "hi"}},
-		},
+	body, _ := json.Marshal(CompletionsRequest{
+		Model:    "m1",
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
 	})
 
 	// Use local auth key for this standalone test.
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/chat", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/chat/completions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+plaintext)
 	resp, err := http.DefaultClient.Do(req)
@@ -811,114 +661,6 @@ func TestChatPublishesEventsAndStats(t *testing.T) {
 // --- Input validation tests ---
 
 func TestChatEmptyMessages(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
-	defer ts.Close()
-
-	body, _ := json.Marshal(ChatRequest{
-		Request: router.Request{
-			Messages: []router.Message{},
-		},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("expected 400 for empty messages, got %d", resp.StatusCode)
-	}
-}
-
-func TestChatNilMessages(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
-	defer ts.Close()
-
-	// Send a request with no messages field at all.
-	body, _ := json.Marshal(map[string]any{
-		"request": map[string]any{},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("expected 400 for nil messages, got %d", resp.StatusCode)
-	}
-}
-
-func TestChatPolicyOutOfRange(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
-	defer ts.Close()
-
-	tests := []struct {
-		name   string
-		policy *PolicyHint
-	}{
-		{"negative budget", &PolicyHint{MaxBudgetUSD: -1}},
-		{"budget too high", &PolicyHint{MaxBudgetUSD: 200}},
-		{"negative latency", &PolicyHint{MaxLatencyMs: -1}},
-		{"latency too high", &PolicyHint{MaxLatencyMs: 500000}},
-		{"negative weight", &PolicyHint{MinWeight: -1}},
-		{"weight too high", &PolicyHint{MinWeight: 11}},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, _ := json.Marshal(ChatRequest{
-				Policy: tc.policy,
-				Request: router.Request{
-					Messages: []router.Message{{Role: "user", Content: "hi"}},
-				},
-			})
-
-			resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-			if err != nil {
-				t.Fatalf("request failed: %v", err)
-			}
-			defer func() { _ = resp.Body.Close() }()
-
-			if resp.StatusCode != http.StatusBadRequest {
-				t.Errorf("expected 400 for %s, got %d", tc.name, resp.StatusCode)
-			}
-		})
-	}
-}
-
-func TestChatValidPolicyStillWorks(t *testing.T) {
-	ts, eng, _ := setupTestServer(t)
-	defer ts.Close()
-
-	mock := &mockSender{
-		id:   "p1",
-		resp: json.RawMessage(`{"choices":[{"message":{"content":"ok"}}]}`),
-	}
-	eng.RegisterAdapter(mock)
-	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
-
-	body, _ := json.Marshal(ChatRequest{
-		Policy: &PolicyHint{MaxBudgetUSD: 50.0, MaxLatencyMs: 5000, MinWeight: 3},
-		Request: router.Request{
-			Messages: []router.Message{{Role: "user", Content: "hi"}},
-		},
-	})
-
-	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 for valid policy, got %d", resp.StatusCode)
-	}
-}
-
-func TestPlanEmptyMessages(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()
 
