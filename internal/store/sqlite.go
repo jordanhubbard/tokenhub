@@ -603,7 +603,7 @@ func (s *SQLiteStore) CreateAPIKey(ctx context.Context, key APIKeyRecord) error 
 }
 
 // apiKeyCols is the column list for all api_keys queries.
-const apiKeyCols = `id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps, budget_reset_at`
+const apiKeyCols = `id, key_hash, key_prefix, name, scopes, created_at, last_used_at, expires_at, rotation_days, enabled, monthly_budget_usd, rate_limit_rps, budget_reset_at` //nolint:gosec // SQL column list, not a credential
 
 // scanAPIKey scans a row into an APIKeyRecord.
 func scanAPIKey(scanner interface{ Scan(dest ...any) error }) (APIKeyRecord, error) {

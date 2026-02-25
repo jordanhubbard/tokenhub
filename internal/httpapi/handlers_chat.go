@@ -27,7 +27,7 @@ const maxStreamBytes = 100 * 1024 * 1024
 // and reward logs that should not block the response but must be observable.
 func (d Dependencies) warnOnErr(op string, err error) {
 	if err != nil {
-		slog.Warn("store operation failed", slog.String("op", op), slog.String("error", err.Error()))
+		slog.Warn("store operation failed", slog.String("op", op), slog.String("error", err.Error())) //nolint:gosec // logging internal op name and error string, not user input
 		if d.Metrics != nil {
 			d.Metrics.StoreDroppedTotal.WithLabelValues(op).Inc()
 		}

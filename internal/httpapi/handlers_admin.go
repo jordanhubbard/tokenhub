@@ -51,11 +51,11 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 	case "openai", "":
 		adapter = openai.New(p.ID, "", base, openai.WithTimeout(timeout), openai.WithKeyFunc(keyFunc))
 	default:
-		slog.Warn("unknown provider type, adapter not registered", slog.String("provider", p.ID), slog.String("type", p.Type))
+		slog.Warn("unknown provider type, adapter not registered", slog.String("provider", p.ID), slog.String("type", p.Type)) //nolint:gosec // logging internal config values, not user input
 		return
 	}
 	d.Engine.RegisterAdapter(adapter)
-	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", base))
+	slog.Info("registered provider adapter", slog.String("provider", p.ID), slog.String("type", p.Type), slog.String("base_url", base)) //nolint:gosec // same as above
 }
 
 // normalizeBaseURL strips trailing slashes and common path suffixes like "/v1"
@@ -326,7 +326,7 @@ func VaultRotateHandler(d Dependencies) http.HandlerFunc {
 // ProviderUpsertRequest extends ProviderRecord with optional credential.
 type ProviderUpsertRequest struct {
 	store.ProviderRecord
-	APIKey string `json:"api_key,omitempty"` // optional; stored in vault if provided
+	APIKey string `json:"api_key,omitempty"` //nolint:gosec // request DTO field name, not a hardcoded credential
 }
 
 func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
