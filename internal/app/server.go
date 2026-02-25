@@ -615,10 +615,20 @@ func (s *Server) refreshPricing() {
 		return
 	}
 
-	var pricing map[string]litellmEntry
-	if err := json.NewDecoder(resp.Body).Decode(&pricing); err != nil {
+	// Decode per-entry to tolerate schema variation in individual records
+	// (e.g. max_input_tokens is sometimes a string in the upstream JSON).
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		s.logger.Warn("pricing refresh: decode failed", slog.String("error", err.Error()))
 		return
+	}
+	pricing := make(map[string]litellmEntry, len(raw))
+	for k, v := range raw {
+		var entry litellmEntry
+		if err := json.Unmarshal(v, &entry); err != nil {
+			continue // skip malformed entries
+		}
+		pricing[k] = entry
 	}
 
 	// Build set of local (self-hosted) provider IDs to skip.
