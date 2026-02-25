@@ -114,7 +114,7 @@ _write-env:
 	@echo "Waiting for tokenhub to start..."
 	@for i in $$(seq 1 30); do \
 		env=$$(docker compose exec -T tokenhub cat /data/env 2>/dev/null); \
-		if [ -n "$$env" ]; then \
+		if echo "$$env" | grep -q "TOKENHUB_API_KEY"; then \
 			mkdir -p $(HOME)/.tokenhub; \
 			{ printf 'TOKENHUB_URL=http://localhost:%s\n' "$(TOKENHUB_PORT)"; printf '%s\n' "$$env"; } \
 				> $(HOME)/.tokenhub/env; \

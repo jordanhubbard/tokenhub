@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -10,15 +11,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 )
 
 // AdminTokenHolder provides thread-safe access to the admin token with
 // persistence to the data directory. The token survives container restarts
 // and can be rotated at runtime via the admin API.
 type AdminTokenHolder struct {
-	mu    sync.RWMutex
-	token string
-	dbDSN string // used to derive the data directory for persistence
+	mu          sync.RWMutex
+	token       string
+	hostAPIKey  string // plaintext of the auto-provisioned host-local API key
+	dbDSN       string // used to derive the data directory for persistence
 }
 
 // NewAdminTokenHolder creates a holder and resolves the initial token using
@@ -130,14 +134,63 @@ func (h *AdminTokenHolder) persist(logger *slog.Logger) {
 	}
 	h.mu.RLock()
 	token := h.token
+	hostKey := h.hostAPIKey
 	h.mu.RUnlock()
 
-	envContent := []byte("TOKENHUB_ADMIN_TOKEN=" + token + "\n")
-	if err := os.WriteFile(filepath.Join(dir, "env"), envContent, 0600); err != nil {
+	env := "TOKENHUB_ADMIN_TOKEN=" + token + "\n"
+	if hostKey != "" {
+		env += "TOKENHUB_API_KEY=" + hostKey + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "env"), []byte(env), 0600); err != nil {
 		logger.Warn("failed to write state env file", slog.String("error", err.Error()))
 	}
 	tokenContent := []byte(token + "\n")
 	if err := os.WriteFile(filepath.Join(dir, ".admin-token"), tokenContent, 0600); err != nil {
 		logger.Warn("failed to write admin token file", slog.String("error", err.Error()))
 	}
+}
+
+// ProvisionHostAPIKey ensures a persistent "host-local" API key exists for use
+// by tools on the host machine (e.g. tokenhub_client in ai-code-reviewer).
+// The plaintext is stored in <dataDir>/.host-api-key so it survives restarts.
+// If the file is missing a new key is generated (the old DB entry, if any,
+// becomes orphaned but remains harmless). The plaintext is included in the
+// env file as TOKENHUB_API_KEY on every subsequent persist() call.
+func (h *AdminTokenHolder) ProvisionHostAPIKey(ctx context.Context, mgr *apikey.Manager, logger *slog.Logger) (string, error) {
+	dir := h.dataDir()
+	if dir == "" {
+		return "", nil // no data dir (e.g. in-memory DB); skip silently
+	}
+
+	keyFile := filepath.Join(dir, ".host-api-key")
+
+	// Try to load existing plaintext.
+	if data, err := os.ReadFile(keyFile); err == nil {
+		plaintext := strings.TrimSpace(string(data))
+		if plaintext != "" {
+			h.mu.Lock()
+			h.hostAPIKey = plaintext
+			h.mu.Unlock()
+			h.persist(logger)
+			logger.Info("host API key loaded from disk")
+			return plaintext, nil
+		}
+	}
+
+	// Generate a new host-local key.
+	plaintext, _, err := mgr.Generate(ctx, "host-local", "", 0, nil)
+	if err != nil {
+		return "", fmt.Errorf("provision host api key: %w", err)
+	}
+
+	if err := os.WriteFile(keyFile, []byte(plaintext+"\n"), 0600); err != nil {
+		return "", fmt.Errorf("write host api key file: %w", err)
+	}
+
+	h.mu.Lock()
+	h.hostAPIKey = plaintext
+	h.mu.Unlock()
+	h.persist(logger)
+	logger.Info("host API key provisioned", slog.String("key_file", keyFile))
+	return plaintext, nil
 }

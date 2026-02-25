@@ -339,6 +339,13 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Ensure a host-local API key exists for tools running on the host machine.
+	// Plaintext is persisted to <dataDir>/.host-api-key and written to the env file.
+	if _, err := adminTokenHolder.ProvisionHostAPIKey(context.Background(), keyMgr, logger); err != nil {
+		logger.Warn("failed to provision host API key", slog.String("error", err.Error()))
+	}
+
 	if len(cfg.CORSOrigins) == 0 {
 		logger.Warn("TOKENHUB_CORS_ORIGINS not set — CORS allows all origins")
 	}
