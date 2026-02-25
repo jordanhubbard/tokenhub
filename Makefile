@@ -81,6 +81,11 @@ install: ## Build natively and install to ~/.local/bin (requires Go 1.24+)
 package: setup ## Build production container image
 	$(DOCKER_BUILD) -t tokenhub:$(VERSION) -t tokenhub:latest .
 
+deploy: build ## Compile and inject binary into running image, then restart (no internet required)
+	@echo "Injecting bin/tokenhub into tokenhub:latest..."
+	@printf 'FROM tokenhub:latest\nCOPY bin/tokenhub /tokenhub\n' | docker build -t tokenhub:latest -f - .
+	@$(MAKE) -s restart
+
 # ──── Lifecycle ────
 
 run: package ## Build, start container, and follow logs
