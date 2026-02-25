@@ -18,12 +18,14 @@ services:
       - TOKENHUB_TEMPORAL_TASK_QUEUE=${TOKENHUB_TEMPORAL_TASK_QUEUE:-tokenhub-tasks}
     volumes:
       - tokenhub_data:/data
-    # Use the host's systemd-resolved so internal hostnames (e.g. NVIDIA VPN,
-    # Tailscale) resolve correctly inside the container. 172.21.0.1 is the
-    # Docker bridge gateway which forwards to the host resolver.
-    # 1.1.1.1 is a fallback for when the bridge DNS cannot resolve external
-    # hostnames (e.g. api.anthropic.com, api.openai.com).
+    # DNS order:
+    # 1. NVIDIA internal DNS — resolves *.hrd.nvidia.com and other corp hostnames.
+    # 2. Fallback internal DNS server.
+    # 3. Docker bridge gateway (systemd-resolved stub forwarding).
+    # 4. Public fallback for external hostnames when the above are unreachable.
     dns:
+      - 10.126.4.154
+      - 10.61.13.53
       - 172.21.0.1
       - 1.1.1.1
     healthcheck:
