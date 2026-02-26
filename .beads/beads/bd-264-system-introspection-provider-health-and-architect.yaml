@@ -20,10 +20,10 @@ description: |-
     - Top 3 recommendations for improvement
 
     Commit and push the report when done.
-status: open
+status: blocked
 priority: 2
 projectid: tokenhub
-assignedto: ""
+assignedto: agent-1771743829-Engineering Manager (Default)
 blockedby: []
 blocks: []
 relatedto: []
@@ -39,12 +39,14 @@ context:
     loop_detected: "true"
     loop_detected_at: "2026-02-26T08:16:15Z"
     loop_detected_reason: Repeated rate limit errors (6 attempts) - exhausted provider quota. Consider increasing the budget or resetting the counter.
+    ralph_blocked_at: "2026-02-26T08:20:03Z"
+    ralph_blocked_reason: 'auto-blocked by Ralph: Repeated rate limit errors (6 attempts) - exhausted provider quota. Consider increasing the budget or resetting the counter.'
     redispatch_reason: ""
-    redispatch_requested: "true"
+    redispatch_requested: "false"
     redispatch_requested_at: "2026-02-26T08:19:57Z"
 duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-26T08:16:05.802504364Z
-updatedat: 2026-02-26T08:19:57.185194202Z
+updatedat: 2026-02-26T08:20:03.587870819Z
 closedat: null
