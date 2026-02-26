@@ -97,22 +97,23 @@ func checkBaseURLReachable(baseURL string) error {
 	return nil
 }
 
-// makeKeyFunc returns a closure that resolves the API key on every call.
-// This ensures vault rotations, lock/unlock, and re-stored keys take effect
-// immediately without re-registering the adapter.
+// makeKeyFunc returns a closure that returns the provider's API key.
+// The key is captured once at registration time from either the override value
+// (API request body) or the vault. This means vault lock/unlock events have no
+// effect on running providers — the key is embedded in the closure and only
+// changes when the provider is explicitly re-registered with a new key.
+// This mirrors the semantics of providers like Anthropic or OpenAI: if you
+// have a valid API key configured, requests go through regardless of any
+// internal key-storage state.
 func makeKeyFunc(d Dependencies, p store.ProviderRecord, apiKeyOverride string) func() string {
 	if apiKeyOverride != "" {
 		return func() string { return apiKeyOverride }
 	}
 	if p.CredStore == "vault" && d.Vault != nil {
-		vaultKey := "provider:" + p.ID + ":api_key"
-		return func() string {
-			if d.Vault.IsLocked() {
-				return ""
-			}
-			key, _ := d.Vault.Get(vaultKey)
-			return key
-		}
+		// Capture the key once at registration time. Vault locking after this
+		// point does not affect in-flight requests.
+		key, _ := d.Vault.Get("provider:" + p.ID + ":api_key")
+		return func() string { return key }
 	}
 	return func() string { return "" }
 }
@@ -351,24 +352,28 @@ func ProvidersUpsertHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 
-		// Store API key in vault if provided.
+		// Store API key in vault if provided and vault is available.
+		// If the vault is locked, the provider is still registered in-memory with
+		// the key captured directly — it just won't persist across restarts.
 		if req.APIKey != "" {
-			if d.Vault == nil || d.Vault.IsLocked() {
-				jsonError(w, "vault is locked: unlock the vault before adding an API key", http.StatusBadRequest)
-				return
-			}
-			if err := d.Vault.Set("provider:"+req.ID+":api_key", req.APIKey); err != nil {
-				jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			req.CredStore = "vault"
-			// Persist vault data.
-			if d.Store != nil {
-				salt := d.Vault.Salt()
-				data := d.Vault.Export()
-				if salt != nil {
-					d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+			if d.Vault != nil && !d.Vault.IsLocked() {
+				if err := d.Vault.Set("provider:"+req.ID+":api_key", req.APIKey); err != nil {
+					slog.Warn("failed to persist API key in vault; provider registered in-memory only",
+						slog.String("provider", req.ID), slog.String("error", err.Error()))
+				} else {
+					req.CredStore = "vault"
+					// Persist vault data.
+					if d.Store != nil {
+						salt := d.Vault.Salt()
+						data := d.Vault.Export()
+						if salt != nil {
+							d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+						}
+					}
 				}
+			} else {
+				slog.Info("vault locked or unavailable; API key captured in-memory only (won't survive restart)",
+					slog.String("provider", req.ID))
 			}
 		}
 
@@ -879,21 +884,23 @@ func ProvidersPatchHandler(d Dependencies) http.HandlerFunc {
 		// Handle API key update.
 		if v, ok := patch["api_key"]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				if d.Vault == nil || d.Vault.IsLocked() {
-					jsonError(w, "vault is locked: unlock the vault before updating an API key", http.StatusBadRequest)
-					return
-				}
-				if err := d.Vault.Set("provider:"+id+":api_key", s); err != nil {
-					jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
-					return
-				}
-				existing.CredStore = "vault"
-				if d.Store != nil {
-					salt := d.Vault.Salt()
-					data := d.Vault.Export()
-					if salt != nil {
-						d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+				if d.Vault != nil && !d.Vault.IsLocked() {
+					if err := d.Vault.Set("provider:"+id+":api_key", s); err != nil {
+						slog.Warn("failed to persist API key in vault; key captured in-memory only",
+							slog.String("provider", id), slog.String("error", err.Error()))
+					} else {
+						existing.CredStore = "vault"
+						if d.Store != nil {
+							salt := d.Vault.Salt()
+							data := d.Vault.Export()
+							if salt != nil {
+								d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+							}
+						}
 					}
+				} else {
+					slog.Info("vault locked or unavailable; API key captured in-memory only (won't survive restart)",
+						slog.String("provider", id))
 				}
 			}
 		}
