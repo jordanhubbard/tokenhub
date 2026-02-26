@@ -20,7 +20,7 @@ description: |-
     - Top 3 recommendations for improvement
 
     Commit and push the report when done.
-status: blocked
+status: open
 priority: 2
 projectid: tokenhub
 assignedto: ""
@@ -39,9 +39,12 @@ context:
     loop_detected: "true"
     loop_detected_at: "2026-02-26T08:16:15Z"
     loop_detected_reason: Repeated rate limit errors (6 attempts) - exhausted provider quota. Consider increasing the budget or resetting the counter.
+    redispatch_reason: ""
+    redispatch_requested: "true"
+    redispatch_requested_at: "2026-02-26T08:19:57Z"
 duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-26T08:16:05.802504364Z
-updatedat: 2026-02-26T08:16:15.812679439Z
+updatedat: 2026-02-26T08:19:57.185194202Z
 closedat: null
