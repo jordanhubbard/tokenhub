@@ -20,10 +20,10 @@ description: |-
     - Top 3 recommendations for improvement
 
     Commit and push the report when done.
-status: in_progress
+status: open
 priority: 2
 projectid: tokenhub
-assignedto: exec-tokenhub-0018f52f
+assignedto: ""
 blockedby: []
 blocks: []
 relatedto: []
@@ -48,5 +48,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-26T08:16:05.802504364Z
-updatedat: 2026-02-26T08:41:19.249282333Z
+updatedat: 2026-02-26T08:41:43.934197976Z
 closedat: null
