@@ -20,7 +20,7 @@ description: |-
     - Top 3 recommendations for improvement
 
     Commit and push the report when done.
-status: blocked
+status: open
 priority: 2
 projectid: tokenhub
 assignedto: ""
@@ -36,11 +36,13 @@ context:
     last_run_at: "2026-02-26T08:55:30Z"
     last_run_error: |
         LLM call failed on iteration 2: unexpected status code 502: {"error":{"message":"all providers failed","type":"server_error","code":null}}
-    loop_detected: "true"
-    loop_detected_at: "2026-02-26T08:55:30Z"
-    loop_detected_reason: Repeated provider errors (6 attempts) - provider unavailable or unhealthy
+    loop_detected: "false"
+    loop_detected_at: ""
+    loop_detected_reason: ""
     ralph_blocked_at: ""
     ralph_blocked_reason: ""
+    recovered_at: "2026-02-28T06:45:53Z"
+    recovery_reason: transient infrastructure failure resolved — re-queued by recovery sweep
     redispatch_reason: ""
     redispatch_requested: "false"
     redispatch_requested_at: "2026-02-26T08:19:57Z"
@@ -48,5 +50,5 @@ duedate: null
 milestoneid: ""
 estimatedtime: 0
 createdat: 2026-02-26T08:16:05.802504364Z
-updatedat: 2026-02-26T08:55:30.626667547Z
+updatedat: 2026-02-28T06:45:53.080532623Z
 closedat: null
