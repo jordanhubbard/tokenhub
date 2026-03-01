@@ -946,3 +946,171 @@ func TestRefineDefaultIterations(t *testing.T) {
 		t.Errorf("expected iterations=2 (default), got %d", int(iterFloat))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// shrinkMaxTokens
+// ---------------------------------------------------------------------------
+
+func TestShrinkMaxTokens_ReducesWhenOverLimit(t *testing.T) {
+	m := Model{ID: "m1", MaxContextTokens: 32768}
+	req := Request{
+		Messages:   []Message{{Role: "user", Content: "hi"}},
+		Parameters: map[string]any{"max_tokens": 4096},
+	}
+	// Simulate 32430 input tokens: available = 32768 - 32430 - 256 = 82
+	reduced, ok := shrinkMaxTokens(req, m, 32430)
+	if !ok {
+		t.Fatal("expected shrinkMaxTokens to succeed")
+	}
+	got, _ := reduced.Parameters["max_tokens"].(int)
+	want := 32768 - 32430 - 256 // 82
+	if got != want {
+		t.Errorf("max_tokens = %d, want %d", got, want)
+	}
+}
+
+func TestShrinkMaxTokens_SkipsWhenAlreadyFits(t *testing.T) {
+	m := Model{ID: "m1", MaxContextTokens: 32768}
+	req := Request{
+		Messages:   []Message{{Role: "user", Content: "hi"}},
+		Parameters: map[string]any{"max_tokens": 100},
+	}
+	_, ok := shrinkMaxTokens(req, m, 100) // input=100, available=32412, fits easily
+	if ok {
+		t.Error("expected shrinkMaxTokens to return false when already fits")
+	}
+}
+
+func TestShrinkMaxTokens_ReturnsFalseWhenContextUnknown(t *testing.T) {
+	m := Model{ID: "m1", MaxContextTokens: 0}
+	req := Request{Messages: []Message{{Role: "user", Content: "hi"}}}
+	_, ok := shrinkMaxTokens(req, m, 1000)
+	if ok {
+		t.Error("expected false when MaxContextTokens == 0")
+	}
+}
+
+func TestShrinkMaxTokens_ReturnsFalseWhenNoRoom(t *testing.T) {
+	// Model context is 1000, input is 990, leaving only 10 - 256 = negative room.
+	m := Model{ID: "m1", MaxContextTokens: 1000}
+	req := Request{Messages: []Message{{Role: "user", Content: "hi"}}}
+	_, ok := shrinkMaxTokens(req, m, 990)
+	if ok {
+		t.Error("expected false when no meaningful output budget remains")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// hedgedSend
+// ---------------------------------------------------------------------------
+
+func TestHedgedSend_FirstProviderWins(t *testing.T) {
+	eng := NewEngine(EngineConfig{MaxRetries: 1, HedgeAfterMs: 50, MaxHedgedProviders: 3})
+
+	primary := newMockSender("p1")
+	secondary := newMockSender("p2")
+	eng.RegisterAdapter(primary)
+	eng.RegisterAdapter(secondary)
+
+	primary.setResponse("m1", oaiResponse("primary"), nil)
+	secondary.setResponse("m2", oaiResponse("secondary"), nil)
+
+	models := []Model{
+		{ID: "m1", ProviderID: "p1", Weight: 10, Enabled: true},
+		{ID: "m2", ProviderID: "p2", Weight: 5, Enabled: true},
+	}
+	adapters := map[string]Sender{"p1": primary, "p2": secondary}
+
+	ctx := context.Background()
+	m, resp, _, err := eng.hedgedSend(ctx, models, adapters, makeRequest("test"), 0, 50, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ID != "m1" && m.ID != "m2" {
+		t.Errorf("unexpected model: %s", m.ID)
+	}
+	if len(resp) == 0 {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestHedgedSend_FallsBackWhenPrimaryFails(t *testing.T) {
+	eng := NewEngine(EngineConfig{MaxRetries: 1})
+
+	primary := newMockSender("p1")
+	secondary := newMockSender("p2")
+	eng.RegisterAdapter(primary)
+	eng.RegisterAdapter(secondary)
+
+	primary.setError("m1", ErrTransient)
+	secondary.setResponse("m2", oaiResponse("secondary wins"), nil)
+
+	models := []Model{
+		{ID: "m1", ProviderID: "p1", Weight: 10, Enabled: true},
+		{ID: "m2", ProviderID: "p2", Weight: 5, Enabled: true},
+	}
+	adapters := map[string]Sender{"p1": primary, "p2": secondary}
+
+	ctx := context.Background()
+	// hedgeAfterMs=0: all providers fire immediately in parallel
+	m, resp, _, err := eng.hedgedSend(ctx, models, adapters, makeRequest("test"), 0, 0, 2)
+	if err != nil {
+		t.Fatalf("expected secondary to succeed, got: %v", err)
+	}
+	if m.ID != "m2" {
+		t.Errorf("expected m2 to win, got %s", m.ID)
+	}
+	_ = resp
+}
+
+func TestHedgedSend_ReturnsErrorWhenAllFail(t *testing.T) {
+	eng := NewEngine(EngineConfig{MaxRetries: 1})
+
+	s1 := newMockSender("p1")
+	s2 := newMockSender("p2")
+	eng.RegisterAdapter(s1)
+	eng.RegisterAdapter(s2)
+
+	s1.setError("m1", ErrFatal)
+	s2.setError("m2", ErrFatal)
+
+	models := []Model{
+		{ID: "m1", ProviderID: "p1", Weight: 10, Enabled: true},
+		{ID: "m2", ProviderID: "p2", Weight: 5, Enabled: true},
+	}
+	adapters := map[string]Sender{"p1": s1, "p2": s2}
+
+	ctx := context.Background()
+	_, _, _, err := eng.hedgedSend(ctx, models, adapters, makeRequest("test"), 0, 0, 2)
+	if err == nil {
+		t.Fatal("expected error when all providers fail")
+	}
+}
+
+func TestRouteAndSend_HedgedDispatch(t *testing.T) {
+	eng := NewEngine(EngineConfig{
+		MaxRetries:         1,
+		HedgeAfterMs:       10,
+		MaxHedgedProviders: 2,
+	})
+
+	s1 := newMockSender("p1")
+	s2 := newMockSender("p2")
+	eng.RegisterAdapter(s1)
+	eng.RegisterAdapter(s2)
+	s1.setError("m1", ErrTransient)
+	s2.setResponse("m2", oaiResponse("hedged winner"), nil)
+
+	eng.RegisterModel(Model{ID: "m1", ProviderID: "p1", Weight: 10, Enabled: true})
+	eng.RegisterModel(Model{ID: "m2", ProviderID: "p2", Weight: 5, Enabled: true})
+
+	ctx := context.Background()
+	dec, resp, err := eng.RouteAndSend(ctx, makeRequest("test"), Policy{})
+	if err != nil {
+		t.Fatalf("RouteAndSend with hedging failed: %v", err)
+	}
+	if dec.ModelID != "m2" {
+		t.Errorf("expected m2 to win via hedging, got %s", dec.ModelID)
+	}
+	_ = resp
+}

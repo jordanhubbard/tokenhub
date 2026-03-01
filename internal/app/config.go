@@ -23,6 +23,12 @@ type Config struct {
 	ExplorationTemp     float64
 
 	ProviderTimeoutSecs int
+	// HedgeAfterMs fires a parallel request to the next-best provider when the
+	// primary hasn't responded within this interval. 0 = sequential fallback only.
+	// Example: 5000 hedges on providers that take > 5 s without wasting tokens on fast ones.
+	HedgeAfterMs int
+	// MaxHedgedProviders caps concurrent in-flight hedged requests. Default 3.
+	MaxHedgedProviders int
 
 	// Security & hardening.
 	AdminToken     string   // required for /admin/v1 access in production
@@ -66,6 +72,8 @@ func LoadConfig() (Config, error) {
 		ExplorationTemp:     getEnvFloat("TOKENHUB_EXPLORATION_TEMP", 0.3),
 
 		ProviderTimeoutSecs: getEnvInt("TOKENHUB_PROVIDER_TIMEOUT_SECS", 30),
+		HedgeAfterMs:        getEnvInt("TOKENHUB_HEDGE_AFTER_MS", 0),
+		MaxHedgedProviders:  getEnvInt("TOKENHUB_MAX_HEDGED_PROVIDERS", 3),
 
 		AdminToken:     getEnv("TOKENHUB_ADMIN_TOKEN", ""),
 		CORSOrigins:    getEnvStringSlice("TOKENHUB_CORS_ORIGINS", nil),

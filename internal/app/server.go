@@ -131,6 +131,8 @@ func NewServer(cfg Config) (*Server, error) {
 		DefaultMaxLatencyMs:  cfg.DefaultMaxLatencyMs,
 		ExplorationTemp:      cfg.ExplorationTemp,
 		PerProviderTimeoutMs: cfg.ProviderTimeoutSecs * 1000,
+		HedgeAfterMs:         cfg.HedgeAfterMs,
+		MaxHedgedProviders:   cfg.MaxHedgedProviders,
 	})
 	eng.SetSkipRecorder(m)
 
