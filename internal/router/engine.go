@@ -530,10 +530,29 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	e.mu.RLock()
 	tokensNeeded := EstimateTokens(req)
 	eligible := e.eligibleModels(tokensNeeded, p)
+
 	if len(eligible) == 0 {
-		e.mu.RUnlock()
-		return Decision{}, nil, errors.New("no eligible models registered")
+		// All models were excluded by normal filters (health cooldown, budget, etc.).
+		// Attempt a last-resort pass over every enabled model that has an adapter
+		// before surfacing an error to the client. The health tracker is a routing
+		// preference, not a hard constraint; clients should never see a 502 simply
+		// because an internal cooldown window is active.
+		for _, m := range e.models {
+			if m.Enabled {
+				if _, ok := e.adapters[m.ProviderID]; ok {
+					eligible = append(eligible, m)
+				}
+			}
+		}
+		if len(eligible) == 0 {
+			e.mu.RUnlock()
+			return Decision{}, nil, errors.New("no eligible models registered")
+		}
+		slog.Warn("primary routing found no eligible models; attempting last-resort routing over all providers",
+			slog.Int("candidates", len(eligible)),
+		)
 	}
+
 	outTok := estOutTokens(p)
 	hintModelID := ""
 	if req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode) {
@@ -555,8 +574,13 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	}
 	e.mu.RUnlock()
 
+	// Track which model IDs were attempted in the primary pass so the fallback
+	// pass can skip them and only probe untried candidates.
+	tried := make(map[string]bool, len(eligible))
+
 	// Try each eligible model in weight order, with escalation on failure.
 	for i, m := range eligible {
+		tried[m.ID] = true
 		adapter := adapters[m.ProviderID]
 		estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
 
@@ -671,6 +695,57 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		}
 	}
 
+	// Primary pass exhausted all eligible models. As a last resort, probe any
+	// enabled model that was excluded by the primary filter (e.g., health
+	// cooldown, budget, MinWeight) but has not been tried yet. The client must
+	// not receive a 502 due to internal routing preferences — only surface an
+	// error when there is genuinely no provider that can serve the request.
+	e.mu.RLock()
+	var lastResort []Model
+	var lrAdapters map[string]Sender
+	for _, m := range e.models {
+		if !tried[m.ID] && m.Enabled {
+			if a, ok := e.adapters[m.ProviderID]; ok {
+				lastResort = append(lastResort, m)
+				if lrAdapters == nil {
+					lrAdapters = make(map[string]Sender)
+				}
+				lrAdapters[m.ProviderID] = a
+			}
+		}
+	}
+	e.mu.RUnlock()
+
+	for _, m := range lastResort {
+		adapter := lrAdapters[m.ProviderID]
+		slog.Warn("last-resort routing: probing health-excluded provider",
+			slog.String("provider", m.ProviderID),
+			slog.String("model", m.ID),
+		)
+		sendStart := time.Now()
+		resp, err := adapter.Send(ctx, m.ID, req)
+		sendMs := float64(time.Since(sendStart).Milliseconds())
+		if err == nil {
+			if e.health != nil {
+				e.health.RecordSuccess(m.ProviderID, sendMs)
+			}
+			return Decision{
+				ModelID:          m.ID,
+				ProviderID:       m.ProviderID,
+				EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K),
+				Reason:           "last-resort-fallback",
+			}, resp, nil
+		}
+		if e.health != nil {
+			e.health.RecordError(m.ProviderID, err.Error())
+		}
+		slog.Warn("last-resort provider also failed",
+			slog.String("provider", m.ProviderID),
+			slog.String("model", m.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
 	return Decision{}, nil, errors.New("all providers failed")
 }
 
@@ -697,11 +772,73 @@ func findLargerContextModelIn(models map[string]Model, adapters map[string]Sende
 
 // RouteAndStream selects a model and opens a streaming connection.
 // Returns the decision, the SSE stream body, and any error.
+//
+// When all policy-eligible models fail (or none are eligible due to health
+// cooldown), a last-resort pass tries every remaining enabled model that has
+// an adapter. Clients are never shown a 502 due to internal routing preferences.
 func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Decision, io.ReadCloser, error) {
 	decision, eligible, err := e.SelectModel(ctx, req, p)
 	if err != nil {
+		// SelectModel failed because eligibleModels returned empty. Attempt
+		// last-resort routing over all enabled models before surfacing the error.
+		e.mu.RLock()
+		var candidates []Model
+		var lrAdapters map[string]Sender
+		tokensNeeded := EstimateTokens(req)
+		for _, m := range e.models {
+			if m.Enabled {
+				if a, ok := e.adapters[m.ProviderID]; ok {
+					candidates = append(candidates, m)
+					if lrAdapters == nil {
+						lrAdapters = make(map[string]Sender)
+					}
+					lrAdapters[m.ProviderID] = a
+				}
+			}
+		}
+		outTok := estOutTokens(p)
+		e.mu.RUnlock()
+
+		if len(candidates) > 0 {
+			slog.Warn("stream: no eligible models from primary filter; attempting last-resort routing",
+				slog.Int("candidates", len(candidates)),
+			)
+			for _, m := range candidates {
+				a := lrAdapters[m.ProviderID]
+				fs, ok := a.(StreamSender)
+				if !ok {
+					continue
+				}
+				body, serr := fs.SendStream(ctx, m.ID, req)
+				if serr == nil {
+					if e.health != nil {
+						e.health.RecordSuccess(m.ProviderID, 0)
+					}
+					return Decision{
+						ModelID:          m.ID,
+						ProviderID:       m.ProviderID,
+						EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K),
+						Reason:           "last-resort-fallback",
+					}, body, nil
+				}
+				if e.health != nil {
+					e.health.RecordError(m.ProviderID, serr.Error())
+				}
+				if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
+					e.mu.Lock()
+					if mod, ok := e.models[m.ID]; ok {
+						mod.Enabled = false
+						e.models[m.ID] = mod
+					}
+					e.mu.Unlock()
+				}
+			}
+		}
 		return Decision{}, nil, err
 	}
+
+	// Build set of tried model IDs for the fallback pass below.
+	tried := map[string]bool{decision.ModelID: true}
 
 	e.mu.RLock()
 	adapter := e.adapters[decision.ProviderID]
@@ -713,49 +850,108 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	}
 
 	body, err := streamer.SendStream(ctx, decision.ModelID, req)
-	if err != nil {
-		if classified := adapter.ClassifyError(err); classified.Class == ErrBudgetExceeded {
-			slog.Warn("provider budget exhausted (stream), disabling model",
-				slog.String("provider", decision.ProviderID),
-				slog.String("model", decision.ModelID),
+	if err == nil {
+		return decision, body, nil
+	}
+
+	// Primary model failed. Handle budget exhaustion then try eligible fallbacks.
+	if classified := adapter.ClassifyError(err); classified.Class == ErrBudgetExceeded {
+		slog.Warn("provider budget exhausted (stream), disabling model",
+			slog.String("provider", decision.ProviderID),
+			slog.String("model", decision.ModelID),
+		)
+		e.mu.Lock()
+		if mod, ok := e.models[decision.ModelID]; ok {
+			mod.Enabled = false
+			e.models[decision.ModelID] = mod
+		}
+		e.mu.Unlock()
+	}
+
+	// Try remaining eligible models (those returned by SelectModel).
+	for _, m := range eligible[1:] {
+		tried[m.ID] = true
+		e.mu.RLock()
+		fallbackAdapter := e.adapters[m.ProviderID]
+		e.mu.RUnlock()
+		fs, ok := fallbackAdapter.(StreamSender)
+		if !ok {
+			continue
+		}
+		body, err = fs.SendStream(ctx, m.ID, req)
+		if err == nil {
+			decision.ModelID = m.ID
+			decision.ProviderID = m.ProviderID
+			decision.Reason = "stream-fallback"
+			return decision, body, nil
+		}
+		if fc := fallbackAdapter.ClassifyError(err); fc.Class == ErrBudgetExceeded {
+			slog.Warn("provider budget exhausted (stream fallback), disabling model",
+				slog.String("provider", m.ProviderID),
+				slog.String("model", m.ID),
 			)
 			e.mu.Lock()
-			if mod, ok := e.models[decision.ModelID]; ok {
+			if mod, ok := e.models[m.ID]; ok {
 				mod.Enabled = false
-				e.models[decision.ModelID] = mod
+				e.models[m.ID] = mod
 			}
 			e.mu.Unlock()
 		}
-		// Try fallback models.
-		for _, m := range eligible[1:] {
-			e.mu.RLock()
-			fallbackAdapter := e.adapters[m.ProviderID]
-			e.mu.RUnlock()
-			if fs, ok := fallbackAdapter.(StreamSender); ok {
-				body, err = fs.SendStream(ctx, m.ID, req)
-				if err == nil {
-					decision.ModelID = m.ID
-					decision.ProviderID = m.ProviderID
-					return decision, body, nil
-				}
-				if fc := fallbackAdapter.ClassifyError(err); fc.Class == ErrBudgetExceeded {
-					slog.Warn("provider budget exhausted (stream fallback), disabling model",
-						slog.String("provider", m.ProviderID),
-						slog.String("model", m.ID),
-					)
-					e.mu.Lock()
-					if mod, ok := e.models[m.ID]; ok {
-						mod.Enabled = false
-						e.models[m.ID] = mod
-					}
-					e.mu.Unlock()
-				}
-			}
-		}
-		return Decision{}, nil, fmt.Errorf("all providers failed for streaming: %w", err)
 	}
 
-	return decision, body, nil
+	// All eligible models failed. Last-resort pass: try any enabled model not
+	// yet attempted (e.g., health-cooldown providers, budget-excluded models).
+	e.mu.RLock()
+	var lastResort []Model
+	var lrAdapters map[string]Sender
+	tokensNeeded := EstimateTokens(req)
+	outTok := estOutTokens(p)
+	for _, m := range e.models {
+		if !tried[m.ID] && m.Enabled {
+			if a, ok := e.adapters[m.ProviderID]; ok {
+				lastResort = append(lastResort, m)
+				if lrAdapters == nil {
+					lrAdapters = make(map[string]Sender)
+				}
+				lrAdapters[m.ProviderID] = a
+			}
+		}
+	}
+	e.mu.RUnlock()
+
+	for _, m := range lastResort {
+		a := lrAdapters[m.ProviderID]
+		fs, ok := a.(StreamSender)
+		if !ok {
+			continue
+		}
+		slog.Warn("stream: last-resort routing: probing health-excluded provider",
+			slog.String("provider", m.ProviderID),
+			slog.String("model", m.ID),
+		)
+		body, serr := fs.SendStream(ctx, m.ID, req)
+		if serr == nil {
+			if e.health != nil {
+				e.health.RecordSuccess(m.ProviderID, 0)
+			}
+			return Decision{
+				ModelID:          m.ID,
+				ProviderID:       m.ProviderID,
+				EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K),
+				Reason:           "last-resort-fallback",
+			}, body, nil
+		}
+		if e.health != nil {
+			e.health.RecordError(m.ProviderID, serr.Error())
+		}
+		slog.Warn("stream: last-resort provider also failed",
+			slog.String("provider", m.ProviderID),
+			slog.String("model", m.ID),
+			slog.String("error", serr.Error()),
+		)
+	}
+
+	return Decision{}, nil, fmt.Errorf("all providers failed for streaming: %w", err)
 }
 
 // findLargerContextModel finds the smallest model with context larger than needed.
