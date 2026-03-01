@@ -125,6 +125,11 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 		case se.StatusCode >= 500:
 			return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 		}
+		return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
+	}
+	// Network-level errors (timeout, connection refused, DNS failure) are transient.
+	if providers.IsNetworkError(err) {
+		return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 	}
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }

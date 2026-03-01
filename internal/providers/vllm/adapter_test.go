@@ -183,8 +183,10 @@ func TestRetryAfterHeader(t *testing.T) {
 
 func TestClassifyNonStatusError(t *testing.T) {
 	a := New("vllm", "http://localhost")
+	// Network-level errors (timeout, connection refused) must be transient so
+	// the engine retries with backoff rather than abandoning the provider.
 	classified := a.ClassifyError(context.DeadlineExceeded)
-	if classified.Class != router.ErrFatal {
-		t.Errorf("expected ErrFatal for non-StatusError, got %s", classified.Class)
+	if classified.Class != router.ErrTransient {
+		t.Errorf("expected ErrTransient for network error, got %s", classified.Class)
 	}
 }

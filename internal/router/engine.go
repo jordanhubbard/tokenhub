@@ -43,6 +43,11 @@ const (
 	ErrRateLimited     ErrorClass = "rate_limited"
 	ErrTransient       ErrorClass = "transient"
 	ErrFatal           ErrorClass = "fatal"
+	// ErrBudgetExceeded signals that the provider's spending budget is exhausted.
+	// The engine will disable the model so it is not selected again until manually
+	// re-enabled via the admin API, saving wasted round-trips to a permanently
+	// unavailable provider.
+	ErrBudgetExceeded ErrorClass = "budget_exceeded"
 )
 
 // ClassifiedError wraps an error with routing classification.
@@ -644,6 +649,22 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			}
 			continue
 
+		case ErrBudgetExceeded:
+			// The provider's spending budget is permanently exhausted. Disable the
+			// model immediately so it is not selected again until manually re-enabled
+			// via the admin API. This prevents wasteful round-trips on every request.
+			slog.Warn("provider budget exhausted, disabling model",
+				slog.String("provider", m.ProviderID),
+				slog.String("model", m.ID),
+			)
+			e.mu.Lock()
+			if mod, ok := e.models[m.ID]; ok {
+				mod.Enabled = false
+				e.models[m.ID] = mod
+			}
+			e.mu.Unlock()
+			continue
+
 		case ErrFatal:
 			// Don't retry fatals, try next model.
 			continue
@@ -693,6 +714,18 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 
 	body, err := streamer.SendStream(ctx, decision.ModelID, req)
 	if err != nil {
+		if classified := adapter.ClassifyError(err); classified.Class == ErrBudgetExceeded {
+			slog.Warn("provider budget exhausted (stream), disabling model",
+				slog.String("provider", decision.ProviderID),
+				slog.String("model", decision.ModelID),
+			)
+			e.mu.Lock()
+			if mod, ok := e.models[decision.ModelID]; ok {
+				mod.Enabled = false
+				e.models[decision.ModelID] = mod
+			}
+			e.mu.Unlock()
+		}
 		// Try fallback models.
 		for _, m := range eligible[1:] {
 			e.mu.RLock()
@@ -704,6 +737,18 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 					decision.ModelID = m.ID
 					decision.ProviderID = m.ProviderID
 					return decision, body, nil
+				}
+				if fc := fallbackAdapter.ClassifyError(err); fc.Class == ErrBudgetExceeded {
+					slog.Warn("provider budget exhausted (stream fallback), disabling model",
+						slog.String("provider", m.ProviderID),
+						slog.String("model", m.ID),
+					)
+					e.mu.Lock()
+					if mod, ok := e.models[m.ID]; ok {
+						mod.Enabled = false
+						e.models[m.ID] = mod
+					}
+					e.mu.Unlock()
 				}
 			}
 		}

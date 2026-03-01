@@ -1468,8 +1468,39 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := normalizeBaseURL(tt.input)
+		// When running inside Docker with host.docker.internal available,
+		// localhost is rewritten. Accept either form.
+		want := tt.want
+		if isInDocker() {
+			want = rewriteLocalhostForDocker(tt.want)
+		}
+		if got != want {
+			t.Errorf("normalizeBaseURL(%q) = %q, want %q", tt.input, got, want)
+		}
+	}
+}
+
+func TestRewriteLocalhostForDocker(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"http://localhost:8000", "http://host.docker.internal:8000"},
+		{"https://localhost:8000", "https://host.docker.internal:8000"},
+		{"http://localhost", "http://host.docker.internal"},
+		{"https://localhost", "https://host.docker.internal"},
+		{"http://127.0.0.1:8000", "http://host.docker.internal:8000"},
+		{"http://127.0.0.1", "http://host.docker.internal"},
+		{"http://[::1]:8000", "http://host.docker.internal:8000"},
+		{"http://[::1]", "http://host.docker.internal"},
+		{"https://api.openai.com", "https://api.openai.com"},
+		{"http://10.0.0.5:8000", "http://10.0.0.5:8000"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := rewriteLocalhostForDocker(tt.input)
 		if got != tt.want {
-			t.Errorf("normalizeBaseURL(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("rewriteLocalhostForDocker(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

@@ -9,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -60,12 +62,68 @@ func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverr
 
 // normalizeBaseURL strips trailing slashes and common path suffixes like "/v1"
 // so the adapter can unconditionally append "/v1/..." without duplication.
+// When running inside a Docker container, localhost/127.0.0.1/[::1] references
+// are rewritten to host.docker.internal so the container can reach host services.
 func normalizeBaseURL(raw string) string {
 	u := strings.TrimRight(raw, "/")
 	for _, suffix := range []string{"/v1", "/v2"} {
 		u = strings.TrimSuffix(u, suffix)
 	}
-	return strings.TrimRight(u, "/")
+	u = strings.TrimRight(u, "/")
+	if isInDocker() {
+		u = rewriteLocalhostForDocker(u)
+	}
+	return u
+}
+
+var (
+	detectDockerOnce   sync.Once
+	canRewriteLocalhost bool
+)
+
+// isInDocker returns true when host.docker.internal is resolvable, meaning
+// the container was started with extra_hosts mapping and localhost URLs can
+// safely be rewritten to reach host services.
+func isInDocker() bool {
+	detectDockerOnce.Do(func() {
+		_, err := os.Stat("/.dockerenv")
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		addrs, err := net.DefaultResolver.LookupHost(ctx, "host.docker.internal")
+		canRewriteLocalhost = err == nil && len(addrs) > 0
+		if canRewriteLocalhost {
+			slog.Info("Docker host gateway detected; localhost URLs will be rewritten to host.docker.internal")
+		}
+	})
+	return canRewriteLocalhost
+}
+
+// rewriteLocalhostForDocker replaces localhost, 127.0.0.1, and [::1] with
+// host.docker.internal so that URLs targeting the host machine work from
+// inside a Docker container. Requires extra_hosts in docker-compose.yaml.
+func rewriteLocalhostForDocker(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	host := parsed.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return rawURL
+	}
+	port := parsed.Port()
+	if port != "" {
+		parsed.Host = "host.docker.internal:" + port
+	} else {
+		parsed.Host = "host.docker.internal"
+	}
+	rewritten := parsed.String()
+	slog.Info("rewriting localhost URL for Docker container",
+		slog.String("original", rawURL),
+		slog.String("rewritten", rewritten))
+	return rewritten
 }
 
 // checkBaseURLReachable attempts to resolve the hostname in baseURL and returns

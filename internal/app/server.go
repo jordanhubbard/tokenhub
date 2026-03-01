@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -1014,12 +1017,62 @@ func newProviderAdapter(provType, id, apiKey, baseURL string, timeout time.Durat
 
 // normalizeBaseURL strips trailing slashes and common API version path
 // suffixes so adapters can unconditionally append "/v1/..." paths.
+// When running inside a Docker container with host.docker.internal available,
+// localhost/127.0.0.1/[::1] are rewritten to reach host services.
 func normalizeBaseURL(raw string) string {
 	u := strings.TrimRight(raw, "/")
 	for _, suffix := range []string{"/v1", "/v2"} {
 		u = strings.TrimSuffix(u, suffix)
 	}
-	return strings.TrimRight(u, "/")
+	u = strings.TrimRight(u, "/")
+	if isInDocker() {
+		u = rewriteLocalhostForDocker(u)
+	}
+	return u
+}
+
+var (
+	detectDockerOnce   sync.Once
+	canRewriteLocalhost bool
+)
+
+func isInDocker() bool {
+	detectDockerOnce.Do(func() {
+		_, err := os.Stat("/.dockerenv")
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		addrs, err := net.DefaultResolver.LookupHost(ctx, "host.docker.internal")
+		canRewriteLocalhost = err == nil && len(addrs) > 0
+		if canRewriteLocalhost {
+			slog.Info("Docker host gateway detected; localhost URLs will be rewritten to host.docker.internal")
+		}
+	})
+	return canRewriteLocalhost
+}
+
+func rewriteLocalhostForDocker(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	host := parsed.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return rawURL
+	}
+	port := parsed.Port()
+	if port != "" {
+		parsed.Host = "host.docker.internal:" + port
+	} else {
+		parsed.Host = "host.docker.internal"
+	}
+	rewritten := parsed.String()
+	slog.Info("rewriting localhost URL for Docker container",
+		slog.String("original", rawURL),
+		slog.String("rewritten", rewritten))
+	return rewritten
 }
 
 // loadPersistedProviders reads provider records from the database and creates

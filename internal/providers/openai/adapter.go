@@ -103,7 +103,14 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 			return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 		case strings.Contains(se.Body, "context_length_exceeded"):
 			return &router.ClassifiedError{Err: err, Class: router.ErrContextOverflow}
+		case se.StatusCode == 400 && strings.Contains(se.Body, "budget_exceeded"):
+			return &router.ClassifiedError{Err: err, Class: router.ErrBudgetExceeded}
 		}
+		return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
+	}
+	// Network-level errors (timeout, connection refused, DNS failure) are transient.
+	if providers.IsNetworkError(err) {
+		return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 	}
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }

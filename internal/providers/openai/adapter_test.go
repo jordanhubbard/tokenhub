@@ -137,9 +137,20 @@ func TestSendUnauthorized(t *testing.T) {
 
 func TestClassifyNonStatusError(t *testing.T) {
 	a := New("openai", "key", "http://localhost")
+	// Network-level errors (timeout, connection refused) must be transient so
+	// the engine retries with backoff rather than abandoning the provider.
 	classified := a.ClassifyError(context.DeadlineExceeded)
-	if classified.Class != router.ErrFatal {
-		t.Errorf("expected ErrFatal for non-StatusError, got %s", classified.Class)
+	if classified.Class != router.ErrTransient {
+		t.Errorf("expected ErrTransient for network error, got %s", classified.Class)
+	}
+}
+
+func TestClassifyBudgetExceeded(t *testing.T) {
+	a := New("openai", "key", "http://localhost")
+	err := &providers.StatusError{StatusCode: 400, Body: `{"error":{"type":"budget_exceeded","message":"Budget has been exceeded!"}}`}
+	classified := a.ClassifyError(err)
+	if classified.Class != router.ErrBudgetExceeded {
+		t.Errorf("expected ErrBudgetExceeded for budget_exceeded, got %s", classified.Class)
 	}
 }
 
