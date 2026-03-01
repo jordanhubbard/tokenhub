@@ -126,10 +126,11 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	eng := router.NewEngine(router.EngineConfig{
-		DefaultMode:         cfg.DefaultMode,
-		DefaultMaxBudgetUSD: cfg.DefaultMaxBudget,
-		DefaultMaxLatencyMs: cfg.DefaultMaxLatencyMs,
-		ExplorationTemp:     cfg.ExplorationTemp,
+		DefaultMode:          cfg.DefaultMode,
+		DefaultMaxBudgetUSD:  cfg.DefaultMaxBudget,
+		DefaultMaxLatencyMs:  cfg.DefaultMaxLatencyMs,
+		ExplorationTemp:      cfg.ExplorationTemp,
+		PerProviderTimeoutMs: cfg.ProviderTimeoutSecs * 1000,
 	})
 	eng.SetSkipRecorder(m)
 

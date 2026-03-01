@@ -101,7 +101,9 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 			return ce
 		case se.StatusCode >= 500:
 			return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
-		case strings.Contains(se.Body, "context_length_exceeded"):
+		case strings.Contains(se.Body, "context_length_exceeded") ||
+			strings.Contains(se.Body, "context length") ||
+			se.StatusCode == 400 && strings.Contains(se.Body, "max_tokens") && strings.Contains(se.Body, "too large"):
 			return &router.ClassifiedError{Err: err, Class: router.ErrContextOverflow}
 		case se.StatusCode == 400 && strings.Contains(se.Body, "budget_exceeded"):
 			return &router.ClassifiedError{Err: err, Class: router.ErrBudgetExceeded}

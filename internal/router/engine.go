@@ -106,6 +106,12 @@ type EngineConfig struct {
 	// ExplorationTemp controls softmax temperature for load distribution.
 	// 0 = always pick top model, 0.5 = moderate exploration, 1.0 = strong.
 	ExplorationTemp float64
+	// PerProviderTimeoutMs caps how long a single provider attempt may take.
+	// When set, each adapter.Send call receives its own context deadline so
+	// that one slow or unreachable provider cannot consume the entire routing
+	// budget and starve all fallback providers. If 0, per-provider capping is
+	// disabled and only the overall DefaultMaxLatencyMs deadline applies.
+	PerProviderTimeoutMs int
 }
 
 type Engine struct {
@@ -591,9 +597,20 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			slog.Int("total", len(eligible)),
 		)
 
+		// Wrap the provider call with a per-provider deadline so that one
+		// slow or unreachable provider cannot exhaust the entire routing budget.
+		sendCtx := ctx
+		var sendCancel context.CancelFunc
+		if e.cfg.PerProviderTimeoutMs > 0 {
+			sendCtx, sendCancel = context.WithTimeout(ctx, time.Duration(e.cfg.PerProviderTimeoutMs)*time.Millisecond)
+		}
+
 		sendStart := time.Now()
-		resp, err := adapter.Send(ctx, m.ID, req)
+		resp, err := adapter.Send(sendCtx, m.ID, req)
 		sendMs := float64(time.Since(sendStart).Milliseconds())
+		if sendCancel != nil {
+			sendCancel()
+		}
 
 		if err == nil {
 			if e.health != nil {
@@ -722,9 +739,23 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			slog.String("provider", m.ProviderID),
 			slog.String("model", m.ID),
 		)
+
+		// Use a fresh context for the last-resort pass — the original ctx may
+		// have already expired (e.g., a slow provider consumed the whole budget).
+		// Give each last-resort attempt its own per-provider time limit.
+		lrCtx := context.Background()
+		var lrCancel context.CancelFunc
+		if e.cfg.PerProviderTimeoutMs > 0 {
+			lrCtx, lrCancel = context.WithTimeout(lrCtx, time.Duration(e.cfg.PerProviderTimeoutMs)*time.Millisecond)
+		}
+
 		sendStart := time.Now()
-		resp, err := adapter.Send(ctx, m.ID, req)
+		resp, err := adapter.Send(lrCtx, m.ID, req)
 		sendMs := float64(time.Since(sendStart).Milliseconds())
+		if lrCancel != nil {
+			lrCancel()
+		}
+
 		if err == nil {
 			if e.health != nil {
 				e.health.RecordSuccess(m.ProviderID, sendMs)

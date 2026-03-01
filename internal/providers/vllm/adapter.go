@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -124,6 +125,8 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 			return ce
 		case se.StatusCode >= 500:
 			return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
+		case isContextOverflow(se.Body):
+			return &router.ClassifiedError{Err: err, Class: router.ErrContextOverflow}
 		}
 		return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 	}
@@ -132,6 +135,21 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 		return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 	}
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
+}
+
+// isContextOverflow returns true when the provider error body signals that the
+// request exceeded the model's context window. vLLM and other OpenAI-compatible
+// servers return HTTP 400 with these patterns for context overflow.
+func isContextOverflow(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "context length") ||
+		strings.Contains(lower, "context_length") ||
+		strings.Contains(lower, "max_tokens") && strings.Contains(lower, "too large") ||
+		strings.Contains(lower, "prompt is too long") ||
+		strings.Contains(lower, "input is too long") ||
+		strings.Contains(lower, "maximum context") ||
+		strings.Contains(lower, "token limit") ||
+		strings.Contains(lower, "too many tokens")
 }
 
 // SendStream sends a streaming request and returns the raw SSE response body.

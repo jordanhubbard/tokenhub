@@ -58,8 +58,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.DefaultMaxBudget != 0.05 {
 		t.Errorf("DefaultMaxBudget = %f, want 0.05", cfg.DefaultMaxBudget)
 	}
-	if cfg.DefaultMaxLatencyMs != 20000 {
-		t.Errorf("DefaultMaxLatencyMs = %d, want 20000", cfg.DefaultMaxLatencyMs)
+	if cfg.DefaultMaxLatencyMs != 120000 {
+		t.Errorf("DefaultMaxLatencyMs = %d, want 120000", cfg.DefaultMaxLatencyMs)
 	}
 	if cfg.ProviderTimeoutSecs != 30 {
 		t.Errorf("ProviderTimeoutSecs = %d, want 30", cfg.ProviderTimeoutSecs)
@@ -121,8 +121,8 @@ func TestLoadConfigInvalidEnvFallsBackToDefaults(t *testing.T) {
 	if cfg.VaultEnabled != true {
 		t.Errorf("VaultEnabled = %v, want true (default on invalid input)", cfg.VaultEnabled)
 	}
-	if cfg.DefaultMaxLatencyMs != 20000 {
-		t.Errorf("DefaultMaxLatencyMs = %d, want 20000 (default on invalid input)", cfg.DefaultMaxLatencyMs)
+	if cfg.DefaultMaxLatencyMs != 120000 {
+		t.Errorf("DefaultMaxLatencyMs = %d, want 120000 (default on invalid input)", cfg.DefaultMaxLatencyMs)
 	}
 	if cfg.DefaultMaxBudget != 0.05 {
 		t.Errorf("DefaultMaxBudget = %f, want 0.05 (default on invalid input)", cfg.DefaultMaxBudget)
@@ -140,7 +140,7 @@ func newTestConfig() Config {
 		VaultEnabled:        false,
 		DefaultMode:         "normal",
 		DefaultMaxBudget:    0.05,
-		DefaultMaxLatencyMs: 20000,
+		DefaultMaxLatencyMs: 120000,
 		ProviderTimeoutSecs: 30,
 		RateLimitRPS:        60,
 		RateLimitBurst:      120,
