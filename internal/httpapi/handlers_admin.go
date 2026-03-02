@@ -32,6 +32,10 @@ import (
 // changes take effect immediately without a restart and so that repeated
 // registrations from bootstrap scripts are a no-op.
 func registerProviderAdapter(d Dependencies, p store.ProviderRecord, apiKeyOverride string) {
+	if !p.Enabled {
+		d.Engine.UnregisterAdapter(p.ID)
+		return
+	}
 	if p.BaseURL == "" {
 		return
 	}
