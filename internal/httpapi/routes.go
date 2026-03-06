@@ -165,23 +165,30 @@ func MountRoutes(r chi.Router, d Dependencies) {
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(bodySizeLimit(maxRequestBodySize))
-		// Apply rate limiting only to expensive API endpoints, not healthz/metrics/admin.
-		if d.RateLimiter != nil {
-			r.Use(d.RateLimiter.Middleware)
-		}
-		// Apply idempotency middleware before auth so cached responses are replayed early.
-		if d.IdempotencyCache != nil {
-			r.Use(idempotency.Middleware(d.IdempotencyCache))
-		}
-		// Apply API key auth middleware if key manager is configured.
-		// Pass the rate limiter for per-key rate limiting alongside the per-IP limit.
-		if d.APIKeyMgr != nil {
-			r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker, d.RateLimiter, d.RateLimitRPS))
-		}
-		r.Post("/chat/completions", ChatCompletionsHandler(d))
-		r.Post("/embeddings", EmbeddingsHandler(d))
+
+		// /v1/models is public — no auth required (standard OpenAI-compatible behaviour;
+		// clients use this to discover available models before authenticating).
 		r.Get("/models", ModelsListPublicHandler(d))
-		r.Post("/plan", PlanHandler(d))
+
+		// All other /v1 endpoints require authentication.
+		r.Group(func(r chi.Router) {
+			// Apply rate limiting only to expensive API endpoints, not healthz/metrics/admin.
+			if d.RateLimiter != nil {
+				r.Use(d.RateLimiter.Middleware)
+			}
+			// Apply idempotency middleware before auth so cached responses are replayed early.
+			if d.IdempotencyCache != nil {
+				r.Use(idempotency.Middleware(d.IdempotencyCache))
+			}
+			// Apply API key auth middleware if key manager is configured.
+			// Pass the rate limiter for per-key rate limiting alongside the per-IP limit.
+			if d.APIKeyMgr != nil {
+				r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker, d.RateLimiter, d.RateLimitRPS))
+			}
+			r.Post("/chat/completions", ChatCompletionsHandler(d))
+			r.Post("/embeddings", EmbeddingsHandler(d))
+			r.Post("/plan", PlanHandler(d))
+		})
 	})
 
 	r.Route("/admin/v1", func(r chi.Router) {
