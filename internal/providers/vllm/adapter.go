@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -21,11 +22,12 @@ type KeyFunc func() string
 // Adapter implements router.Sender for vLLM instances.
 // Supports round-robin across multiple endpoints.
 type Adapter struct {
-	id        string
-	keyFunc   KeyFunc
-	endpoints []string
-	counter   atomic.Uint64
-	client    *http.Client
+	id             string
+	keyFunc        KeyFunc
+	endpoints      []string
+	counter        atomic.Uint64
+	client         *http.Client
+	reasoningModel bool // true when the model emits reasoning_content (e.g. Nemotron)
 }
 
 // New creates a new vLLM adapter with one or more endpoints.
@@ -73,6 +75,18 @@ func WithAPIKey(apiKey string) Option {
 func WithKeyFunc(fn KeyFunc) Option {
 	return func(a *Adapter) {
 		a.keyFunc = fn
+	}
+}
+
+// WithReasoningModel marks this adapter as serving a reasoning model (e.g.
+// Nemotron-3-Super) that emits both reasoning_content and content fields in
+// its responses. When set, the adapter logs a notice when reasoning tokens
+// are present in streaming responses (where field-level extraction is not
+// possible). Non-streaming responses are handled transparently by
+// router.ExtractContentParts.
+func WithReasoningModel() Option {
+	return func(a *Adapter) {
+		a.reasoningModel = true
 	}
 }
 
@@ -153,7 +167,17 @@ func isContextOverflow(body string) bool {
 }
 
 // SendStream sends a streaming request and returns the raw SSE response body.
+// For reasoning models, reasoning_content tokens appear inline in the SSE
+// stream as vLLM emits them; they cannot be separated at this layer. Clients
+// that need to parse reasoning tokens should handle the SSE delta fields
+// directly. A log notice is emitted so this is observable.
 func (a *Adapter) SendStream(ctx context.Context, model string, req router.Request) (io.ReadCloser, error) {
+	if a.reasoningModel {
+		slog.Debug("vllm: streaming from reasoning model; reasoning_content tokens are inline in SSE deltas",
+			slog.String("adapter", a.id),
+			slog.String("model", model),
+		)
+	}
 	messages := make([]map[string]string, len(req.Messages))
 	for i, msg := range req.Messages {
 		messages[i] = map[string]string{

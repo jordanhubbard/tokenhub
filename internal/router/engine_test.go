@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -380,6 +381,48 @@ func TestExtractContentAnthropic(t *testing.T) {
 	got := ExtractContent(resp)
 	if got != "hello from anthropic" {
 		t.Errorf("ExtractContent() = %q, want %q", got, "hello from anthropic")
+	}
+}
+
+func TestExtractContentPartsReasoningModel(t *testing.T) {
+	// Simulate a vLLM Nemotron response with both reasoning_content and content.
+	resp, _ := json.Marshal(map[string]any{
+		"choices": []map[string]any{
+			{
+				"message": map[string]string{
+					"role":              "assistant",
+					"reasoning_content": "let me think step by step...",
+					"content":           "the answer is 42",
+				},
+			},
+		},
+	})
+
+	full, reasoning := ExtractContentParts(resp)
+	if reasoning != "let me think step by step..." {
+		t.Errorf("ExtractContentParts() reasoning = %q, want %q", reasoning, "let me think step by step...")
+	}
+	if full == "" {
+		t.Error("ExtractContentParts() fullContent should not be empty")
+	}
+	// fullContent must contain both parts.
+	if !strings.Contains(full, "let me think step by step...") {
+		t.Errorf("fullContent should contain reasoning; got %q", full)
+	}
+	if !strings.Contains(full, "the answer is 42") {
+		t.Errorf("fullContent should contain content; got %q", full)
+	}
+}
+
+func TestExtractContentPartsNonReasoning(t *testing.T) {
+	// Standard OpenAI response — reasoning should be empty.
+	resp := oaiResponse("just a regular answer")
+	full, reasoning := ExtractContentParts(resp)
+	if reasoning != "" {
+		t.Errorf("ExtractContentParts() reasoning should be empty for non-reasoning model, got %q", reasoning)
+	}
+	if full != "just a regular answer" {
+		t.Errorf("ExtractContentParts() fullContent = %q, want %q", full, "just a regular answer")
 	}
 }
 
