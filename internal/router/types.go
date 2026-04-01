@@ -1,6 +1,9 @@
 package router
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Request is a provider-agnostic envelope. Provider adapters translate this
 // into provider-specific API calls.
@@ -32,9 +35,64 @@ type Request struct {
 }
 
 // Message represents a single chat message with a role and content.
+// Content is normalized to a plain string on unmarshal: if the incoming JSON
+// sends content as an array of parts (OpenAI multi-modal format), the text
+// parts are concatenated so downstream providers that only accept string
+// content (e.g. vLLM with Nemotron) never see an unexpected type.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler so that Message.Content can accept
+// either a plain JSON string or an OpenAI-style content-parts array:
+//
+//	[{"type":"text","text":"hello"}, {"type":"text","text":" world"}]
+//
+// Non-text parts (image_url, etc.) are silently skipped; their textual
+// representation is not meaningful for text-only backends.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	// Use an alias to avoid infinite recursion.
+	type alias struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	m.Role = a.Role
+
+	if len(a.Content) == 0 {
+		return nil
+	}
+
+	// Fast path: plain string.
+	if a.Content[0] == '"' {
+		return json.Unmarshal(a.Content, &m.Content)
+	}
+
+	// Array path: OpenAI multi-part content.
+	if a.Content[0] == '[' {
+		var parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(a.Content, &parts); err != nil {
+			return err
+		}
+		var sb strings.Builder
+		for _, p := range parts {
+			if p.Type == "text" {
+				sb.WriteString(p.Text)
+			}
+		}
+		m.Content = sb.String()
+		return nil
+	}
+
+	// Null or unexpected type — leave content empty.
+	return nil
 }
 
 // Policy specifies routing constraints such as mode, budget, latency, and quality.
