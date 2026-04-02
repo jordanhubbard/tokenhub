@@ -185,6 +185,14 @@ func (e *Engine) RegisterModel(m Model) {
 	e.models[m.ID] = m
 }
 
+// HasModel returns true if a model with the given ID is registered (enabled or not).
+func (e *Engine) HasModel(id string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	_, ok := e.models[id]
+	return ok
+}
+
 // UnregisterModel removes a model by ID so it is no longer eligible for routing.
 func (e *Engine) UnregisterModel(id string) {
 	e.mu.Lock()
@@ -429,14 +437,31 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	}
 
 	outTok := estOutTokens(p)
-	hintApplied := req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
 
+	// If a model hint is provided and matches an eligible model exactly,
+	// route deterministically to that model — skip softmax entirely.
+	// This ensures "give me Claude" actually gives Claude, not a probabilistic
+	// chance of Claude. Softmax/exploration is for load-balancing, not overriding
+	// explicit model requests.
+	if req.ModelHint != "" {
+		for _, m := range eligible {
+			if m.ID == req.ModelHint {
+				estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
+				return Decision{
+					ModelID:          m.ID,
+					ProviderID:       m.ProviderID,
+					EstimatedCostUSD: estCost,
+					Reason:           "routed-hint-exact",
+				}, eligible, nil
+			}
+		}
+	}
+
+	// No exact hint match — fall back to weighted softmax selection.
+	e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
 	selected := softmaxSelect(eligible, e.cfg.ExplorationTemp)
 	estCost := estimateCostUSD(tokensNeeded, outTok, selected.InputPer1K, selected.OutputPer1K)
 	reason := fmt.Sprintf("routed-weight-%d", selected.Weight)
-	if hintApplied {
-		reason = "routed-hint-boost"
-	}
 	return Decision{
 		ModelID:          selected.ID,
 		ProviderID:       selected.ProviderID,
@@ -738,9 +763,23 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	}
 
 	outTok := estOutTokens(p)
+
+	// Deterministic hint routing: if the requested model is in the eligible set,
+	// pin to it and skip softmax. Exact match takes priority over load-balancing.
 	hintModelID := ""
-	if req.ModelHint != "" && e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode) {
-		hintModelID = req.ModelHint
+	if req.ModelHint != "" {
+		for i, m := range eligible {
+			if m.ID == req.ModelHint {
+				hintModelID = req.ModelHint
+				// Move hinted model to front so it's selected first in sequential passes.
+				eligible[0], eligible[i] = eligible[i], eligible[0]
+				break
+			}
+		}
+	}
+	if hintModelID == "" {
+		// No exact match — fall back to probabilistic hint boost.
+		e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
 	}
 	// Snapshot adapters for all eligible providers plus the full model map for escalation.
 	adapters := make(map[string]Sender, len(eligible))
@@ -764,7 +803,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 
 	// When hedging is enabled, dispatch the primary eligible set in parallel
 	// with staggered launch times. The first successful response wins.
-	if e.cfg.HedgeAfterMs > 0 {
+	// Exception: if we have an exact model hint match, bypass hedging entirely —
+	// we must not race the hinted model against local vLLM providers that respond faster.
+	if e.cfg.HedgeAfterMs > 0 && hintModelID == "" {
 		maxHedge := e.cfg.MaxHedgedProviders
 		if maxHedge <= 0 {
 			maxHedge = 3

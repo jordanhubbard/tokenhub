@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -111,10 +112,23 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			params["n"] = *req.N
 		}
 
+		// Normalize model hint: strip known provider prefixes that OpenClaw
+		// and other gateway clients prepend (e.g. "nvidia/", "openai/", "anthropic/").
+		// TokenHub registers models by their bare provider-specific ID, not with
+		// the client's routing prefix. Strip at most one leading "<word>/" prefix
+		// when the resulting ID matches a known registered model; otherwise keep as-is.
+		modelHint := req.Model
+		if idx := strings.IndexByte(modelHint, '/'); idx > 0 {
+			bare := modelHint[idx+1:]
+			if d.Engine.HasModel(bare) {
+				modelHint = bare
+			}
+		}
+
 		// Translate to router.Request.
 		routerReq := router.Request{
 			Messages:  req.Messages,
-			ModelHint: req.Model,
+			ModelHint: modelHint,
 			Stream:    req.Stream,
 		}
 		if len(params) > 0 {
