@@ -286,9 +286,11 @@ func ModelsListPublicHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		models := d.Engine.ListModels()
 		type modelObj struct {
-			ID      string `json:"id"`
-			Object  string `json:"object"`
-			OwnedBy string `json:"owned_by"`
+			ID            string `json:"id"`
+			Object        string `json:"object"`
+			OwnedBy       string `json:"owned_by"`
+			ContextLength int    `json:"context_length,omitempty"`
+			MaxModelLen   int    `json:"max_model_len,omitempty"`
 		}
 		var data []modelObj
 		for _, m := range models {
@@ -296,9 +298,11 @@ func ModelsListPublicHandler(d Dependencies) http.HandlerFunc {
 				continue
 			}
 			data = append(data, modelObj{
-				ID:      m.ID,
-				Object:  "model",
-				OwnedBy: m.ProviderID,
+				ID:            m.ID,
+				Object:        "model",
+				OwnedBy:       m.ProviderID,
+				ContextLength: m.MaxContextTokens,
+				MaxModelLen:   m.MaxContextTokens,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")

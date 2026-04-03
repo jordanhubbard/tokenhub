@@ -210,6 +210,8 @@ func routeToScope(endpoint string) string {
 		return "plan"
 	case "/v1/models":
 		return "chat" // model listing is read-only; any chat-capable key may enumerate models
+	case "/v1/embeddings":
+		return "embeddings"
 	default:
 		return ""
 	}
