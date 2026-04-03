@@ -64,7 +64,10 @@ func EmbeddingsHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		// Proxy to the provider's /v1/embeddings endpoint.
-		target := strings.TrimRight(baseURL, "/") + "/v1/embeddings"
+		// Strip trailing /v1 from base URL before appending to avoid double /v1/v1.
+		base := strings.TrimRight(baseURL, "/")
+		base = strings.TrimSuffix(base, "/v1")
+		target := base + "/v1/embeddings"
 		proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
 		if err != nil {
 			jsonError(w, "failed to build proxy request", http.StatusInternalServerError)
