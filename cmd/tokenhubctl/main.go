@@ -94,6 +94,8 @@ func main() {
 		doSimulate(args)
 	case "tsdb":
 		doTSDB(args)
+	case "secret", "secrets":
+		doSecrets(args)
 	case "help", "--help", "-h":
 		usageTo(os.Stdout)
 	default:
@@ -128,6 +130,11 @@ Commands:
   vault unlock <password>     Unlock the vault
   vault lock                  Lock the vault
   vault rotate <old> <new>    Rotate the vault password
+
+  secret list                 List all stored secret keys
+  secret get <key>            Get a decrypted secret value
+  secret set <key> <value>    Store or update a secret
+  secret delete <key>         Delete a secret
 
   provider list               List all providers (store + runtime)
   provider add <json>         Create or update a provider
@@ -444,6 +451,44 @@ func doVault(args []string) {
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown vault command: %s\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func doSecrets(args []string) {
+	requireArgs(args, 1, "secret <list|get|set|delete> [key] [value]")
+	switch args[0] {
+	case "list":
+		result := doGet("/admin/v1/vault/secrets")
+		keys, _ := result["keys"].([]any)
+		if len(keys) == 0 {
+			fmt.Println("(no secrets stored)")
+			return
+		}
+		for _, k := range keys {
+			fmt.Println(k)
+		}
+	case "get":
+		requireArgs(args, 2, "secret get <key>")
+		result := doGet("/admin/v1/vault/secrets/" + args[1])
+		if v, ok := result["value"].(string); ok {
+			fmt.Println(v)
+		}
+	case "set":
+		requireArgs(args, 3, "secret set <key> <value>")
+		body := fmt.Sprintf(`{"value":%s}`, jsonStr(args[2]))
+		result := doPut("/admin/v1/vault/secrets/"+args[1], body)
+		if result["ok"] == true {
+			fmt.Printf("Secret %q stored.\n", args[1])
+		}
+	case "delete":
+		requireArgs(args, 2, "secret delete <key>")
+		result := doDelete("/admin/v1/vault/secrets/" + args[1])
+		if result["ok"] == true {
+			fmt.Printf("Secret %q deleted.\n", args[1])
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown secret command: %s\n", args[0])
 		os.Exit(1)
 	}
 }

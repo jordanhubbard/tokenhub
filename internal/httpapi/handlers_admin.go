@@ -1084,6 +1084,138 @@ func RewardsHandler(d Dependencies) http.HandlerFunc {
 	}
 }
 
+// vaultLockedError writes a 423 Locked response when the vault is not available.
+func vaultLockedError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusLocked)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": "vault is locked"})
+}
+
+// VaultSecretsListHandler handles GET /admin/v1/vault/secrets
+// Returns a list of secret key names (without the "secret:" prefix).
+func VaultSecretsListHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Vault == nil || d.Vault.IsLocked() {
+			vaultLockedError(w)
+			return
+		}
+		exported := d.Vault.Export()
+		const pfx = "secret:"
+		var keys []string
+		for k := range exported {
+			if strings.HasPrefix(k, pfx) {
+				keys = append(keys, strings.TrimPrefix(k, pfx))
+			}
+		}
+		if keys == nil {
+			keys = []string{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+	}
+}
+
+// VaultSecretsGetHandler handles GET /admin/v1/vault/secrets/{key}
+func VaultSecretsGetHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Vault == nil || d.Vault.IsLocked() {
+			vaultLockedError(w)
+			return
+		}
+		key := chi.URLParam(r, "key")
+		if key == "" {
+			jsonError(w, "key required", http.StatusBadRequest)
+			return
+		}
+		val, err := d.Vault.Get("secret:" + key)
+		if err != nil {
+			jsonError(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"key": key, "value": val})
+	}
+}
+
+// VaultSecretsSetHandler handles PUT /admin/v1/vault/secrets/{key}
+func VaultSecretsSetHandler(d Dependencies) http.HandlerFunc {
+	type setReq struct {
+		Value string `json:"value"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Vault == nil || d.Vault.IsLocked() {
+			vaultLockedError(w)
+			return
+		}
+		key := chi.URLParam(r, "key")
+		if key == "" {
+			jsonError(w, "key required", http.StatusBadRequest)
+			return
+		}
+		var req setReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if err := d.Vault.Set("secret:"+key, req.Value); err != nil {
+			jsonError(w, "vault error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Persist vault blob to SQLite.
+		if d.Store != nil {
+			salt := d.Vault.Salt()
+			data := d.Vault.Export()
+			if salt != nil {
+				d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+			}
+		}
+		if d.Store != nil {
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.secret.set",
+				Resource:  key,
+				RequestID: middleware.GetReqID(r.Context()),
+			}))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
+// VaultSecretsDeleteHandler handles DELETE /admin/v1/vault/secrets/{key}
+func VaultSecretsDeleteHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.Vault == nil || d.Vault.IsLocked() {
+			vaultLockedError(w)
+			return
+		}
+		key := chi.URLParam(r, "key")
+		if key == "" {
+			jsonError(w, "key required", http.StatusBadRequest)
+			return
+		}
+		d.Vault.Delete("secret:" + key)
+		// Persist vault blob to SQLite.
+		if d.Store != nil {
+			salt := d.Vault.Salt()
+			data := d.Vault.Export()
+			if salt != nil {
+				d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+			}
+		}
+		if d.Store != nil {
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.secret.delete",
+				Resource:  key,
+				RequestID: middleware.GetReqID(r.Context()),
+			}))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
 func HealthStatsHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.Health == nil {
