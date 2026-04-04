@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,6 +205,36 @@ func (v *Vault) Delete(key string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	delete(v.values, key)
+}
+
+// IsEnabled reports whether vault encryption is enabled for this instance.
+func (v *Vault) IsEnabled() bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.enabled
+}
+
+// Keys returns all keys in the vault whose name has the given prefix.
+// If prefix is empty, all keys are returned.
+// The vault must be unlocked; ErrVaultLocked is returned otherwise.
+func (v *Vault) Keys(prefix string) ([]string, error) {
+	if !v.IsEnabled() {
+		return nil, ErrVaultNotEnabled
+	}
+	if v.IsLocked() {
+		return nil, ErrVaultLocked
+	}
+	v.Touch()
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	var keys []string
+	for k := range v.values {
+		if prefix == "" || strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 // Export exports the encrypted vault data (for persistence).

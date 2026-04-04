@@ -1093,3 +1093,170 @@ func HealthStatsHandler(d Dependencies) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]any{"providers": d.Health.AllStats()})
 	}
 }
+
+// ─── Vault generic secrets CRUD ──────────────────────────────────────────────
+//
+// Secrets are stored in the vault under the key prefix "secret:" to keep them
+// in a separate namespace from provider API keys ("provider:" prefix).
+// All four endpoints require the vault to be unlocked.
+
+const secretKeyPrefix = "secret:"
+
+// vaultSecretKey returns the full vault key for a user-supplied secret name.
+func vaultSecretKey(name string) string { return secretKeyPrefix + name }
+
+// checkVaultReady returns true if the vault is configured and unlocked.
+// On failure it writes the appropriate HTTP error and returns false.
+func checkVaultReady(w http.ResponseWriter, v *vault.Vault) bool {
+	if v == nil {
+		jsonError(w, "vault not configured", http.StatusServiceUnavailable)
+		return false
+	}
+	if !v.IsEnabled() {
+		jsonError(w, "vault not enabled", http.StatusServiceUnavailable)
+		return false
+	}
+	if v.IsLocked() {
+		jsonError(w, "vault is locked", http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
+// VaultSecretsListHandler handles GET /admin/v1/vault/secrets
+// Returns a sorted list of secret names (key suffix after "secret:").
+// Values are never returned by the list endpoint.
+func VaultSecretsListHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !checkVaultReady(w, d.Vault) {
+			return
+		}
+		keys, err := d.Vault.Keys(secretKeyPrefix)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Strip the "secret:" prefix from returned names.
+		names := make([]string, 0, len(keys))
+		for _, k := range keys {
+			names = append(names, strings.TrimPrefix(k, secretKeyPrefix))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"secrets": names})
+	}
+}
+
+// VaultSecretsGetHandler handles GET /admin/v1/vault/secrets/{key}
+// Returns the decrypted value for the named secret.
+func VaultSecretsGetHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !checkVaultReady(w, d.Vault) {
+			return
+		}
+		name := chi.URLParam(r, "key")
+		if name == "" {
+			jsonError(w, "key required", http.StatusBadRequest)
+			return
+		}
+		val, err := d.Vault.Get(vaultSecretKey(name))
+		if err != nil {
+			if strings.Contains(err.Error(), "key not found") {
+				jsonError(w, "secret not found", http.StatusNotFound)
+			} else {
+				jsonError(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"key": name, "value": val})
+	}
+}
+
+// VaultSecretsPutHandler handles PUT /admin/v1/vault/secrets/{key}
+// Stores or updates a secret. Body: {"value": "..."}.
+// Persists the vault blob to SQLite on every write.
+func VaultSecretsPutHandler(d Dependencies) http.HandlerFunc {
+	type putReq struct {
+		Value string `json:"value"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !checkVaultReady(w, d.Vault) {
+			return
+		}
+		name := chi.URLParam(r, "key")
+		if name == "" {
+			jsonError(w, "key required", http.StatusBadRequest)
+			return
+		}
+		var req putReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if req.Value == "" {
+			jsonError(w, "value required", http.StatusBadRequest)
+			return
+		}
+		if err := d.Vault.Set(vaultSecretKey(name), req.Value); err != nil {
+			jsonError(w, "failed to store secret: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Persist vault blob to SQLite on every write.
+		if d.Store != nil {
+			salt := d.Vault.Salt()
+			data := d.Vault.Export()
+			if salt != nil {
+				d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+			}
+		}
+		if d.Store != nil {
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.secret.set",
+				Resource:  name,
+				RequestID: middleware.GetReqID(r.Context()),
+			}))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "key": name})
+	}
+}
+
+// VaultSecretsDeleteHandler handles DELETE /admin/v1/vault/secrets/{key}
+// Deletes a named secret from the vault and persists the updated blob.
+func VaultSecretsDeleteHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !checkVaultReady(w, d.Vault) {
+			return
+		}
+		name := chi.URLParam(r, "key")
+		if name == "" {
+			jsonError(w, "key required", http.StatusBadRequest)
+			return
+		}
+		// Verify the key exists before deleting (returns 404 if not found).
+		if _, err := d.Vault.Get(vaultSecretKey(name)); err != nil {
+			if strings.Contains(err.Error(), "key not found") {
+				jsonError(w, "secret not found", http.StatusNotFound)
+			} else {
+				jsonError(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		d.Vault.Delete(vaultSecretKey(name))
+		// Persist vault blob to SQLite on every write.
+		if d.Store != nil {
+			salt := d.Vault.Salt()
+			data := d.Vault.Export()
+			if salt != nil {
+				d.warnOnErr("save_vault", d.Store.SaveVaultBlob(r.Context(), salt, data))
+			}
+		}
+		if d.Store != nil {
+			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
+				Timestamp: time.Now().UTC(),
+				Action:    "vault.secret.delete",
+				Resource:  name,
+				RequestID: middleware.GetReqID(r.Context()),
+			}))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "key": name})
+	}
+}

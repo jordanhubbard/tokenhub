@@ -128,6 +128,10 @@ Commands:
   vault unlock <password>     Unlock the vault
   vault lock                  Lock the vault
   vault rotate <old> <new>    Rotate the vault password
+  vault secret list           List all secret keys
+  vault secret get <key>      Get the decrypted value of a secret
+  vault secret set <key> <v>  Store or update a secret (value as arg)
+  vault secret delete <key>   Delete a secret
 
   provider list               List all providers (store + runtime)
   provider add <json>         Create or update a provider
@@ -172,6 +176,9 @@ Commands:
 Examples:
   tokenhubctl status
   tokenhubctl vault unlock "my-secret-password"
+  tokenhubctl vault secret set do-token "dop_v1_abc123"
+  tokenhubctl vault secret list
+  tokenhubctl vault secret get do-token
   tokenhubctl provider add '{"id":"openai","type":"openai","base_url":"https://api.openai.com","api_key":"sk-..."}'
   tokenhubctl model list
   tokenhubctl model edit gpt-4o '{"weight":9}'
@@ -442,8 +449,48 @@ func doVault(args []string) {
 		if result["ok"] == true {
 			fmt.Println("Vault password rotated.")
 		}
+	case "secret":
+		doVaultSecret(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown vault command: %s\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func doVaultSecret(args []string) {
+	requireArgs(args, 1, "vault secret <list|get|set|delete> [args]")
+	switch args[0] {
+	case "list":
+		result := doGet("/admin/v1/vault/secrets")
+		secrets, _ := result["secrets"].([]any)
+		if len(secrets) == 0 {
+			fmt.Println("(no secrets stored)")
+			return
+		}
+		for _, s := range secrets {
+			fmt.Println(s)
+		}
+	case "get":
+		requireArgs(args, 2, "vault secret get <key>")
+		result := doGet("/admin/v1/vault/secrets/" + args[1])
+		if val, ok := result["value"].(string); ok {
+			fmt.Println(val)
+		}
+	case "set":
+		requireArgs(args, 3, "vault secret set <key> <value>")
+		body := fmt.Sprintf(`{"value":%s}`, jsonStr(args[2]))
+		result := doPut("/admin/v1/vault/secrets/"+args[1], body)
+		if result["ok"] == true {
+			fmt.Printf("Secret %q stored.\n", args[1])
+		}
+	case "delete":
+		requireArgs(args, 2, "vault secret delete <key>")
+		result := doDelete("/admin/v1/vault/secrets/" + args[1])
+		if result["ok"] == true {
+			fmt.Printf("Secret %q deleted.\n", args[1])
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown vault secret command: %s\n", args[0])
 		os.Exit(1)
 	}
 }
