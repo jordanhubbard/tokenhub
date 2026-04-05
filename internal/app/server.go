@@ -977,6 +977,34 @@ func autoloadModelsForProvider(ctx context.Context, providerID, apiKey, baseURL 
 		parsed.Data = arr
 	}
 
+	// Build set of model IDs currently served by this provider.
+	currentModels := make(map[string]bool, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID != "" {
+			currentModels[m.ID] = true
+		}
+	}
+
+	// Purge stale models: any model registered under this provider that is no
+	// longer present in the provider's /v1/models response gets unregistered.
+	// This prevents ghost entries (e.g. nemotron-* after a Gemma swap).
+	purged := 0
+	for _, registered := range eng.ListModels() {
+		if registered.ProviderID != providerID {
+			continue
+		}
+		if !currentModels[registered.ID] && !explicitModels[registered.ID] {
+			eng.UnregisterModel(registered.ID)
+			if db != nil {
+				if err := db.DeleteModel(ctx, registered.ID); err != nil {
+					logger.Warn("autoload_models: failed to delete stale model", slog.String("provider", providerID), slog.String("model", registered.ID), slog.String("error", err.Error()))
+				}
+			}
+			logger.Info("autoload_models: purged stale model", slog.String("provider", providerID), slog.String("model", registered.ID))
+			purged++
+		}
+	}
+
 	count := 0
 	for _, m := range parsed.Data {
 		if m.ID == "" || explicitModels[m.ID] {
@@ -998,7 +1026,7 @@ func autoloadModelsForProvider(ctx context.Context, providerID, apiKey, baseURL 
 		}
 		count++
 	}
-	logger.Info("autoload_models: registered models", slog.String("provider", providerID), slog.Int("count", count))
+	logger.Info("autoload_models: registered models", slog.String("provider", providerID), slog.Int("count", count), slog.Int("purged", purged))
 }
 
 // newProviderAdapter constructs a runtime adapter for the given provider type,
