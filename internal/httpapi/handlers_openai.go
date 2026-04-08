@@ -22,11 +22,13 @@ type CompletionsRequest struct {
 	Stream   bool             `json:"stream,omitempty"`
 
 	// Optional parameters forwarded to the provider.
-	Temperature *float64 `json:"temperature,omitempty"`
-	MaxTokens   *int     `json:"max_tokens,omitempty"`
-	TopP        *float64 `json:"top_p,omitempty"`
-	Stop        any      `json:"stop,omitempty"`
-	N           *int     `json:"n,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Stop        any             `json:"stop,omitempty"`
+	N           *int            `json:"n,omitempty"`
+	Tools       json.RawMessage `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
 }
 
 // completionsResponse is the OpenAI-compatible response for /v1/chat/completions.
@@ -125,6 +127,29 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 
+		// Look up tool name map for the hinted model. Used to rewrite tool names
+		// in both directions: outbound (client→model) uses the reversed map,
+		// inbound (model→client) uses the map directly.
+		var toolNameMap map[string]string
+		if m, ok := d.Engine.GetModel(modelHint); ok {
+			toolNameMap = m.ToolNameMap
+		}
+
+		// Forward tool definitions, rewriting names from client-facing to model-facing.
+		if len(req.Tools) > 0 {
+			tools := rewriteToolNames(req.Tools, reverseMap(toolNameMap))
+			var toolsVal any
+			if err := json.Unmarshal(tools, &toolsVal); err == nil {
+				params["tools"] = toolsVal
+			}
+		}
+		if len(req.ToolChoice) > 0 {
+			var tcVal any
+			if err := json.Unmarshal(req.ToolChoice, &tcVal); err == nil {
+				params["tool_choice"] = tcVal
+			}
+		}
+
 		// Translate to router.Request.
 		routerReq := router.Request{
 			Messages:  req.Messages,
@@ -159,6 +184,10 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			if serr != nil {
 				writeOpenAIError(w, serr.Error(), "server_error", http.StatusBadGateway)
 				return
+			}
+			// Use the actual routed model's tool name map for inbound rewriting.
+			if m, ok := d.Engine.GetModel(decision.ModelID); ok && len(m.ToolNameMap) > 0 {
+				body = newSSEToolNameRewriter(body, m.ToolNameMap)
 			}
 			defer func() { _ = body.Close() }()
 
@@ -274,6 +303,11 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 
 		// Build OpenAI-compatible response.
 		oaiResp := buildCompletionsResponse(reqID, decision.ModelID, resp)
+
+		// Rewrite tool call names in the response (model-facing → client-facing).
+		if inMap, ok := d.Engine.GetModel(decision.ModelID); ok && len(inMap.ToolNameMap) > 0 {
+			oaiResp.Choices = rewriteChoicesToolCalls(oaiResp.Choices, inMap.ToolNameMap)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(oaiResp)

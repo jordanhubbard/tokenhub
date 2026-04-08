@@ -683,6 +683,7 @@ func (s *Server) refreshPricing() {
 				OutputPer1K:      m.OutputPer1K,
 				Enabled:          m.Enabled,
 				PricingSource:    m.PricingSource,
+				ToolNameMap:      m.ToolNameMap,
 			})
 			updated++
 		}
@@ -795,13 +796,14 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 		AutoloadModels bool   `json:"autoload_models"` // fetch all models from provider on startup
 	}
 	type credModel struct {
-		ID               string  `json:"id"`
-		ProviderID       string  `json:"provider_id"`
-		Weight           int     `json:"weight"`
-		MaxContextTokens int     `json:"max_context_tokens"`
-		InputPer1K       float64 `json:"input_per_1k"`
-		OutputPer1K      float64 `json:"output_per_1k"`
-		Enabled          *bool   `json:"enabled"` // nil = true
+		ID               string            `json:"id"`
+		ProviderID       string            `json:"provider_id"`
+		Weight           int               `json:"weight"`
+		MaxContextTokens int               `json:"max_context_tokens"`
+		InputPer1K       float64           `json:"input_per_1k"`
+		OutputPer1K      float64           `json:"output_per_1k"`
+		Enabled          *bool             `json:"enabled"` // nil = true
+		ToolNameMap      map[string]string `json:"tool_name_map,omitempty"`
 	}
 	type credFile struct {
 		Providers []credProvider `json:"providers"`
@@ -899,6 +901,7 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 			InputPer1K:       m.InputPer1K,
 			OutputPer1K:      m.OutputPer1K,
 			Enabled:          enabled,
+			ToolNameMap:      m.ToolNameMap,
 		}
 		eng.RegisterModel(model)
 
@@ -908,6 +911,7 @@ func loadCredentialsFile(path string, eng *router.Engine, v *vault.Vault, db sto
 				ID: m.ID, ProviderID: m.ProviderID, Weight: m.Weight,
 				MaxContextTokens: m.MaxContextTokens, InputPer1K: m.InputPer1K,
 				OutputPer1K: m.OutputPer1K, Enabled: enabled,
+				ToolNameMap: m.ToolNameMap,
 			}); err != nil {
 				logger.Warn("failed to persist credentials model", slog.String("model", m.ID), slog.String("error", err.Error()))
 			}
@@ -1162,6 +1166,7 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 			OutputPer1K:      m.OutputPer1K,
 			Enabled:          m.Enabled,
 			PricingSource:    m.PricingSource,
+			ToolNameMap:      m.ToolNameMap,
 		})
 	}
 	if len(models) > 0 {

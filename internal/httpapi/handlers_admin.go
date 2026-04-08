@@ -566,6 +566,7 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 				OutputPer1K:      m.OutputPer1K,
 				Enabled:          m.Enabled,
 				PricingSource:    m.PricingSource,
+				ToolNameMap:      m.ToolNameMap,
 			}
 			if rec.PricingSource == "" {
 				rec.PricingSource = "manual"
@@ -676,7 +677,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 						ID: m.ID, ProviderID: m.ProviderID, Weight: m.Weight,
 						MaxContextTokens: m.MaxContextTokens, InputPer1K: m.InputPer1K,
 						OutputPer1K: m.OutputPer1K, Enabled: m.Enabled,
-						PricingSource: m.PricingSource,
+						PricingSource: m.PricingSource, ToolNameMap: m.ToolNameMap,
 					}
 					break
 				}
@@ -747,6 +748,18 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 		if pricingPatched {
 			existing.PricingSource = "manual"
 		}
+		if v, ok := patch["tool_name_map"]; ok {
+			if m, ok := v.(map[string]any); ok {
+				existing.ToolNameMap = make(map[string]string, len(m))
+				for k, val := range m {
+					if s, ok := val.(string); ok {
+						existing.ToolNameMap[k] = s
+					}
+				}
+			} else if v == nil {
+				existing.ToolNameMap = nil
+			}
+		}
 
 		// Update store and engine.
 		if err := d.Store.UpsertModel(r.Context(), *existing); err != nil {
@@ -762,6 +775,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			OutputPer1K:      existing.OutputPer1K,
 			Enabled:          existing.Enabled,
 			PricingSource:    existing.PricingSource,
+			ToolNameMap:      existing.ToolNameMap,
 		})
 		if d.Store != nil {
 			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{

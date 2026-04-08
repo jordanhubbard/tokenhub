@@ -126,6 +126,10 @@ type Model struct {
 	OutputPer1K      float64 `json:"output_per_1k"`
 	Enabled          bool    `json:"enabled"`
 	PricingSource    string  `json:"pricing_source,omitempty"`
+	// ToolNameMap maps model-facing tool names to client-facing tool names.
+	// Applied to tool_calls in responses (model→client) and inverted for
+	// tool definitions in requests (client→model).
+	ToolNameMap map[string]string `json:"tool_name_map,omitempty"`
 }
 
 // OrchestrationDirective configures multi-model orchestration (adversarial, vote, refine).

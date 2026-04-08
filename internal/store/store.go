@@ -76,14 +76,15 @@ type Store interface {
 
 // ModelRecord is the persisted form of a model configuration.
 type ModelRecord struct {
-	ID               string  `json:"id"`
-	ProviderID       string  `json:"provider_id"`
-	Weight           int     `json:"weight"`
-	MaxContextTokens int     `json:"max_context_tokens"`
-	InputPer1K       float64 `json:"input_per_1k"`
-	OutputPer1K      float64 `json:"output_per_1k"`
-	Enabled          bool    `json:"enabled"`
-	PricingSource    string  `json:"pricing_source"` // "manual" | "litellm" | "provider"
+	ID               string            `json:"id"`
+	ProviderID       string            `json:"provider_id"`
+	Weight           int               `json:"weight"`
+	MaxContextTokens int               `json:"max_context_tokens"`
+	InputPer1K       float64           `json:"input_per_1k"`
+	OutputPer1K      float64           `json:"output_per_1k"`
+	Enabled          bool              `json:"enabled"`
+	PricingSource    string            `json:"pricing_source"` // "manual" | "litellm" | "provider"
+	ToolNameMap      map[string]string `json:"tool_name_map,omitempty"`
 }
 
 // ProviderRecord is the persisted form of a provider configuration.
