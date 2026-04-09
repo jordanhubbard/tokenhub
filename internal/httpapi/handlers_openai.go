@@ -185,9 +185,14 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 				writeOpenAIError(w, serr.Error(), "server_error", http.StatusBadGateway)
 				return
 			}
-			// Use the actual routed model's tool name map for inbound rewriting.
-			if m, ok := d.Engine.GetModel(decision.ModelID); ok && len(m.ToolNameMap) > 0 {
-				body = newSSEToolNameRewriter(body, m.ToolNameMap)
+			// Apply model-specific output transformations.
+			if m, ok := d.Engine.GetModel(decision.ModelID); ok {
+				if m.Gemma4Output {
+					body = newSSEGemma4Transformer(body)
+				}
+				if len(m.ToolNameMap) > 0 {
+					body = newSSEToolNameRewriter(body, m.ToolNameMap)
+				}
 			}
 			defer func() { _ = body.Close() }()
 
@@ -304,9 +309,14 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 		// Build OpenAI-compatible response.
 		oaiResp := buildCompletionsResponse(reqID, decision.ModelID, resp)
 
-		// Rewrite tool call names in the response (model-facing → client-facing).
-		if inMap, ok := d.Engine.GetModel(decision.ModelID); ok && len(inMap.ToolNameMap) > 0 {
-			oaiResp.Choices = rewriteChoicesToolCalls(oaiResp.Choices, inMap.ToolNameMap)
+		// Apply model-specific output transformations.
+		if m, ok := d.Engine.GetModel(decision.ModelID); ok {
+			if m.Gemma4Output {
+				oaiResp.Choices = rewriteGemma4Choices(oaiResp.Choices)
+			}
+			if len(m.ToolNameMap) > 0 {
+				oaiResp.Choices = rewriteChoicesToolCalls(oaiResp.Choices, m.ToolNameMap)
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -130,6 +130,11 @@ type Model struct {
 	// Applied to tool_calls in responses (model→client) and inverted for
 	// tool definitions in requests (client→model).
 	ToolNameMap map[string]string `json:"tool_name_map,omitempty"`
+	// Gemma4Output enables parsing of Gemma 4's non-standard response tokens:
+	// <|channel>thought\n...<channel|> thinking blocks are stripped, and
+	// <|tool_call>call:name{...}<tool_call|> inline tool calls are converted
+	// to the standard OpenAI tool_calls format.
+	Gemma4Output bool `json:"gemma4_output,omitempty"`
 }
 
 // OrchestrationDirective configures multi-model orchestration (adversarial, vote, refine).

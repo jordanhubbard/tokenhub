@@ -684,6 +684,7 @@ func (s *Server) refreshPricing() {
 				Enabled:          m.Enabled,
 				PricingSource:    m.PricingSource,
 				ToolNameMap:      m.ToolNameMap,
+				Gemma4Output:     m.Gemma4Output,
 			})
 			updated++
 		}
@@ -1167,6 +1168,7 @@ func loadPersistedModels(eng *router.Engine, db store.Store, logger *slog.Logger
 			Enabled:          m.Enabled,
 			PricingSource:    m.PricingSource,
 			ToolNameMap:      m.ToolNameMap,
+			Gemma4Output:     m.Gemma4Output,
 		})
 	}
 	if len(models) > 0 {

@@ -85,6 +85,7 @@ type ModelRecord struct {
 	Enabled          bool              `json:"enabled"`
 	PricingSource    string            `json:"pricing_source"` // "manual" | "litellm" | "provider"
 	ToolNameMap      map[string]string `json:"tool_name_map,omitempty"`
+	Gemma4Output     bool              `json:"gemma4_output,omitempty"`
 }
 
 // ProviderRecord is the persisted form of a provider configuration.

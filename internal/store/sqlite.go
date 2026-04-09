@@ -244,6 +244,9 @@ var schemaMigrations = []migration{
 	sqlMigration(9, "add_models_tool_name_map",
 		`ALTER TABLE models ADD COLUMN tool_name_map TEXT NOT NULL DEFAULT '{}'`,
 	),
+	sqlMigration(10, "add_models_gemma4_output",
+		`ALTER TABLE models ADD COLUMN gemma4_output BOOLEAN NOT NULL DEFAULT 0`,
+	),
 }
 
 // Migrate applies all pending schema migrations in version order.
@@ -307,7 +310,7 @@ func scanModelRecord(scan func(...any) error) (ModelRecord, error) {
 	var m ModelRecord
 	var toolNameMapJSON string
 	if err := scan(&m.ID, &m.ProviderID, &m.Weight, &m.MaxContextTokens,
-		&m.InputPer1K, &m.OutputPer1K, &m.Enabled, &m.PricingSource, &toolNameMapJSON); err != nil {
+		&m.InputPer1K, &m.OutputPer1K, &m.Enabled, &m.PricingSource, &toolNameMapJSON, &m.Gemma4Output); err != nil {
 		return m, err
 	}
 	if toolNameMapJSON != "" && toolNameMapJSON != "{}" {
@@ -318,7 +321,7 @@ func scanModelRecord(scan func(...any) error) (ModelRecord, error) {
 
 func (s *SQLiteStore) ListModels(ctx context.Context) ([]ModelRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source, tool_name_map FROM models`)
+		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source, tool_name_map, gemma4_output FROM models`)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +340,7 @@ func (s *SQLiteStore) ListModels(ctx context.Context) ([]ModelRecord, error) {
 
 func (s *SQLiteStore) GetModel(ctx context.Context, id string) (*ModelRecord, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source, tool_name_map FROM models WHERE id = ?`, id)
+		`SELECT id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source, tool_name_map, gemma4_output FROM models WHERE id = ?`, id)
 	m, err := scanModelRecord(row.Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -358,8 +361,8 @@ func (s *SQLiteStore) UpsertModel(ctx context.Context, m ModelRecord) error {
 		toolNameMapJSON = string(b)
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO models (id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source, tool_name_map)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO models (id, provider_id, weight, max_context_tokens, input_per_1k, output_per_1k, enabled, pricing_source, tool_name_map, gemma4_output)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   provider_id=excluded.provider_id,
 		   weight=excluded.weight,
@@ -368,8 +371,9 @@ func (s *SQLiteStore) UpsertModel(ctx context.Context, m ModelRecord) error {
 		   output_per_1k=excluded.output_per_1k,
 		   enabled=excluded.enabled,
 		   pricing_source=excluded.pricing_source,
-		   tool_name_map=excluded.tool_name_map`,
-		m.ID, m.ProviderID, m.Weight, m.MaxContextTokens, m.InputPer1K, m.OutputPer1K, m.Enabled, m.PricingSource, toolNameMapJSON)
+		   tool_name_map=excluded.tool_name_map,
+		   gemma4_output=excluded.gemma4_output`,
+		m.ID, m.ProviderID, m.Weight, m.MaxContextTokens, m.InputPer1K, m.OutputPer1K, m.Enabled, m.PricingSource, toolNameMapJSON, m.Gemma4Output)
 	return err
 }
 

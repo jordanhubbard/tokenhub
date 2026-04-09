@@ -567,6 +567,7 @@ func ModelsUpsertHandler(d Dependencies) http.HandlerFunc {
 				Enabled:          m.Enabled,
 				PricingSource:    m.PricingSource,
 				ToolNameMap:      m.ToolNameMap,
+				Gemma4Output:     m.Gemma4Output,
 			}
 			if rec.PricingSource == "" {
 				rec.PricingSource = "manual"
@@ -678,6 +679,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 						MaxContextTokens: m.MaxContextTokens, InputPer1K: m.InputPer1K,
 						OutputPer1K: m.OutputPer1K, Enabled: m.Enabled,
 						PricingSource: m.PricingSource, ToolNameMap: m.ToolNameMap,
+						Gemma4Output: m.Gemma4Output,
 					}
 					break
 				}
@@ -760,6 +762,11 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 				existing.ToolNameMap = nil
 			}
 		}
+		if v, ok := patch["gemma4_output"]; ok {
+			if b, ok := v.(bool); ok {
+				existing.Gemma4Output = b
+			}
+		}
 
 		// Update store and engine.
 		if err := d.Store.UpsertModel(r.Context(), *existing); err != nil {
@@ -776,6 +783,7 @@ func ModelsPatchHandler(d Dependencies) http.HandlerFunc {
 			Enabled:          existing.Enabled,
 			PricingSource:    existing.PricingSource,
 			ToolNameMap:      existing.ToolNameMap,
+			Gemma4Output:     existing.Gemma4Output,
 		})
 		if d.Store != nil {
 			d.warnOnErr("audit", d.Store.LogAudit(r.Context(), store.AuditEntry{
