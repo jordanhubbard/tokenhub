@@ -179,8 +179,8 @@ func TestRewriteGemma4Choices(t *testing.T) {
 		if string(out) != input {
 			// May differ in whitespace from re-marshal; just check it parses the same.
 			var a, b []map[string]any
-			json.Unmarshal(json.RawMessage(input), &a)
-			json.Unmarshal(out, &b)
+			_ = json.Unmarshal(json.RawMessage(input), &a)
+			_ = json.Unmarshal(out, &b)
 			if len(a) != len(b) {
 				t.Errorf("passthrough altered choices: %s", out)
 			}

@@ -1106,7 +1106,7 @@ func rewriteLocalhostForDocker(rawURL string) string {
 	}
 	rewritten := parsed.String()
 	slog.Info("rewriting localhost URL for Docker container",
-		slog.String("original", rawURL),
+		slog.String("original", strings.NewReplacer("\n", "", "\r", "").Replace(rawURL)),
 		slog.String("rewritten", rewritten))
 	return rewritten
 }

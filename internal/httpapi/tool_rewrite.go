@@ -114,8 +114,8 @@ func newSSEToolNameRewriter(src io.ReadCloser, nameMap map[string]string) io.Rea
 	}
 	pr, pw := io.Pipe()
 	go func() {
-		defer src.Close()
-		defer pw.Close()
+		defer func() { _ = src.Close() }()
+		defer func() { _ = pw.Close() }()
 		scanner := bufio.NewScanner(src)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {

@@ -154,10 +154,7 @@ func rewriteGemma4Choices(choices json.RawMessage) json.RawMessage {
 				tcs[j] = toolCall{
 					ID:   fmt.Sprintf("call_%d_%d", i, j),
 					Type: "function",
-					Function: toolFunction{
-						Name:      tc.Name,
-						Arguments: tc.Arguments,
-					},
+					Function: toolFunction(tc),
 				}
 			}
 			arr[i].Message.ToolCalls = tcs
@@ -194,8 +191,8 @@ type gemma4ContentAcc struct {
 func newSSEGemma4Transformer(src io.ReadCloser) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer src.Close()
-		defer pw.Close()
+		defer func() { _ = src.Close() }()
+		defer func() { _ = pw.Close() }()
 
 		type chunkMeta struct {
 			id      string
@@ -354,7 +351,7 @@ func gemma4EmitSSE(emit func(string), id, object string, created int64, model st
 								Index:    j,
 								ID:       callID,
 								Type:     "function",
-								Function: toolFunction{Name: tc.Name, Arguments: tc.Arguments},
+								Function: toolFunction(tc),
 							}},
 						},
 						FinishReason: nil,
