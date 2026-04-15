@@ -499,6 +499,13 @@ func ProvidersDeleteHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 		d.Engine.UnregisterAdapter(id)
+		// Also remove all engine-registered models for this provider so that
+		// the UI does not resurrect the deleted provider via orphaned engine models.
+		for _, m := range d.Engine.ListModels() {
+			if m.ProviderID == id {
+				d.Engine.UnregisterModel(m.ID)
+			}
+		}
 		if d.Prober != nil {
 			d.Prober.RemoveTarget(id)
 		}
