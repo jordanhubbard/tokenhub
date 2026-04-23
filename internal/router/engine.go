@@ -542,23 +542,45 @@ func (e *Engine) GetModel(modelID string) (Model, bool) {
 // or the first available one if the model isn't found. Returns nil when no
 // Anthropic-capable adapter is registered.
 func (e *Engine) GetAnthropicSender(modelHint string) AnthropicRawSender {
+	s, _ := e.GetAnthropicSenderAndModel(modelHint)
+	return s
+}
+
+// GetAnthropicSenderAndModel returns the sender and the resolved upstream model
+// ID that should be used in the forwarded request body. The resolved ID may
+// differ from the hint: e.g. hint "claude-sonnet-4-6" resolves to the
+// registered "azure/anthropic/claude-sonnet-4-6" so NVIDIA NIM accepts it.
+func (e *Engine) GetAnthropicSenderAndModel(modelHint string) (AnthropicRawSender, string) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	// Prefer the adapter for the hinted model's provider.
+	// Prefer the adapter for the hinted model's provider (exact match).
 	if m, ok := e.models[modelHint]; ok {
 		if a, ok := e.adapters[m.ProviderID]; ok {
 			if ars, ok := a.(AnthropicRawSender); ok {
-				return ars
+				return ars, modelHint
+			}
+		}
+	}
+	// Suffix match: find a model whose ID ends with /<hint>.
+	// Allows "claude-sonnet-4-6" to resolve to "azure/anthropic/claude-sonnet-4-6".
+	suffix := "/" + modelHint
+	for id, m := range e.models {
+		if !strings.HasSuffix(id, suffix) {
+			continue
+		}
+		if a, ok := e.adapters[m.ProviderID]; ok {
+			if ars, ok := a.(AnthropicRawSender); ok {
+				return ars, id
 			}
 		}
 	}
 	// Fallback: first adapter that implements AnthropicRawSender.
 	for _, a := range e.adapters {
 		if ars, ok := a.(AnthropicRawSender); ok {
-			return ars
+			return ars, modelHint
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 // FindLargerContextModel finds the smallest model with context larger than needed.

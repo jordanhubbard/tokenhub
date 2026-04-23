@@ -65,10 +65,15 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 		//   2. inject synthetic tool_result messages for orphaned tool_use IDs
 		body = sanitizeAnthropicBody(body)
 
-		sender := d.Engine.GetAnthropicSender(modelHint)
+		sender, resolvedModel := d.Engine.GetAnthropicSenderAndModel(modelHint)
 		if sender == nil {
 			writeAnthropicError(w, "no Anthropic-compatible provider configured", "server_error", http.StatusServiceUnavailable)
 			return
+		}
+		// Rewrite model in body when the registry resolved a different upstream ID
+		// (e.g. "claude-sonnet-4-6" → "azure/anthropic/claude-sonnet-4-6").
+		if resolvedModel != "" && resolvedModel != modelHint {
+			body = rewriteModel(body, resolvedModel)
 		}
 
 		reqCtx := providers.WithRequestID(r.Context(), reqID)
@@ -287,4 +292,19 @@ func collectToolResultIDs(m any) []string {
 		}
 	}
 	return ids
+}
+
+// rewriteModel replaces the "model" field in a JSON body with newModel.
+// Returns the original body unchanged if it cannot be parsed.
+func rewriteModel(body []byte, newModel string) []byte {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	payload["model"] = newModel
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return out
 }
