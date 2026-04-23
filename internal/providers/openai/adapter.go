@@ -1,8 +1,10 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -153,4 +155,28 @@ func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payloa
 
 func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any) ([]byte, error) {
 	return providers.DoRequest(ctx, a.client, a.baseURL+endpoint, payload, a.authHeaders())
+}
+
+// ForwardRaw implements router.AnthropicRawSender for backends (e.g. NVIDIA NIM)
+// that accept the Anthropic /v1/messages wire format alongside OpenAI.
+func (a *Adapter) ForwardRaw(ctx context.Context, body []byte) ([]byte, int, error) {
+	url := a.baseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range a.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, http.StatusBadGateway, fmt.Errorf("upstream: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("read response: %w", err)
+	}
+	return data, resp.StatusCode, nil
 }
