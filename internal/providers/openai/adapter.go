@@ -157,6 +157,31 @@ func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any)
 	return providers.DoRequest(ctx, a.client, a.baseURL+endpoint, payload, a.authHeaders())
 }
 
+// ForwardRawStream implements router.AnthropicRawSender streaming for backends
+// (e.g. NVIDIA NIM) that accept the Anthropic /v1/messages wire format.
+func (a *Adapter) ForwardRawStream(ctx context.Context, body []byte) (io.ReadCloser, error) {
+	url := a.baseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range a.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, data)
+	}
+	return resp.Body, nil
+}
+
 // ForwardRaw implements router.AnthropicRawSender for backends (e.g. NVIDIA NIM)
 // that accept the Anthropic /v1/messages wire format alongside OpenAI.
 func (a *Adapter) ForwardRaw(ctx context.Context, body []byte) ([]byte, int, error) {

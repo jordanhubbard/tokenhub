@@ -202,6 +202,33 @@ func (a *Adapter) ForwardRaw(ctx context.Context, body []byte) ([]byte, int, err
 	return data, resp.StatusCode, nil
 }
 
+// ForwardRawStream forwards raw Anthropic-format request bytes to /v1/messages
+// and returns the upstream response body for SSE streaming. The caller is
+// responsible for closing the returned ReadCloser.
+func (a *Adapter) ForwardRawStream(ctx context.Context, body []byte) (io.ReadCloser, error) {
+	url := a.baseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range a.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	// Use a client without a read timeout — the stream may take minutes.
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, data)
+	}
+	return resp.Body, nil
+}
+
 func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payload any) (io.ReadCloser, error) {
 	return providers.DoStreamRequest(ctx, a.client, a.baseURL+endpoint, payload, a.authHeaders())
 }

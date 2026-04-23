@@ -42,9 +42,10 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Peek at the model to find the right provider.
+		// Peek at the model and stream flag.
 		var peek struct {
-			Model string `json:"model"`
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
 		}
 		if jerr := json.Unmarshal(body, &peek); jerr != nil || peek.Model == "" {
 			writeAnthropicError(w, "model is required", "invalid_request_error", http.StatusBadRequest)
@@ -77,6 +78,50 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 		}
 
 		reqCtx := providers.WithRequestID(r.Context(), reqID)
+
+		if peek.Stream {
+			stream, serr := sender.ForwardRawStream(reqCtx, body)
+			if serr != nil {
+				slog.Warn("anthropic passthrough: stream error",
+					slog.String("request_id", reqID),
+					slog.String("model", peek.Model),
+					slog.String("error", serr.Error()),
+				)
+				writeAnthropicError(w, serr.Error(), "server_error", http.StatusBadGateway)
+				return
+			}
+			defer func() { _ = stream.Close() }()
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(http.StatusOK)
+
+			flusher, _ := w.(http.Flusher)
+			buf := make([]byte, 32*1024)
+			for {
+				n, readErr := stream.Read(buf)
+				if n > 0 {
+					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+						break
+					}
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			slog.Debug("anthropic passthrough: stream done",
+				slog.String("request_id", reqID),
+				slog.String("model", peek.Model),
+				slog.Int64("latency_ms", time.Since(start).Milliseconds()),
+			)
+			return
+		}
+
+		// Non-streaming path.
 		respBody, statusCode, ferr := sender.ForwardRaw(reqCtx, body)
 		latencyMs := time.Since(start).Milliseconds()
 

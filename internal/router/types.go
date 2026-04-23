@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 )
 
@@ -12,6 +13,10 @@ import (
 type AnthropicRawSender interface {
 	Sender
 	ForwardRaw(ctx context.Context, body []byte) ([]byte, int, error)
+	// ForwardRawStream forwards a raw Anthropic-format request body and returns
+	// the upstream response body for streaming (SSE) consumption. The caller
+	// is responsible for closing the returned ReadCloser.
+	ForwardRawStream(ctx context.Context, body []byte) (io.ReadCloser, error)
 }
 
 // Request is a provider-agnostic envelope. Provider adapters translate this
@@ -119,10 +124,15 @@ type Policy struct {
 
 // Decision captures the routing outcome: which model and provider were selected.
 type Decision struct {
-	ModelID           string
-	ProviderID        string
-	EstimatedCostUSD  float64
-	Reason            string
+	ModelID          string
+	ProviderID       string
+	EstimatedCostUSD float64
+	Reason           string
+	// AliasFrom is the original client-supplied alias name when a blind
+	// A/B alias rewrote ModelHint before routing. Empty otherwise. Recorded
+	// in request logs so experiments can group results by the alias that
+	// fanned them out.
+	AliasFrom string
 }
 
 // Model describes a registered LLM with its provider, pricing, and capabilities.
