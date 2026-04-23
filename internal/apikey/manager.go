@@ -206,6 +206,8 @@ func routeToScope(endpoint string) string {
 	switch endpoint {
 	case "/v1/chat", "/v1/chat/completions":
 		return "chat"
+	case "/v1/messages":
+		return "chat" // Anthropic-format passthrough uses the same chat scope
 	case "/v1/plan":
 		return "plan"
 	case "/v1/models":
