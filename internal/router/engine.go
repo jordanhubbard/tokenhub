@@ -538,6 +538,29 @@ func (e *Engine) GetModel(modelID string) (Model, bool) {
 	return m, ok
 }
 
+// GetAnthropicSender returns an AnthropicRawSender for the model's provider,
+// or the first available one if the model isn't found. Returns nil when no
+// Anthropic-capable adapter is registered.
+func (e *Engine) GetAnthropicSender(modelHint string) AnthropicRawSender {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	// Prefer the adapter for the hinted model's provider.
+	if m, ok := e.models[modelHint]; ok {
+		if a, ok := e.adapters[m.ProviderID]; ok {
+			if ars, ok := a.(AnthropicRawSender); ok {
+				return ars
+			}
+		}
+	}
+	// Fallback: first adapter that implements AnthropicRawSender.
+	for _, a := range e.adapters {
+		if ars, ok := a.(AnthropicRawSender); ok {
+			return ars
+		}
+	}
+	return nil
+}
+
 // FindLargerContextModel finds the smallest model with context larger than needed.
 // Exported for use by Temporal activities.
 func (e *Engine) FindLargerContextModel(current Model, tokensNeeded int) *Model {

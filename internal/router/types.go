@@ -1,9 +1,18 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 )
+
+// AnthropicRawSender is an optional interface for provider adapters that can
+// forward a raw Anthropic-format /v1/messages request body without translating
+// through router.Request. Used by the Anthropic passthrough proxy endpoint.
+type AnthropicRawSender interface {
+	Sender
+	ForwardRaw(ctx context.Context, body []byte) ([]byte, int, error)
+}
 
 // Request is a provider-agnostic envelope. Provider adapters translate this
 // into provider-specific API calls.

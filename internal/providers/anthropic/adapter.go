@@ -1,8 +1,10 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -173,6 +175,31 @@ func (a *Adapter) authHeaders() map[string]string {
 		"x-api-key":         a.keyFunc(),
 		"anthropic-version": a.apiVersion,
 	}
+}
+
+// ForwardRaw sends raw Anthropic-format request bytes directly to /v1/messages,
+// bypassing router.Request translation. Used for the passthrough proxy endpoint.
+// Returns the response body, HTTP status code, and any error.
+func (a *Adapter) ForwardRaw(ctx context.Context, body []byte) ([]byte, int, error) {
+	url := a.baseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range a.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, http.StatusBadGateway, fmt.Errorf("upstream: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("read response: %w", err)
+	}
+	return data, resp.StatusCode, nil
 }
 
 func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payload any) (io.ReadCloser, error) {
