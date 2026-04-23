@@ -42,19 +42,18 @@ func AuthMiddleware(mgr *Manager, budgetChecker *BudgetChecker, keyLimiter KeyRa
 				clientIP = r.RemoteAddr
 			}
 
-			auth := r.Header.Get("Authorization")
-			if auth == "" {
+			// Accept token from Authorization: Bearer <tok> or x-api-key: <tok>
+			// (Anthropic SDK sends x-api-key; OpenAI SDK sends Authorization: Bearer).
+			var token string
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				token = strings.TrimPrefix(auth, "Bearer ")
+			} else if xkey := r.Header.Get("x-api-key"); xkey != "" {
+				token = xkey
+			} else {
 				slog.Warn("api key auth: missing token", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
 				http.Error(w, "authorization required", http.StatusUnauthorized)
 				return
 			}
-
-			if !strings.HasPrefix(auth, "Bearer ") {
-				slog.Warn("api key auth: invalid format", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
-				http.Error(w, "invalid authorization format", http.StatusUnauthorized)
-				return
-			}
-			token := strings.TrimPrefix(auth, "Bearer ")
 
 			if !strings.HasPrefix(token, keyPrefix) {
 				slog.Warn("api key auth: invalid prefix", slog.String("ip", clientIP), slog.String("path", r.URL.Path))
