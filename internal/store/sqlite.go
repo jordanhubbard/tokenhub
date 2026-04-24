@@ -247,6 +247,22 @@ var schemaMigrations = []migration{
 	sqlMigration(10, "add_models_gemma4_output",
 		`ALTER TABLE models ADD COLUMN gemma4_output BOOLEAN NOT NULL DEFAULT 0`,
 	),
+	sqlMigration(11, "create_model_aliases",
+		`CREATE TABLE IF NOT EXISTS model_aliases (
+			name TEXT PRIMARY KEY,
+			variants TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+	),
+	sqlMigration(12, "add_request_logs_alias_from",
+		`ALTER TABLE request_logs ADD COLUMN alias_from TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_alias_from ON request_logs(alias_from)`,
+	),
+	sqlMigration(13, "add_model_aliases_sticky_by",
+		`ALTER TABLE model_aliases ADD COLUMN sticky_by TEXT NOT NULL DEFAULT ''`,
+	),
 }
 
 // Migrate applies all pending schema migrations in version order.
@@ -425,11 +441,11 @@ func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LogRequest(ctx context.Context, entry RequestLog) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens, alias_from)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Timestamp, entry.ModelID, entry.ProviderID, entry.Mode,
 		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID, entry.APIKeyID,
-		entry.InputTokens, entry.OutputTokens, entry.TotalTokens)
+		entry.InputTokens, entry.OutputTokens, entry.TotalTokens, entry.AliasFrom)
 	return err
 }
 
@@ -495,7 +511,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens
+		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens, alias_from
 		 FROM request_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -508,7 +524,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		var ts string
 		if err := rows.Scan(&l.ID, &ts, &l.ModelID, &l.ProviderID, &l.Mode,
 			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID, &l.APIKeyID,
-			&l.InputTokens, &l.OutputTokens, &l.TotalTokens); err != nil {
+			&l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.AliasFrom); err != nil {
 			return nil, err
 		}
 		l.Timestamp = parseTime(ts)
@@ -839,4 +855,99 @@ func (s *SQLiteStore) GetRewardSummary(ctx context.Context) ([]RewardSummary, er
 		summaries = append(summaries, s)
 	}
 	return summaries, rows.Err()
+}
+
+// --- Model aliases -----------------------------------------------------------
+
+func (s *SQLiteStore) ListModelAliases(ctx context.Context) ([]ModelAliasRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name, variants, enabled, sticky_by, created_at, updated_at FROM model_aliases ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list model_aliases: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ModelAliasRecord
+	for rows.Next() {
+		rec, err := scanModelAlias(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) GetModelAlias(ctx context.Context, name string) (*ModelAliasRecord, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT name, variants, enabled, sticky_by, created_at, updated_at FROM model_aliases WHERE name = ?`, name)
+	rec, err := scanModelAlias(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
+func (s *SQLiteStore) UpsertModelAlias(ctx context.Context, rec ModelAliasRecord) error {
+	variantsJSON, err := json.Marshal(rec.Variants)
+	if err != nil {
+		return fmt.Errorf("marshal variants: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	createdAt := now
+	if !rec.CreatedAt.IsZero() {
+		createdAt = rec.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	// SQLite UPSERT preserves the original created_at on conflict and bumps updated_at.
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO model_aliases (name, variants, enabled, sticky_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET
+			variants = excluded.variants,
+			enabled = excluded.enabled,
+			sticky_by = excluded.sticky_by,
+			updated_at = excluded.updated_at`,
+		rec.Name, string(variantsJSON), rec.Enabled, rec.StickyBy, createdAt, now)
+	if err != nil {
+		return fmt.Errorf("upsert model_alias: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteModelAlias(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM model_aliases WHERE name = ?`, name)
+	if err != nil {
+		return fmt.Errorf("delete model_alias: %w", err)
+	}
+	return nil
+}
+
+// scanner is the minimal common interface of *sql.Row and *sql.Rows used for
+// scanning a single model_aliases row without duplicating decoding logic.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanModelAlias(src scanner) (ModelAliasRecord, error) {
+	var (
+		rec          ModelAliasRecord
+		variantsJSON string
+		createdAtStr string
+		updatedAtStr string
+	)
+	if err := src.Scan(&rec.Name, &variantsJSON, &rec.Enabled, &rec.StickyBy, &createdAtStr, &updatedAtStr); err != nil {
+		return ModelAliasRecord{}, err
+	}
+	if variantsJSON != "" {
+		if err := json.Unmarshal([]byte(variantsJSON), &rec.Variants); err != nil {
+			return ModelAliasRecord{}, fmt.Errorf("decode variants for %q: %w", rec.Name, err)
+		}
+	}
+	rec.CreatedAt = parseTime(createdAtStr)
+	rec.UpdatedAt = parseTime(updatedAtStr)
+	return rec, nil
 }

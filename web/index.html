@@ -152,6 +152,30 @@
       70% { box-shadow: 0 0 0 12px rgba(206,147,216,0); }
       100% { box-shadow: 0 0 0 0 rgba(206,147,216,0); }
     }
+    /* Mode color coding */
+    .mode-badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:500; }
+    .mode-cheap { background:#1a2a3a; color:#81d4fa; }
+    .mode-normal { background:#1b2a3a; color:#64b5f6; }
+    .mode-high_confidence { background:#1b3a1b; color:#4caf50; }
+    .mode-planning { background:#2a1a3a; color:#ce93d8; }
+    .mode-adversarial { background:#3a1b1b; color:#f44336; }
+    .mode-thompson { background:#3a3a1b; color:#ffc107; }
+    .mode-other { background:#2a2a2a; color:#8a8d9a; }
+    /* Bar chart panels */
+    .bar-chart-wrap { width:100%; }
+    .bar-chart-wrap svg { display:block; width:100%; overflow:visible; }
+    .bar-chart-wrap .bar-label { font-size:11px; fill:#8a8d9a; }
+    .bar-chart-wrap .bar-value { font-size:10px; fill:#e0e0e0; }
+    .bar-row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+    .bar-row .bar-name { min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:#e0e0e0; }
+    .bar-row .bar-track { flex:1; background:#12141d; border-radius:3px; height:16px; position:relative; }
+    .bar-row .bar-fill { height:100%; border-radius:3px; transition:width 0.4s; }
+    .bar-row .bar-num { min-width:60px; text-align:right; font-size:11px; color:#8a8d9a; }
+    .bar-tabs { display:flex; gap:6px; margin-bottom:10px; }
+    .bar-tabs button { background:#12141d; border:1px solid #2a2d3a; color:#8a8d9a; padding:3px 10px; border-radius:4px; cursor:pointer; font-size:11px; }
+    .bar-tabs button.active { background:#2a2d3a; color:#fff; }
+    .live-feed .mode-tag { font-size:10px; padding:0 4px; border-radius:2px; margin-left:2px; }
+    .live-feed .api-key { color:#80cbc4; min-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:90px; font-size:11px; }
   </style>
 </head>
 <body>
@@ -388,6 +412,40 @@
       <div id="trend-chart"></div>
     </div>
 
+    <!-- Bar Charts Row -->
+    <div class="panel">
+      <h2>Top Models
+        <span class="bar-tabs" style="float:right;margin-top:-4px">
+          <button class="active" onclick="setModelBarMetric('requests',this)">Requests</button>
+          <button onclick="setModelBarMetric('tokens',this)">Tokens</button>
+          <button onclick="setModelBarMetric('cost',this)">Cost</button>
+        </span>
+      </h2>
+      <div class="bar-chart-wrap" id="model-bar-chart"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Top API Keys
+        <span class="bar-tabs" style="float:right;margin-top:-4px">
+          <button class="active" onclick="setKeyBarMetric('cost',this)">Cost</button>
+          <button onclick="setKeyBarMetric('requests',this)">Requests</button>
+          <button onclick="setKeyBarMetric('tokens',this)">Tokens</button>
+        </span>
+      </h2>
+      <div class="bar-chart-wrap" id="key-bar-chart"></div>
+    </div>
+
+    <div class="panel full-width">
+      <h2>Request Rate by Mode
+        <span class="bar-tabs" style="float:right;margin-top:-4px">
+          <button class="active" onclick="setModeBarMetric('requests',this)">Requests</button>
+          <button onclick="setModeBarMetric('cost',this)">Cost</button>
+          <button onclick="setModeBarMetric('tokens',this)">Tokens</button>
+        </span>
+      </h2>
+      <div class="bar-chart-wrap" id="mode-bar-chart"></div>
+    </div>
+
     <!-- Live Decision Feed -->
     <div class="panel full-width">
       <h2>Live Routing Decisions <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0" id="feed-count"></span></h2>
@@ -398,7 +456,7 @@
     <div class="panel leaderboard">
       <h2>Model Leaderboard</h2>
       <div class="table-wrap">
-        <table><thead><tr><th>Model</th><th>Provider</th><th>Wt</th><th>Reqs</th><th>Tokens</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead>
+        <table><thead><tr><th>Model</th><th>Provider</th><th>Wt</th><th>Reqs</th><th>Tokens</th><th>Avg Lat</th><th>P95 Lat</th><th>Cost</th><th>Status</th></tr></thead>
         <tbody id="leaderboard-body"></tbody></table>
       </div>
       <h2 style="margin-top:16px">Routing Priority <span style="font-size:10px;color:#555;text-transform:none;letter-spacing:0">(▲▼ to adjust weight)</span></h2>
@@ -839,6 +897,11 @@ function connectSSE() {
   es.onerror = () => { status.textContent = 'Disconnected'; status.className = 'status disconnected'; };
 }
 
+function modeClass(m) {
+  const known = ['cheap','normal','high_confidence','planning','adversarial','thompson'];
+  return known.includes(m) ? 'mode-' + m : 'mode-other';
+}
+
 function appendFeedEntry(d, isErr) {
   const feed = document.getElementById('live-feed');
   const ts = new Date(d.timestamp || Date.now()).toLocaleTimeString();
@@ -846,10 +909,12 @@ function appendFeedEntry(d, isErr) {
   const cost = d.cost_usd ? '$' + d.cost_usd.toFixed(4) : '-';
   const tok = d.total_tokens ? d.total_tokens.toLocaleString() + 'tok' : '';
   const cls = isErr ? 'entry error' : 'entry';
+  const modeTag = d.mode ? `<span class="mode-badge ${modeClass(d.mode)} mode-tag">${d.mode}</span>` : '';
+  const keyTag = d.api_key_name ? `<span class="api-key">${d.api_key_name}</span>` : '';
   const detail = isErr
     ? `<span class="err">${d.error_class || 'error'}: ${(d.error_msg||'').slice(0,60)}</span>`
     : `<span class="reason">${d.reason || ''}</span>`;
-  const html = `<div class="${cls}"><span class="ts">${ts}</span><span class="model">${d.model_id||'-'}</span><span class="provider">${d.provider_id||'-'}</span><span class="latency">${lat}</span><span class="cost">${cost}</span>${tok ? `<span class="tokens">${tok}</span>` : ''}${detail}</div>`;
+  const html = `<div class="${cls}"><span class="ts">${ts}</span><span class="model">${d.model_id||'-'}</span><span class="provider">${d.provider_id||'-'}</span>${modeTag}${keyTag}<span class="latency">${lat}</span><span class="cost">${cost}</span>${tok ? `<span class="tokens">${tok}</span>` : ''}${detail}</div>`;
   feed.insertAdjacentHTML('afterbegin', html);
   feedEntries++;
   if (feedEntries > 200) feed.lastElementChild?.remove();
@@ -1284,9 +1349,12 @@ function updateLeaderboard() {
     tbody.innerHTML = models.map(m => `<tr>
       <td>${m.model_id}</td><td>${m.provider_id||'-'}</td><td>${modelWeights[m.model_id]||'-'}</td><td>${m.request_count}</td>
       <td>${(m.total_tokens||0).toLocaleString()}</td>
-      <td>${Math.round(m.avg_latency_ms)}ms</td><td>$${(m.total_cost_usd||0).toFixed(4)}</td>
+      <td>${Math.round(m.avg_latency_ms)}ms</td>
+      <td>${m.p95_latency_ms ? Math.round(m.p95_latency_ms)+'ms' : '-'}</td>
+      <td>$${(m.total_cost_usd||0).toFixed(4)}</td>
       <td><span class="badge ${m.error_rate>0.5?'down':m.error_rate>0.1?'degraded':'healthy'}">${(m.error_rate*100).toFixed(0)}%</span></td>
     </tr>`).join('');
+    renderBarCharts(data);
   }).catch(() => {});
 }
 
@@ -1322,6 +1390,88 @@ function adjustWeight(modelId, delta) {
   }).then(r => {
     if (r.ok) { modelWeights[modelId] = next; updateLeaderboard(); }
   }).catch(() => showToast('Failed', 'error'));
+}
+
+// ============================
+// Bar Charts
+// ============================
+let modelBarMetric = 'requests';
+let keyBarMetric = 'cost';
+let modeBarMetric = 'requests';
+let _lastStatsData = null;
+
+const MODE_COLORS = {
+  cheap: '#81d4fa', normal: '#64b5f6', high_confidence: '#4caf50',
+  planning: '#ce93d8', adversarial: '#f44336', thompson: '#ffc107',
+};
+
+function setModelBarMetric(m, btn) {
+  modelBarMetric = m;
+  btn.closest('.bar-tabs').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (_lastStatsData) renderBarCharts(_lastStatsData);
+}
+function setKeyBarMetric(m, btn) {
+  keyBarMetric = m;
+  btn.closest('.bar-tabs').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (_lastStatsData) renderBarCharts(_lastStatsData);
+}
+function setModeBarMetric(m, btn) {
+  modeBarMetric = m;
+  btn.closest('.bar-tabs').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (_lastStatsData) renderBarCharts(_lastStatsData);
+}
+
+function pickWindow(windows) {
+  return windows['1h'] || windows['24h'] || windows['5m'] || windows['1m'] || [];
+}
+
+function metricVal(item, metric) {
+  if (metric === 'requests') return item.request_count || 0;
+  if (metric === 'tokens') return item.total_tokens || 0;
+  if (metric === 'cost') return item.total_cost_usd || 0;
+  return 0;
+}
+
+function fmtVal(v, metric) {
+  if (metric === 'cost') return '$' + v.toFixed(4);
+  if (metric === 'tokens') return v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(1)+'K' : String(v);
+  return String(v);
+}
+
+function renderHorizBars(containerId, items, nameKey, metric, colorFn) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!items || items.length === 0) { el.innerHTML = '<div style="color:#555;font-size:12px;padding:8px 0">No data</div>'; return; }
+  const sorted = [...items].sort((a,b) => metricVal(b,metric) - metricVal(a,metric)).slice(0,8);
+  const max = metricVal(sorted[0], metric) || 1;
+  el.innerHTML = sorted.map(item => {
+    const name = item[nameKey] || '(unknown)';
+    const v = metricVal(item, metric);
+    const pct = Math.max(2, Math.round(v / max * 100));
+    const color = colorFn ? colorFn(name) : '#64b5f6';
+    return `<div class="bar-row">
+      <span class="bar-name" title="${name}">${name}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <span class="bar-num">${fmtVal(v, metric)}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderBarCharts(data) {
+  _lastStatsData = data;
+  const modelItems = pickWindow(data.by_model || {});
+  const keyItems = pickWindow(data.by_api_key || {});
+  const modeItems = pickWindow(data.by_mode || {});
+
+  renderHorizBars('model-bar-chart', modelItems, 'model_id', modelBarMetric,
+    () => '#64b5f6');
+  renderHorizBars('key-bar-chart', keyItems, 'api_key_name', keyBarMetric,
+    () => '#80cbc4');
+  renderHorizBars('mode-bar-chart', modeItems, 'mode', modeBarMetric,
+    name => MODE_COLORS[name] || '#8a8d9a');
 }
 
 // ============================
@@ -1442,7 +1592,8 @@ function fetchRequestLogs() {
         const latCls = e.latency_ms < 1000 ? 'color:#4caf50' : e.latency_ms <= 5000 ? 'color:#ffc107' : 'color:#f44336';
         const stCls = e.status_code === 200 ? 'color:#4caf50' : 'color:#f44336';
         const tok = e.total_tokens > 0 ? e.total_tokens.toLocaleString() : '-';
-        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.model_id||'-'}</td><td>${e.provider_id||'-'}</td><td>${e.mode||'-'}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${e.request_id||'-'}</td></tr>`;
+        const modeBadge = e.mode ? `<span class="mode-badge ${modeClass(e.mode)}">${e.mode}</span>` : '-';
+        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.model_id||'-'}</td><td>${e.provider_id||'-'}</td><td>${modeBadge}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${e.request_id||'-'}</td></tr>`;
       }).join('');
     document.getElementById('req-log-page-info').textContent = `Page ${Math.floor(requestLogOffset/50)+1}`;
     document.getElementById('req-log-prev').disabled = requestLogOffset === 0;

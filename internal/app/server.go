@@ -50,6 +50,7 @@ type Server struct {
 	temporal         *temporalpkg.Manager // nil when Temporal disabled
 	prober           *health.Prober       // nil when no probeable adapters
 	rateLimiter      *ratelimit.Limiter
+	adminRateLimiter *ratelimit.Limiter
 	idempotencyCache *idempotency.Cache          // nil when idempotency disabled
 	otelShutdown     func(context.Context) error // nil when OTel disabled
 	stopBandit       func()                      // nil when Thompson Sampling disabled
@@ -110,9 +111,16 @@ func NewServer(cfg Config) (*Server, error) {
 
 	m := metrics.New()
 
-	// Per-IP rate limiting (applied only to /v1 routes, not healthz/metrics/admin).
+	// Per-IP rate limiting for /v1 client routes (chat, messages, embeddings, plan).
 	rl := ratelimit.New(cfg.RateLimitRPS, cfg.RateLimitBurst, time.Second,
 		ratelimit.WithCounter(m.RateLimitedTotal))
+
+	// Separate per-IP rate limiter for /admin/v1. Admin endpoints are much more
+	// powerful than /v1 (full CRUD on providers, vault, budgets), so we bucket
+	// them independently and tighter so that a leaked admin token or a bug in
+	// the admin UI cannot starve the rate budget used by production clients.
+	adminRL := ratelimit.New(cfg.AdminRateLimitRPS, cfg.AdminRateLimitBurst, time.Second,
+		ratelimit.WithCounter(m.AdminRateLimitedTotal))
 
 	var vaultOpts []vault.Option
 	if cfg.VaultPassword != "" {
@@ -243,6 +251,33 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	}
 
+	// Hydrate the alias resolver from persisted aliases so blind A/B splits
+	// survive restarts. Invalid entries are logged but skipped so a single bad
+	// row can't block server startup.
+	aliasResolver := router.NewAliasResolver()
+	if aliases, aerr := db.ListModelAliases(context.Background()); aerr != nil {
+		logger.Warn("load model aliases", slog.String("error", aerr.Error()))
+	} else {
+		converted := make([]router.Alias, 0, len(aliases))
+		for _, rec := range aliases {
+			variants := make([]router.AliasVariant, 0, len(rec.Variants))
+			for _, v := range rec.Variants {
+				variants = append(variants, router.AliasVariant{ModelID: v.ModelID, Weight: v.Weight})
+			}
+			converted = append(converted, router.Alias{
+				Name:     rec.Name,
+				Variants: variants,
+				Enabled:  rec.Enabled,
+				StickyBy: rec.StickyBy,
+			})
+		}
+		if rerr := aliasResolver.ReplaceAll(converted); rerr != nil {
+			logger.Warn("some persisted aliases failed validation and were skipped",
+				slog.String("first_error", rerr.Error()))
+		}
+	}
+	eng.SetAliasResolver(aliasResolver)
+
 	// Initialize Thompson Sampling bandit policy.
 	sampler := router.NewThompsonSampler()
 	eng.SetBanditPolicy(sampler)
@@ -306,6 +341,7 @@ func NewServer(cfg Config) (*Server, error) {
 		logger:           logger,
 		prober:           prober,
 		rateLimiter:      rl,
+		adminRateLimiter: adminRL,
 		idempotencyCache: idemCache,
 		otelShutdown:     otelShutdown,
 		stopBandit:       stopBandit,
@@ -384,6 +420,7 @@ func NewServer(cfg Config) (*Server, error) {
 		IdempotencyCache: idemCache,
 		CircuitBreaker:   cb,
 		RateLimiter:      rl,
+		AdminRateLimiter: adminRL,
 		RateLimitRPS:     cfg.RateLimitRPS,
 		ProviderTimeout:  time.Duration(cfg.ProviderTimeoutSecs) * time.Second,
 		Prober:           prober,
@@ -445,6 +482,9 @@ func (s *Server) SetHTTPServer(srv *http.Server) {
 // defaults, and the log level.
 func (s *Server) Reload(cfg Config) {
 	s.rateLimiter.UpdateLimits(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	if s.adminRateLimiter != nil {
+		s.adminRateLimiter.UpdateLimits(cfg.AdminRateLimitRPS, cfg.AdminRateLimitBurst)
+	}
 	s.engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudget, cfg.DefaultMaxLatencyMs)
 	logging.SetLevel(cfg.LogLevel)
 	s.cfg = cfg
@@ -487,6 +527,9 @@ func (s *Server) Close() error {
 	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
+	}
+	if s.adminRateLimiter != nil {
+		s.adminRateLimiter.Stop()
 	}
 	if s.idempotencyCache != nil {
 		s.idempotencyCache.Stop()

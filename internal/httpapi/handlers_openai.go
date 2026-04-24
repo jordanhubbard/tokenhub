@@ -150,11 +150,22 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			}
 		}
 
-		// Translate to router.Request.
+		// Translate to router.Request. The ID is the chi request ID so blind A/B
+		// alias rewrites land on the same variant for the lifetime of this HTTP
+		// request (including hedging, retries, and fallback paths). The API key
+		// ID is stamped into Meta so that api_key-sticky aliases can pin the
+		// same credential to one variant across requests.
 		routerReq := router.Request{
+			ID:        middleware.GetReqID(r.Context()),
 			Messages:  req.Messages,
 			ModelHint: modelHint,
 			Stream:    req.Stream,
+		}
+		if rec := apikey.FromContext(r.Context()); rec != nil && rec.ID != "" {
+			if routerReq.Meta == nil {
+				routerReq.Meta = map[string]any{}
+			}
+			routerReq.Meta[router.MetaAPIKeyID] = rec.ID
 		}
 		if len(params) > 0 {
 			routerReq.Parameters = params
@@ -166,10 +177,11 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			estimatedTokens += len(msg.Content) / 4
 		}
 
-		// Determine API key ID for attribution.
-		apiKeyID := ""
+		// Determine API key ID and name for attribution.
+		apiKeyID, apiKeyName := "", ""
 		if rec := apikey.FromContext(r.Context()); rec != nil {
 			apiKeyID = rec.ID
+			apiKeyName = rec.Name
 		}
 
 		// Use default policy (model hint drives selection).
@@ -200,6 +212,9 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("X-Negotiated-Model", decision.ModelID)
+			if decision.AliasFrom != "" {
+				w.Header().Set("X-Alias-From", decision.AliasFrom)
+			}
 			w.WriteHeader(http.StatusOK)
 
 			flusher, _ := w.(http.Flusher)
@@ -259,8 +274,10 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 				ErrorClass:      errClass,
 				RequestID:       reqID,
 				APIKeyID:        apiKeyID,
+				APIKeyName:      apiKeyName,
 				EstimatedTokens: estimatedTokens,
 				HTTPStatus:      httpStatus,
+				AliasFrom:       decision.AliasFrom,
 			})
 			return
 		}
@@ -279,6 +296,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 				ErrorMsg:        err.Error(),
 				RequestID:       reqID,
 				APIKeyID:        apiKeyID,
+				APIKeyName:      apiKeyName,
 				EstimatedTokens: estimatedTokens,
 				HTTPStatus:      http.StatusBadGateway,
 			})
@@ -300,11 +318,17 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			Reason:          decision.Reason,
 			RequestID:       reqID,
 			APIKeyID:        apiKeyID,
+				APIKeyName:      apiKeyName,
 			EstimatedTokens: estimatedTokens,
 			InputTokens:     usage.InputTokens,
 			OutputTokens:    usage.OutputTokens,
 			HTTPStatus:      http.StatusOK,
+			AliasFrom:       decision.AliasFrom,
 		})
+		if decision.AliasFrom != "" {
+			w.Header().Set("X-Alias-From", decision.AliasFrom)
+		}
+		w.Header().Set("X-Negotiated-Model", decision.ModelID)
 
 		// Build OpenAI-compatible response.
 		oaiResp := buildCompletionsResponse(reqID, decision.ModelID, resp)

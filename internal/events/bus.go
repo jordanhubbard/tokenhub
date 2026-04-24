@@ -50,6 +50,7 @@ type Event struct {
 	ActivityType string `json:"activity_type,omitempty"`
 	RequestID    string `json:"request_id,omitempty"`
 	APIKeyName   string `json:"api_key_name,omitempty"`
+	Mode         string `json:"mode,omitempty"`
 }
 
 // JSON returns the event as a JSON byte slice.

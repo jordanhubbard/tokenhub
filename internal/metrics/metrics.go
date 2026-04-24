@@ -14,7 +14,8 @@ type Registry struct {
 	RequestLatency   *prometheus.HistogramVec
 	CostUSD          *prometheus.CounterVec
 	TokensTotal      *prometheus.CounterVec
-	RateLimitedTotal prometheus.Counter
+	RateLimitedTotal      prometheus.Counter
+	AdminRateLimitedTotal prometheus.Counter
 	TemporalUp       prometheus.Gauge
 
 	// Circuit breaker metrics.
@@ -62,6 +63,10 @@ func New() *Registry {
 			Name: "tokenhub_rate_limited_total",
 			Help: "Total requests rejected by rate limiter",
 		}),
+		AdminRateLimitedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tokenhub_admin_rate_limited_total",
+			Help: "Total admin requests rejected by the admin rate limiter",
+		}),
 		TemporalUp: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tokenhub_temporal_up",
 			Help: "Whether Temporal workflow engine is connected (1=up, 0=down/disabled)",
@@ -97,7 +102,7 @@ func New() *Registry {
 	}
 	reg.MustRegister(
 		m.RequestsTotal, m.RequestLatency, m.CostUSD, m.TokensTotal,
-		m.RateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal,
+		m.RateLimitedTotal, m.AdminRateLimitedTotal, m.TemporalUp, m.TemporalCircuitState, m.TemporalFallbackTotal,
 		m.ProviderHealthState, m.RequestErrorsByStatus, m.ProviderSkipsTotal,
 		m.StoreDroppedTotal, m.HeartbeatTotal,
 	)

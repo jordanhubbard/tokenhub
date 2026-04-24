@@ -33,8 +33,15 @@ type Config struct {
 	// Security & hardening.
 	AdminToken     string   // required for /admin/v1 access in production
 	CORSOrigins    []string // allowed CORS origins; empty = ["*"]
-	RateLimitRPS   int      // requests per second per IP
-	RateLimitBurst int      // burst capacity per IP
+	RateLimitRPS   int      // requests per second per IP (public /v1 endpoints)
+	RateLimitBurst int      // burst capacity per IP (public /v1 endpoints)
+	// AdminRateLimitRPS caps per-IP requests/sec on /admin/v1. A leaked admin
+	// token is much more dangerous than a leaked API key (full CRUD on providers,
+	// vault, models, budgets), so admin traffic is bucketed separately and
+	// tighter. SSE event streams (/admin/v1/events) are exempt since a single
+	// long-lived connection is expected per operator.
+	AdminRateLimitRPS   int // requests per second per IP on /admin/v1
+	AdminRateLimitBurst int // burst capacity per IP on /admin/v1
 
 	// OpenTelemetry tracing (opt-in).
 	OTelEnabled     bool   // TOKENHUB_OTEL_ENABLED, default false
@@ -79,6 +86,8 @@ func LoadConfig() (Config, error) {
 		CORSOrigins:    getEnvStringSlice("TOKENHUB_CORS_ORIGINS", nil),
 		RateLimitRPS:   getEnvInt("TOKENHUB_RATE_LIMIT_RPS", 60),
 		RateLimitBurst: getEnvInt("TOKENHUB_RATE_LIMIT_BURST", 120),
+		AdminRateLimitRPS:   getEnvInt("TOKENHUB_ADMIN_RATE_LIMIT_RPS", 30),
+		AdminRateLimitBurst: getEnvInt("TOKENHUB_ADMIN_RATE_LIMIT_BURST", 60),
 
 		OTelEnabled:     getEnvBool("TOKENHUB_OTEL_ENABLED", false),
 		OTelEndpoint:    getEnv("TOKENHUB_OTEL_ENDPOINT", "localhost:4318"),
@@ -109,6 +118,12 @@ func (c Config) Validate() error {
 	}
 	if c.RateLimitBurst <= 0 {
 		return fmt.Errorf("TOKENHUB_RATE_LIMIT_BURST must be > 0, got %d", c.RateLimitBurst)
+	}
+	if c.AdminRateLimitRPS <= 0 {
+		return fmt.Errorf("TOKENHUB_ADMIN_RATE_LIMIT_RPS must be > 0, got %d", c.AdminRateLimitRPS)
+	}
+	if c.AdminRateLimitBurst <= 0 {
+		return fmt.Errorf("TOKENHUB_ADMIN_RATE_LIMIT_BURST must be > 0, got %d", c.AdminRateLimitBurst)
 	}
 	if c.ProviderTimeoutSecs <= 0 {
 		return fmt.Errorf("TOKENHUB_PROVIDER_TIMEOUT_SECS must be > 0, got %d", c.ProviderTimeoutSecs)

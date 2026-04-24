@@ -99,8 +99,9 @@ type observeParams struct {
 	Reason     string
 
 	// Request identification.
-	RequestID string
-	APIKeyID  string
+	RequestID  string
+	APIKeyID   string
+	APIKeyName string
 
 	// Reward logging enrichment.
 	EstimatedTokens int
@@ -113,6 +114,11 @@ type observeParams struct {
 	// HTTPStatus is the HTTP response status code sent to the client.
 	// Used to populate tokenhub_request_errors_total. 0 means not set.
 	HTTPStatus int
+
+	// AliasFrom is the original alias name when a blind A/B rewrite happened.
+	// Empty when no alias was applied. Recorded on the request log row so
+	// analysts can group variants under the same experiment.
+	AliasFrom string
 }
 
 // recordObservability writes a completed request result to all configured
@@ -171,6 +177,7 @@ func recordObservability(d Dependencies, p observeParams) {
 			InputTokens:      p.InputTokens,
 			OutputTokens:     p.OutputTokens,
 			TotalTokens:      p.InputTokens + p.OutputTokens,
+			AliasFrom:        p.AliasFrom,
 		}
 		re := store.RewardEntry{
 			Timestamp:       time.Now().UTC(),
@@ -216,6 +223,9 @@ func recordObservability(d Dependencies, p observeParams) {
 				OutputTokens: p.OutputTokens,
 				TotalTokens:  p.InputTokens + p.OutputTokens,
 				Reason:       p.Reason,
+				Mode:         p.Mode,
+				APIKeyName:   p.APIKeyName,
+				RequestID:    p.RequestID,
 			})
 		} else {
 			d.EventBus.Publish(events.Event{
@@ -225,6 +235,9 @@ func recordObservability(d Dependencies, p observeParams) {
 				LatencyMs:  float64(p.LatencyMs),
 				ErrorClass: p.ErrorClass,
 				ErrorMsg:   p.ErrorMsg,
+				Mode:       p.Mode,
+				APIKeyName: p.APIKeyName,
+				RequestID:  p.RequestID,
 			})
 		}
 	}
@@ -234,6 +247,9 @@ func recordObservability(d Dependencies, p observeParams) {
 		d.Stats.Record(stats.Snapshot{
 			ModelID:      p.ModelID,
 			ProviderID:   p.ProviderID,
+			APIKeyID:     p.APIKeyID,
+			APIKeyName:   p.APIKeyName,
+			Mode:         p.Mode,
 			LatencyMs:    float64(p.LatencyMs),
 			CostUSD:      p.CostUSD,
 			Success:      p.Success,

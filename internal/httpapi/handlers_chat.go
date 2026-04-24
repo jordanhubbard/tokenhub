@@ -142,6 +142,20 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 		// Inject request ID into context for provider tracing.
 		reqCtx := providers.WithRequestID(r.Context(), middleware.GetReqID(r.Context()))
 
+		// Stamp the router request ID so blind A/B alias rewrites are stable
+		// across retries, hedging, and last-resort fallbacks within this request.
+		if req.Request.ID == "" {
+			req.Request.ID = middleware.GetReqID(r.Context())
+		}
+		// Stamp the API key ID so api_key-sticky aliases can pin the same
+		// credential to one variant for the whole experiment.
+		if apiKeyID != "" {
+			if req.Request.Meta == nil {
+				req.Request.Meta = map[string]any{}
+			}
+			req.Request.Meta[router.MetaAPIKeyID] = apiKeyID
+		}
+
 		// Handle streaming requests.
 		if req.Request.Stream {
 			decision, body, serr := d.Engine.RouteAndStream(reqCtx, req.Request, policy)
@@ -155,6 +169,9 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("X-Negotiated-Model", decision.ModelID)
+			if decision.AliasFrom != "" {
+				w.Header().Set("X-Alias-From", decision.AliasFrom)
+			}
 			w.WriteHeader(http.StatusOK)
 
 			flusher, _ := w.(http.Flusher)
@@ -253,6 +270,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					EstimatedTokens: estimatedTokens,
 					LatencyBudgetMs: latencyBudgetMs,
 					HTTPStatus:      httpStatus,
+					AliasFrom:       decision.AliasFrom,
 				})
 			}
 			return
@@ -386,6 +404,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 				InputTokens:     usage.InputTokens,
 				OutputTokens:    usage.OutputTokens,
 				HTTPStatus:      http.StatusOK,
+				AliasFrom:       decision.AliasFrom,
 			})
 		}
 
@@ -393,6 +412,11 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 		if req.OutputFormat != nil {
 			resp = router.ShapeOutput(resp, *req.OutputFormat)
 		}
+
+		if decision.AliasFrom != "" {
+			w.Header().Set("X-Alias-From", decision.AliasFrom)
+		}
+		w.Header().Set("X-Negotiated-Model", decision.ModelID)
 
 		_ = json.NewEncoder(w).Encode(ChatResponse{
 			NegotiatedModel:  decision.ModelID,

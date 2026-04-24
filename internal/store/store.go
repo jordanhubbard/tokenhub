@@ -69,9 +69,36 @@ type Store interface {
 	// Log retention
 	PruneOldLogs(ctx context.Context, retention time.Duration) (int64, error)
 
+	// Model aliases (blind A/B variant splits).
+	ListModelAliases(ctx context.Context) ([]ModelAliasRecord, error)
+	GetModelAlias(ctx context.Context, name string) (*ModelAliasRecord, error)
+	UpsertModelAlias(ctx context.Context, rec ModelAliasRecord) error
+	DeleteModelAlias(ctx context.Context, name string) error
+
 	// Schema lifecycle
 	Migrate(ctx context.Context) error
 	Close() error
+}
+
+// ModelAliasRecord is the persisted form of a routing alias that rewrites
+// a client-facing model name into one of several weighted target models.
+// The Variants slice is serialized as JSON in the `variants` column.
+type ModelAliasRecord struct {
+	Name      string              `json:"name"`
+	Variants  []AliasVariantStore `json:"variants"`
+	Enabled   bool                `json:"enabled"`
+	// StickyBy selects the hash key used to pick a variant — see
+	// router.StickyByRequest / router.StickyByAPIKey. Empty means request-
+	// scoped stickiness (the default).
+	StickyBy  string              `json:"sticky_by,omitempty"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// AliasVariantStore is the persisted form of a single alias split target.
+type AliasVariantStore struct {
+	ModelID string `json:"model_id"`
+	Weight  int    `json:"weight"`
 }
 
 // ModelRecord is the persisted form of a model configuration.
@@ -130,6 +157,11 @@ type RequestLog struct {
 	InputTokens      int       `json:"input_tokens"`
 	OutputTokens     int       `json:"output_tokens"`
 	TotalTokens      int       `json:"total_tokens"`
+	// AliasFrom is the client-supplied alias name when a blind A/B alias
+	// rewrote the ModelHint, or empty when no alias was applied. Enables
+	// grouping rows for experiment analysis: all requests sent to alias
+	// "gpt-4o-experiment" can be compared across ModelID variants.
+	AliasFrom string `json:"alias_from,omitempty"`
 }
 
 // RewardSummary aggregates reward data per model per token bucket for

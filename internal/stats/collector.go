@@ -11,6 +11,9 @@ type Snapshot struct {
 	Timestamp    time.Time
 	ModelID      string
 	ProviderID   string
+	APIKeyID     string
+	APIKeyName   string
+	Mode         string
 	LatencyMs    float64
 	CostUSD      float64
 	Success      bool
@@ -39,6 +42,8 @@ type Aggregate struct {
 	Window        string  `json:"window"`
 	ModelID       string  `json:"model_id,omitempty"`
 	ProviderID    string  `json:"provider_id,omitempty"`
+	APIKeyName    string  `json:"api_key_name,omitempty"`
+	Mode          string  `json:"mode,omitempty"`
 	RequestCount  int     `json:"request_count"`
 	ErrorCount    int     `json:"error_count"`
 	ErrorRate     float64 `json:"error_rate"`
@@ -183,6 +188,64 @@ func (c *Collector) Global() []Aggregate {
 		}
 		if len(snaps) > 0 {
 			result = append(result, computeAggregate(w.Name, "", "", snaps))
+		}
+	}
+
+	return result
+}
+
+// SummaryByAPIKey returns aggregated stats for all windows grouped by API key name.
+func (c *Collector) SummaryByAPIKey() map[string][]Aggregate {
+	snapshots := c.snapshotsAfterPrune()
+
+	now := time.Now()
+	result := make(map[string][]Aggregate)
+
+	for _, w := range c.windows {
+		cutoff := now.Add(-w.Duration)
+
+		byKey := make(map[string][]Snapshot)
+		for _, s := range snapshots {
+			if s.Timestamp.After(cutoff) {
+				key := s.APIKeyName
+				if key == "" {
+					key = s.APIKeyID
+				}
+				byKey[key] = append(byKey[key], s)
+			}
+		}
+
+		for keyName, snaps := range byKey {
+			agg := computeAggregate(w.Name, "", "", snaps)
+			agg.APIKeyName = keyName
+			result[w.Name] = append(result[w.Name], agg)
+		}
+	}
+
+	return result
+}
+
+// SummaryByMode returns aggregated stats for all windows grouped by request mode.
+func (c *Collector) SummaryByMode() map[string][]Aggregate {
+	snapshots := c.snapshotsAfterPrune()
+
+	now := time.Now()
+	result := make(map[string][]Aggregate)
+
+	for _, w := range c.windows {
+		cutoff := now.Add(-w.Duration)
+
+		byMode := make(map[string][]Snapshot)
+		for _, s := range snapshots {
+			if s.Timestamp.After(cutoff) {
+				byMode[s.Mode] = append(byMode[s.Mode], s)
+			}
+		}
+
+		for mode, snaps := range byMode {
+			agg := computeAggregate(w.Name, "", "", snaps)
+			agg.Mode = mode
+			result[w.Name] = append(result[w.Name], agg)
 		}
 	}
 

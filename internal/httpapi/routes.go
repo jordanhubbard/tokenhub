@@ -60,6 +60,13 @@ type Dependencies struct {
 
 	// Rate limiter for expensive API endpoints (nil = no rate limiting).
 	RateLimiter *ratelimit.Limiter
+	// AdminRateLimiter caps per-IP traffic to /admin/v1 separately from the
+	// public /v1 limiter. Admin endpoints are significantly more privileged
+	// (vault access, API key creation, budget updates), so an independent and
+	// typically tighter bucket prevents a compromised admin credential from
+	// exhausting the public-client rate budget and contains abuse. A nil value
+	// skips admin rate limiting (useful for test harnesses).
+	AdminRateLimiter *ratelimit.Limiter
 	// RateLimitRPS is the global per-IP rate limit (requests/second). Used as
 	// the fallback per-API-key rate limit when a key has no custom limit set.
 	RateLimitRPS int
@@ -194,6 +201,12 @@ func MountRoutes(r chi.Router, d Dependencies) {
 
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Use(bodySizeLimit(maxRequestBodySize))
+		// Admin rate limiter runs before auth so unauthenticated floods are
+		// cheap to drop. A separate bucket from the /v1 limiter keeps admin
+		// abuse from starving production clients (and vice versa).
+		if d.AdminRateLimiter != nil {
+			r.Use(d.AdminRateLimiter.Middleware)
+		}
 		// Protect admin endpoints when an admin token holder is configured.
 		// NewServer always creates a holder (auto-generated if not provided),
 		// so this is only nil in test harnesses.
@@ -242,6 +255,12 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Get("/models", ModelsListHandler(d))
 		r.Patch("/models/*", ModelsPatchHandler(d))
 		r.Delete("/models/*", ModelsDeleteHandler(d))
+
+		// Model aliases (blind A/B variant splits).
+		r.Get("/aliases", AliasesListHandler(d))
+		r.Get("/aliases/{name}", AliasGetHandler(d))
+		r.Put("/aliases/{name}", AliasUpsertHandler(d))
+		r.Delete("/aliases/{name}", AliasDeleteHandler(d))
 		r.Get("/routing-config", RoutingConfigGetHandler(d))
 		r.Put("/routing-config", RoutingConfigSetHandler(d))
 		r.Get("/health", HealthStatsHandler(d))
