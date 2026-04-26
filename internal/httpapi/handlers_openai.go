@@ -383,8 +383,9 @@ func ModelsListPublicHandler(d Dependencies) http.HandlerFunc {
 
 // buildCompletionsResponse constructs an OpenAI-compatible response from the
 // raw provider response. If the provider already returns OpenAI format (with
-// a "choices" array), the choices are passed through. Otherwise, a single
-// choice is synthesised from the raw response content.
+// a "choices" array), the choices are passed through after sanitizing any
+// Anthropic-native tool call IDs. Otherwise, a single choice is synthesised
+// from the raw response content.
 func buildCompletionsResponse(requestID, model string, raw json.RawMessage) completionsResponse {
 	resp := completionsResponse{
 		ID:      fmt.Sprintf("chatcmpl-%s", requestID),
@@ -395,46 +396,89 @@ func buildCompletionsResponse(requestID, model string, raw json.RawMessage) comp
 
 	// Try to extract choices and usage from the provider response.
 	var parsed struct {
-		Choices json.RawMessage `json:"choices"`
+		Choices json.RawMessage  `json:"choices"`
 		Usage   *completionUsage `json:"usage,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err == nil && parsed.Choices != nil {
-		resp.Choices = parsed.Choices
+		// Sanitize Anthropic-native tooluse_ IDs in tool_calls to call_ format.
+		resp.Choices = sanitizeToolCallIDs(parsed.Choices)
 		resp.Usage = parsed.Usage
 		return resp
 	}
 
 	// Fallback: try Anthropic-style response with content array.
-	var anthropic struct {
+	// Anthropic responses may contain both "text" and "tool_use" content blocks.
+	var anthropicResp struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type  string          `json:"type"`
+			Text  string          `json:"text,omitempty"`
+			ID    string          `json:"id,omitempty"`
+			Name  string          `json:"name,omitempty"`
+			Input json.RawMessage `json:"input,omitempty"`
 		} `json:"content"`
 		Usage *struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage,omitempty"`
 	}
-	if err := json.Unmarshal(raw, &anthropic); err == nil && len(anthropic.Content) > 0 {
+	if err := json.Unmarshal(raw, &anthropicResp); err == nil && len(anthropicResp.Content) > 0 {
 		text := ""
-		for _, c := range anthropic.Content {
-			if c.Type == "text" {
+		var toolCalls []map[string]any
+		for i, c := range anthropicResp.Content {
+			switch c.Type {
+			case "text":
 				text += c.Text
+			case "tool_use":
+				// Convert Anthropic tool_use block to OpenAI tool_calls entry.
+				// Anthropic uses "tooluse_"-prefixed IDs; rewrite to "call_" prefix
+				// so downstream clients (e.g. litellm) can process them correctly.
+				callID := normalizeToolCallID(c.ID, i)
+				args := "{}"
+				if len(c.Input) > 0 {
+					args = string(c.Input)
+				}
+				toolCalls = append(toolCalls, map[string]any{
+					"id":   callID,
+					"type": "function",
+					"function": map[string]string{
+						"name":      c.Name,
+						"arguments": args,
+					},
+				})
 			}
 		}
+
+		var contentVal any = text
+		if text == "" {
+			contentVal = nil
+		}
+
+		msg := map[string]any{
+			"role":    "assistant",
+			"content": contentVal,
+		}
+		if len(toolCalls) > 0 {
+			msg["tool_calls"] = toolCalls
+		}
+
+		finishReason := "stop"
+		if len(toolCalls) > 0 {
+			finishReason = "tool_calls"
+		}
+
 		choices, _ := json.Marshal([]map[string]any{
 			{
 				"index":         0,
-				"message":       map[string]string{"role": "assistant", "content": text},
-				"finish_reason": "stop",
+				"message":       msg,
+				"finish_reason": finishReason,
 			},
 		})
 		resp.Choices = choices
-		if anthropic.Usage != nil {
+		if anthropicResp.Usage != nil {
 			resp.Usage = &completionUsage{
-				PromptTokens:     anthropic.Usage.InputTokens,
-				CompletionTokens: anthropic.Usage.OutputTokens,
-				TotalTokens:      anthropic.Usage.InputTokens + anthropic.Usage.OutputTokens,
+				PromptTokens:     anthropicResp.Usage.InputTokens,
+				CompletionTokens: anthropicResp.Usage.OutputTokens,
+				TotalTokens:      anthropicResp.Usage.InputTokens + anthropicResp.Usage.OutputTokens,
 			}
 		}
 		return resp
@@ -450,4 +494,74 @@ func buildCompletionsResponse(requestID, model string, raw json.RawMessage) comp
 	})
 	resp.Choices = choices
 	return resp
+}
+
+// normalizeToolCallID converts an Anthropic-native tool use ID (prefixed with
+// "tooluse_") to an OpenAI-compatible call ID (prefixed with "call_"). If the
+// ID already has a "call_" prefix or is empty, a synthetic ID is generated
+// using the block index.
+func normalizeToolCallID(id string, index int) string {
+	if strings.HasPrefix(id, "call_") {
+		return id
+	}
+	if strings.HasPrefix(id, "tooluse_") {
+		// Replace "tooluse_" prefix with "call_" to produce an OpenAI-format ID.
+		return "call_" + id[len("tooluse_"):]
+	}
+	if id != "" {
+		return "call_" + id
+	}
+	return fmt.Sprintf("call_%d", index)
+}
+
+// sanitizeToolCallIDs rewrites any Anthropic-native "tooluse_"-prefixed IDs in
+// an OpenAI choices array to the "call_" prefix that OpenAI clients expect.
+// This handles the case where a backend has already converted Anthropic responses
+// to OpenAI format but preserved the original Anthropic IDs verbatim.
+func sanitizeToolCallIDs(choices json.RawMessage) json.RawMessage {
+	type toolFunction struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	}
+	type toolCall struct {
+		ID       string       `json:"id,omitempty"`
+		Type     string       `json:"type,omitempty"`
+		Function toolFunction `json:"function"`
+	}
+	type message struct {
+		Role      string          `json:"role,omitempty"`
+		Content   json.RawMessage `json:"content,omitempty"`
+		ToolCalls []toolCall      `json:"tool_calls,omitempty"`
+	}
+	type choice struct {
+		Index        int             `json:"index"`
+		Message      message         `json:"message"`
+		FinishReason *string         `json:"finish_reason"`
+		Logprobs     json.RawMessage `json:"logprobs,omitempty"`
+	}
+
+	var arr []choice
+	if err := json.Unmarshal(choices, &arr); err != nil {
+		return choices
+	}
+
+	changed := false
+	for i, c := range arr {
+		for j, tc := range c.Message.ToolCalls {
+			normalized := normalizeToolCallID(tc.ID, j)
+			if normalized != tc.ID {
+				arr[i].Message.ToolCalls[j].ID = normalized
+				changed = true
+			}
+		}
+	}
+
+	if !changed {
+		return choices
+	}
+	out, err := json.Marshal(arr)
+	if err != nil {
+		return choices
+	}
+	return out
 }

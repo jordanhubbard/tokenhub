@@ -370,3 +370,261 @@ func TestCompletionsAnthropicTranslation(t *testing.T) {
 		t.Errorf("expected total_tokens=30, got %d", oai.Usage.TotalTokens)
 	}
 }
+
+// TestCompletionsAnthropicToolUseTranslation verifies that Anthropic-style
+// tool_use content blocks are converted to OpenAI tool_calls with call_ prefixed
+// IDs, not the raw Anthropic tooluse_ IDs.
+func TestCompletionsAnthropicToolUseTranslation(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// Anthropic returns a response with a tool_use block and tooluse_ prefixed ID.
+	mock := &mockSender{
+		id: "anthropic",
+		resp: json.RawMessage(`{
+			"content": [
+				{"type": "tool_use", "id": "tooluse_Zx9feJ3w3ME71La2q8dHhv", "name": "terminal", "input": {"command": "ls -la"}}
+			],
+			"usage": {"input_tokens": 50, "output_tokens": 30}
+		}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{
+		ID: "claude-sonnet", ProviderID: "anthropic",
+		Weight: 5, MaxContextTokens: 100000, Enabled: true,
+	})
+
+	body, _ := json.Marshal(CompletionsRequest{
+		Model:    "claude-sonnet",
+		Messages: []router.Message{{Role: "user", Content: "run ls"}},
+	})
+
+	resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	var oai completionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&oai); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	var choices []map[string]any
+	if err := json.Unmarshal(oai.Choices, &choices); err != nil {
+		t.Fatalf("failed to parse choices: %v", err)
+	}
+	if len(choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(choices))
+	}
+
+	// finish_reason must be "tool_calls".
+	if choices[0]["finish_reason"] != "tool_calls" {
+		t.Errorf("expected finish_reason=tool_calls, got %v", choices[0]["finish_reason"])
+	}
+
+	msg, ok := choices[0]["message"].(map[string]any)
+	if !ok {
+		t.Fatal("expected message object in choice")
+	}
+
+	toolCallsRaw, ok := msg["tool_calls"].([]any)
+	if !ok || len(toolCallsRaw) != 1 {
+		t.Fatalf("expected 1 tool_call, got %v", msg["tool_calls"])
+	}
+
+	tc, ok := toolCallsRaw[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected tool_call to be an object")
+	}
+
+	// ID must use "call_" prefix, not "tooluse_".
+	id, _ := tc["id"].(string)
+	if !strings.HasPrefix(id, "call_") {
+		t.Errorf("expected tool_call id to start with call_, got %q", id)
+	}
+	if strings.HasPrefix(id, "tooluse_") {
+		t.Errorf("tool_call id must not have tooluse_ prefix, got %q", id)
+	}
+
+	fn, ok := tc["function"].(map[string]any)
+	if !ok {
+		t.Fatal("expected function object in tool_call")
+	}
+	if fn["name"] != "terminal" {
+		t.Errorf("expected function name=terminal, got %v", fn["name"])
+	}
+
+	// Verify usage was translated.
+	if oai.Usage == nil {
+		t.Fatal("expected usage to be set")
+	}
+	if oai.Usage.PromptTokens != 50 {
+		t.Errorf("expected prompt_tokens=50, got %d", oai.Usage.PromptTokens)
+	}
+}
+
+// TestCompletionsAnthropicMixedContent verifies that a response with both text
+// and tool_use blocks is handled: text goes into content, tool_use into tool_calls.
+func TestCompletionsAnthropicMixedContent(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id: "anthropic",
+		resp: json.RawMessage(`{
+			"content": [
+				{"type": "text", "text": "I'll run that for you."},
+				{"type": "tool_use", "id": "tooluse_abc123", "name": "bash", "input": {"cmd": "pwd"}}
+			],
+			"usage": {"input_tokens": 20, "output_tokens": 15}
+		}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{
+		ID: "claude-haiku", ProviderID: "anthropic",
+		Weight: 5, MaxContextTokens: 100000, Enabled: true,
+	})
+
+	body, _ := json.Marshal(CompletionsRequest{
+		Model:    "claude-haiku",
+		Messages: []router.Message{{Role: "user", Content: "run pwd"}},
+	})
+
+	resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	var oai completionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&oai); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	var choices []map[string]any
+	if err := json.Unmarshal(oai.Choices, &choices); err != nil {
+		t.Fatalf("failed to parse choices: %v", err)
+	}
+	if len(choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(choices))
+	}
+
+	msg, ok := choices[0]["message"].(map[string]any)
+	if !ok {
+		t.Fatal("expected message object in choice")
+	}
+
+	// Text content must be preserved.
+	if msg["content"] != "I'll run that for you." {
+		t.Errorf("expected text content, got %v", msg["content"])
+	}
+
+	// Tool calls must be present with call_ IDs.
+	toolCallsRaw, ok := msg["tool_calls"].([]any)
+	if !ok || len(toolCallsRaw) != 1 {
+		t.Fatalf("expected 1 tool_call, got %v", msg["tool_calls"])
+	}
+	tc, _ := toolCallsRaw[0].(map[string]any)
+	id, _ := tc["id"].(string)
+	if !strings.HasPrefix(id, "call_") {
+		t.Errorf("expected call_ prefix, got %q", id)
+	}
+}
+
+// TestCompletionsToolUseIDSanitization verifies that when a backend already
+// converted Anthropic responses to OpenAI format but left tooluse_ IDs intact,
+// those IDs are normalized to call_ prefix before returning to the client.
+func TestCompletionsToolUseIDSanitization(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// Simulate a backend that returned OpenAI-format choices but with tooluse_ IDs.
+	mock := &mockSender{
+		id: "p1",
+		resp: json.RawMessage(`{
+			"choices": [{
+				"index": 0,
+				"message": {
+					"role": "assistant",
+					"content": null,
+					"tool_calls": [{
+						"id": "tooluse_Zx9feJ3w3ME71La2q8dHhv",
+						"type": "function",
+						"function": {"name": "terminal", "arguments": "{\"command\": \"ls\"}"}
+					}]
+				},
+				"finish_reason": "tool_calls"
+			}]
+		}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{
+		ID: "gpt-4", ProviderID: "p1",
+		Weight: 5, MaxContextTokens: 8192, Enabled: true,
+	})
+
+	body, _ := json.Marshal(CompletionsRequest{
+		Model:    "gpt-4",
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+
+	resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	var oai completionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&oai); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	var choices []map[string]any
+	if err := json.Unmarshal(oai.Choices, &choices); err != nil {
+		t.Fatalf("failed to parse choices: %v", err)
+	}
+	if len(choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(choices))
+	}
+
+	msg, ok := choices[0]["message"].(map[string]any)
+	if !ok {
+		t.Fatal("expected message object")
+	}
+
+	toolCalls, ok := msg["tool_calls"].([]any)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool_call, got %v", msg["tool_calls"])
+	}
+
+	tc, _ := toolCalls[0].(map[string]any)
+	id, _ := tc["id"].(string)
+
+	// The tooluse_ ID must have been rewritten to call_ prefix.
+	if !strings.HasPrefix(id, "call_") {
+		t.Errorf("expected call_ prefix after sanitization, got %q", id)
+	}
+	if strings.HasPrefix(id, "tooluse_") {
+		t.Errorf("tooluse_ prefix must be stripped, got %q", id)
+	}
+	// The suffix should be preserved.
+	if id != "call_Zx9feJ3w3ME71La2q8dHhv" {
+		t.Errorf("expected call_Zx9feJ3w3ME71La2q8dHhv, got %q", id)
+	}
+}
