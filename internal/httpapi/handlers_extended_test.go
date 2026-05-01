@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,129 @@ import (
 )
 
 // --- ChatHandler extended tests ---
+
+func executeChatHandler(d Dependencies, reqBody []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	ChatHandler(d).ServeHTTP(rec, req)
+	return rec
+}
+
+func TestChatWithInvalidOutputSchemaDirective(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	dep := Dependencies{Engine: eng}
+	defer ts.Close()
+
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{
+				{Role: "user", Content: `@@tokenhub output_schema={invalid-json` + "\nNeed a response as JSON."},
+			},
+		},
+	})
+	rec := executeChatHandler(dep, body)
+
+	if rec.Result().StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid output_schema directive, got %d", rec.Result().StatusCode)
+	}
+}
+
+func TestChatRouteIsMounted(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"hello"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{
+				{Role: "user", Content: "hello"},
+			},
+		},
+	})
+	resp, err := authPost(ts.URL+"/v1/chat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 for /v1/chat, got %d: %s", resp.StatusCode, string(b))
+	}
+
+	var result ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result.NegotiatedModel != "m1" {
+		t.Errorf("expected negotiated_model m1, got %q", result.NegotiatedModel)
+	}
+}
+
+func TestChatWithOutputSchemaValidated(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	dep := Dependencies{Engine: eng}
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"{\"name\":\"Alice\",\"age\":30}"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{
+				{Role: "user", Content: `@@tokenhub output_schema={"type":"object","required":["name"]}` + "\nReturn a JSON object with name"},
+			},
+		},
+	})
+	rec := executeChatHandler(dep, body)
+
+	if rec.Result().StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for matching output_schema, got %d", rec.Result().StatusCode)
+	}
+	var result ChatResponse
+	if err := json.NewDecoder(rec.Result().Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result.NegotiatedModel != "m1" {
+		t.Errorf("expected m1, got %q", result.NegotiatedModel)
+	}
+}
+
+func TestChatWithOutputSchemaMismatch(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	dep := Dependencies{Engine: eng}
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"{\"name\":\"Alice\"}"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	body, _ := json.Marshal(ChatRequest{
+		Request: router.Request{
+			Messages: []router.Message{
+				{Role: "user", Content: `@@tokenhub output_schema={"type":"object","required":["name","age"]}` + "\nReturn a JSON object with name"},
+			},
+		},
+	})
+	rec := executeChatHandler(dep, body)
+
+	if rec.Result().StatusCode != http.StatusBadGateway {
+		t.Errorf("expected 502 when output_schema validation fails, got %d", rec.Result().StatusCode)
+	}
+}
 
 // --- PlanHandler extended tests ---
 
@@ -250,6 +374,99 @@ func TestPlanWithOutputFormat(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestPlanInvalidOutputSchema(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	body, _ := json.Marshal(PlanRequest{
+		Request: router.Request{
+			Messages: []router.Message{{Role: "user", Content: "plan"}},
+		},
+		Orchestration: router.OrchestrationDirective{
+			Mode:         "planning",
+			OutputSchema:  "not json",
+		},
+	})
+	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid output_schema, got %d", resp.StatusCode)
+	}
+}
+
+func TestPlanWithOutputSchemaValidated(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"{\"name\":\"Alice\",\"age\":30}"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	body, _ := json.Marshal(PlanRequest{
+		Request: router.Request{
+			Messages: []router.Message{{Role: "user", Content: "plan"}},
+		},
+		Orchestration: router.OrchestrationDirective{
+			Mode:         "planning",
+			OutputSchema:  `{"type":"object","required":["name"]}`,
+		},
+	})
+	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for matching output_schema, got %d", resp.StatusCode)
+	}
+	var result PlanResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result.NegotiatedModel != "m1" {
+		t.Errorf("expected negotiated model m1, got %q", result.NegotiatedModel)
+	}
+}
+
+func TestPlanWithOutputSchemaMismatch(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	mock := &mockSender{
+		id:   "p1",
+		resp: json.RawMessage(`{"choices":[{"message":{"content":"{\"name\":\"Alice\"}"}}]}`),
+	}
+	eng.RegisterAdapter(mock)
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 5, MaxContextTokens: 4096, Enabled: true})
+
+	body, _ := json.Marshal(PlanRequest{
+		Request: router.Request{
+			Messages: []router.Message{{Role: "user", Content: "plan"}},
+		},
+		Orchestration: router.OrchestrationDirective{
+			Mode:         "planning",
+			OutputSchema:  `{"type":"object","required":["name","age"]}`,
+		},
+	})
+	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("expected 502 when output_schema validation fails, got %d", resp.StatusCode)
 	}
 }
 

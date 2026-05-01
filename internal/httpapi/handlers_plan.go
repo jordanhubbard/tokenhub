@@ -65,6 +65,10 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "unknown orchestration mode", http.StatusBadRequest)
 			return
 		}
+		if req.Orchestration.OutputSchema != "" && !json.Valid([]byte(req.Orchestration.OutputSchema)) {
+			jsonError(w, "invalid output_schema: must be valid JSON", http.StatusBadRequest)
+			return
+		}
 
 		// Determine API key ID for workflow attribution.
 		apiKeyID := ""
@@ -188,6 +192,28 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 			}
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
+		}
+
+		if req.Orchestration.OutputSchema != "" {
+			if err := validateOutputSchema(resp, json.RawMessage(req.Orchestration.OutputSchema)); err != nil {
+				if !temporalHandledLogging {
+					recordObservability(d, observeParams{
+						Ctx:        r.Context(),
+						ModelID:    decision.ModelID,
+						ProviderID: decision.ProviderID,
+						Mode:       mode,
+						LatencyMs:  latencyMs,
+						Success:    false,
+						ErrorClass: "output_schema_validation_failed",
+						ErrorMsg:   err.Error(),
+						RequestID:  middleware.GetReqID(r.Context()),
+						APIKeyID:   apiKeyID,
+						HTTPStatus: http.StatusBadGateway,
+					})
+				}
+				jsonError(w, err.Error(), http.StatusBadGateway)
+				return
+			}
 		}
 
 		usage := extractUsage(resp)

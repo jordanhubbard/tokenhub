@@ -192,6 +192,9 @@ func MountRoutes(r chi.Router, d Dependencies) {
 			if d.APIKeyMgr != nil {
 				r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker, d.RateLimiter, d.RateLimitRPS))
 			}
+			// /v1/chat is the TokenHub-native chat request format (policy/output control).
+			// /v1/chat/completions remains OpenAI-compatible for interoperability.
+			r.Post("/chat", ChatHandler(d))
 			r.Post("/chat/completions", ChatCompletionsHandler(d))
 			r.Post("/messages", AnthropicMessagesHandler(d))
 			r.Post("/embeddings", EmbeddingsHandler(d))

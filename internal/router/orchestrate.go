@@ -94,6 +94,21 @@ func (e *Engine) adversarial(ctx context.Context, req Request, d OrchestrationDi
 	}
 
 	plan := ExtractContent(planResp)
+	if d.ReturnPlanOnly {
+		result := map[string]any{
+			"initial_plan": plan,
+		}
+		resultJSON, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			return Decision{}, nil, marshalErr
+		}
+		return Decision{
+			ModelID:          planDec.ModelID,
+			ProviderID:       planDec.ProviderID,
+			EstimatedCostUSD: planDec.EstimatedCostUSD,
+			Reason:           "adversarial-plan-only",
+		}, ProviderResponse(resultJSON), nil
+	}
 
 	var critique, refinedPlan string
 	var lastDec Decision

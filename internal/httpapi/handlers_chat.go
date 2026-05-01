@@ -120,6 +120,13 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			if dirPolicy.MinWeight > 0 {
 				policy.MinWeight = dirPolicy.MinWeight
 			}
+			if dirPolicy.OutputSchema != "" {
+				if !json.Valid([]byte(dirPolicy.OutputSchema)) {
+					jsonError(w, "invalid output_schema directive JSON", http.StatusBadRequest)
+					return
+				}
+				req.Request.OutputSchema = json.RawMessage(dirPolicy.OutputSchema)
+			}
 			// Strip directives before forwarding to providers.
 			req.Request.Messages = router.StripDirectives(req.Request.Messages)
 		}
@@ -376,6 +383,30 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					EstimatedTokens: estimatedTokens,
 					LatencyBudgetMs: latencyBudgetMs,
 					HTTPStatus:      http.StatusBadGateway,
+				})
+			}
+			jsonError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		if err := validateOutputSchema(resp, req.Request.OutputSchema); err != nil {
+			// Record metrics for validation failures that happen after routing.
+			if !temporalHandledLogging {
+				recordObservability(d, observeParams{
+					Ctx:             r.Context(),
+					ModelID:         decision.ModelID,
+					ProviderID:      decision.ProviderID,
+					Mode:            policy.Mode,
+					LatencyMs:       latencyMs,
+					Success:         false,
+					ErrorClass:      "output_schema_validation_failed",
+					ErrorMsg:        err.Error(),
+					RequestID:       middleware.GetReqID(r.Context()),
+					APIKeyID:        apiKeyID,
+					EstimatedTokens:  estimatedTokens,
+					LatencyBudgetMs: latencyBudgetMs,
+					HTTPStatus:      http.StatusBadGateway,
+					AliasFrom:       decision.AliasFrom,
 				})
 			}
 			jsonError(w, err.Error(), http.StatusBadGateway)

@@ -99,7 +99,13 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 
 	body, err := streamer.SendStream(ctx, decision.ModelID, req)
 	if err == nil {
+		if e.health != nil {
+			e.health.RecordSuccess(decision.ProviderID, 0)
+		}
 		return decision, body, nil
+	}
+	if e.health != nil {
+		e.health.RecordError(decision.ProviderID, err.Error())
 	}
 
 	// Primary model failed. Handle budget exhaustion then try eligible fallbacks.
@@ -128,10 +134,16 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		}
 		body, err = fs.SendStream(ctx, m.ID, req)
 		if err == nil {
+			if e.health != nil {
+				e.health.RecordSuccess(m.ProviderID, 0)
+			}
 			decision.ModelID = m.ID
 			decision.ProviderID = m.ProviderID
 			decision.Reason = "stream-fallback"
 			return decision, body, nil
+		}
+		if e.health != nil {
+			e.health.RecordError(m.ProviderID, err.Error())
 		}
 		if fc := fallbackAdapter.ClassifyError(err); fc.Class == ErrBudgetExceeded {
 			slog.Warn("provider budget exhausted (stream fallback), disabling model",

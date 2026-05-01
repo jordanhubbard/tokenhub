@@ -310,6 +310,9 @@ func (e *Engine) GetAnthropicSenderAndModel(modelHint string) (AnthropicRawSende
 	defer e.mu.RUnlock()
 	// Prefer the adapter for the hinted model's provider (exact match).
 	if m, ok := e.models[modelHint]; ok {
+		if !m.Enabled {
+			return nil, ""
+		}
 		if a, ok := e.adapters[m.ProviderID]; ok {
 			if ars, ok := a.(AnthropicRawSender); ok {
 				return ars, modelHint
@@ -320,6 +323,9 @@ func (e *Engine) GetAnthropicSenderAndModel(modelHint string) (AnthropicRawSende
 	// Allows "claude-sonnet-4-6" to resolve to "azure/anthropic/claude-sonnet-4-6".
 	suffix := "/" + modelHint
 	for id, m := range e.models {
+		if !m.Enabled {
+			continue
+		}
 		if !strings.HasSuffix(id, suffix) {
 			continue
 		}
@@ -332,7 +338,13 @@ func (e *Engine) GetAnthropicSenderAndModel(modelHint string) (AnthropicRawSende
 	// Fallback: first adapter that implements AnthropicRawSender.
 	for _, a := range e.adapters {
 		if ars, ok := a.(AnthropicRawSender); ok {
-			return ars, modelHint
+		// Keep fallback scoped to enabled models so disabled providers are
+		// never selected through Anthropic passthrough.
+		for resolvedID, m := range e.models {
+			if m.Enabled && m.ProviderID == a.ID() {
+				return ars, resolvedID
+				}
+			}
 		}
 	}
 	return nil, ""
