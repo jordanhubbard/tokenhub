@@ -214,6 +214,33 @@ func TestAliasIntegration_DisabledAliasPassesThrough(t *testing.T) {
 	}
 }
 
+func TestAliasIntegration_WildcardAliasSelectsConfiguredBackend(t *testing.T) {
+	srv, eng, _, apiKey := setupAliasTestServer(t)
+
+	if err := eng.AliasResolver().Set(router.Alias{
+		Name: router.WildcardModelHint,
+		Variants: []router.AliasVariant{
+			{ModelID: "variant-b", Weight: 1},
+		},
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	resp := postCompletion(t, srv.URL, apiKey, router.WildcardModelHint)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, string(b))
+	}
+	if got := resp.Header.Get("X-Alias-From"); got != router.WildcardModelHint {
+		t.Fatalf("expected wildcard alias header, got %q", got)
+	}
+	if got := resp.Header.Get("X-Negotiated-Model"); got != "variant-b" {
+		t.Fatalf("expected wildcard alias to select variant-b, got %q", got)
+	}
+}
+
 // TestAliasIntegration_RequestLogRecordsAlias verifies that request_logs
 // captures AliasFrom so A/B analysis can group variants by experiment.
 // This is the single most important bit of the whole feature — without it

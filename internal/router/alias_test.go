@@ -255,6 +255,39 @@ func TestEngine_ResolveAliasNoopWhenNilResolver(t *testing.T) {
 	}
 }
 
+func TestEngine_ResolveWildcardClearsHintWithoutAlias(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	req := Request{ModelHint: WildcardModelHint, ID: "req-abc"}
+
+	alias := eng.resolveAlias(&req)
+	if alias != "" {
+		t.Fatalf("wildcard without alias should not report AliasFrom, got %q", alias)
+	}
+	if req.ModelHint != "" {
+		t.Fatalf("wildcard should become an empty model hint, got %q", req.ModelHint)
+	}
+}
+
+func TestEngine_ResolveWildcardAliasRewrites(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	r := NewAliasResolver()
+	_ = r.Set(Alias{
+		Name:     WildcardModelHint,
+		Variants: []AliasVariant{{ModelID: "default-large", Weight: 1}},
+		Enabled:  true,
+	})
+	eng.SetAliasResolver(r)
+
+	req := Request{ModelHint: WildcardModelHint, ID: "req-abc"}
+	alias := eng.resolveAlias(&req)
+	if alias != WildcardModelHint {
+		t.Fatalf("expected wildcard alias captured, got %q", alias)
+	}
+	if req.ModelHint != "default-large" {
+		t.Fatalf("expected wildcard alias to rewrite hint, got %q", req.ModelHint)
+	}
+}
+
 // --- Sticky-by-user assignment ------------------------------------------------
 
 func TestAlias_Validate_StickyBy(t *testing.T) {

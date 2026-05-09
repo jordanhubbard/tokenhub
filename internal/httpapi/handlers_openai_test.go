@@ -45,6 +45,25 @@ func (m *mockStreamer) ClassifyError(err error) *router.ClassifiedError {
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
 }
 
+type recordingSender struct {
+	id        string
+	resp      json.RawMessage
+	lastModel string
+	lastReq   router.Request
+}
+
+func (m *recordingSender) ID() string { return m.id }
+
+func (m *recordingSender) Send(_ context.Context, model string, req router.Request) (router.ProviderResponse, error) {
+	m.lastModel = model
+	m.lastReq = req
+	return m.resp, nil
+}
+
+func (m *recordingSender) ClassifyError(err error) *router.ClassifiedError {
+	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
+}
+
 func TestCompletionsSuccess(t *testing.T) {
 	ts, eng, _ := setupTestServer(t)
 	defer ts.Close()
@@ -103,34 +122,68 @@ func TestCompletionsSuccess(t *testing.T) {
 	}
 }
 
-func TestCompletionsMissingModel(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
-	defer ts.Close()
+func TestCompletionsServerSelectedModelWhenModelOmittedOrWildcard(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+	}{
+		{
+			name: "omitted",
+			body: map[string]any{
+				"messages": []map[string]string{{"role": "user", "content": "hi"}},
+			},
+		},
+		{
+			name: "wildcard",
+			body: map[string]any{
+				"model":    router.WildcardModelHint,
+				"messages": []map[string]string{{"role": "user", "content": "hi"}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, eng, _ := setupTestServer(t)
+			defer ts.Close()
 
-	body, _ := json.Marshal(CompletionsRequest{
-		Messages: []router.Message{{Role: "user", Content: "hi"}},
-	})
+			mock := &recordingSender{
+				id:   "p1",
+				resp: json.RawMessage(`{"choices":[{"index":0,"message":{"role":"assistant","content":"selected"},"finish_reason":"stop"}]}`),
+			}
+			eng.RegisterAdapter(mock)
+			eng.RegisterModel(router.Model{
+				ID: "server-selected", ProviderID: "p1",
+				Weight: 5, MaxContextTokens: 8192, Enabled: true,
+			})
 
-	resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+			body, _ := json.Marshal(tc.body)
+			resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", resp.StatusCode)
-	}
+			if resp.StatusCode != http.StatusOK {
+				b, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d: %s", resp.StatusCode, b)
+			}
+			if got := resp.Header.Get("X-Negotiated-Model"); got != "server-selected" {
+				t.Fatalf("expected X-Negotiated-Model=server-selected, got %q", got)
+			}
 
-	// Verify OpenAI error format.
-	var errResp openaiErrorBody
-	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error: %v", err)
-	}
-	if errResp.Error.Type != "invalid_request_error" {
-		t.Errorf("expected type=invalid_request_error, got %s", errResp.Error.Type)
-	}
-	if !strings.Contains(errResp.Error.Message, "model") {
-		t.Errorf("expected error about model, got: %s", errResp.Error.Message)
+			var oai completionsResponse
+			if err := json.NewDecoder(resp.Body).Decode(&oai); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if oai.Model != "server-selected" {
+				t.Fatalf("expected response model=server-selected, got %q", oai.Model)
+			}
+			if mock.lastModel != "server-selected" {
+				t.Fatalf("backend should receive concrete selected model, got %q", mock.lastModel)
+			}
+			if mock.lastReq.ModelHint != "" {
+				t.Fatalf("backend request should not retain caller wildcard/empty hint, got %q", mock.lastReq.ModelHint)
+			}
+		})
 	}
 }
 

@@ -5,11 +5,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/providers"
+	"github.com/jordanhubbard/tokenhub/internal/router"
 )
 
 // anthropicError writes an Anthropic-compatible error response:
@@ -47,19 +48,21 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 			Model  string `json:"model"`
 			Stream bool   `json:"stream"`
 		}
-		if jerr := json.Unmarshal(body, &peek); jerr != nil || peek.Model == "" {
-			writeAnthropicError(w, "model is required", "invalid_request_error", http.StatusBadRequest)
+		if jerr := json.Unmarshal(body, &peek); jerr != nil {
+			writeAnthropicError(w, "invalid JSON: "+jerr.Error(), "invalid_request_error", http.StatusBadRequest)
 			return
 		}
 
-		// Strip known provider prefix (e.g. "azure/anthropic/claude-sonnet-4-6" → bare id).
-		modelHint := peek.Model
-		if idx := strings.IndexByte(modelHint, '/'); idx > 0 {
-			bare := modelHint[idx+1:]
-			if d.Engine.HasModel(bare) {
-				modelHint = bare
-			}
+		modelHint := normalizeClientModelHint(d.Engine, peek.Model)
+		aliasReq := router.Request{
+			ID:        reqID,
+			ModelHint: modelHint,
 		}
+		if rec := apikey.FromContext(r.Context()); rec != nil && rec.ID != "" {
+			aliasReq.Meta = map[string]any{router.MetaAPIKeyID: rec.ID}
+		}
+		aliasFrom := d.Engine.ResolveModelHint(&aliasReq)
+		modelHint = aliasReq.ModelHint
 
 		// Apply the same sanitizations as acc-agent proxy.rs:
 		//   1. normalize OpenAI-format tool_calls → Anthropic tool_use content blocks
@@ -73,7 +76,7 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 		}
 		// Rewrite model in body when the registry resolved a different upstream ID
 		// (e.g. "claude-sonnet-4-6" → "azure/anthropic/claude-sonnet-4-6").
-		if resolvedModel != "" && resolvedModel != modelHint {
+		if resolvedModel != "" && resolvedModel != peek.Model {
 			body = rewriteModel(body, resolvedModel)
 		}
 
@@ -95,6 +98,10 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("X-Negotiated-Model", resolvedModel)
+			if aliasFrom != "" {
+				w.Header().Set("X-Alias-From", aliasFrom)
+			}
 			w.WriteHeader(http.StatusOK)
 
 			flusher, _ := w.(http.Flusher)
@@ -144,6 +151,10 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 		)
 
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Negotiated-Model", resolvedModel)
+		if aliasFrom != "" {
+			w.Header().Set("X-Alias-From", aliasFrom)
+		}
 		w.WriteHeader(statusCode)
 		_, _ = w.Write(respBody)
 	}

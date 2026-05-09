@@ -190,3 +190,13 @@ type OutputFormat struct {
 }
 
 type ProviderResponse = json.RawMessage
+
+// WildcardModelHint lets callers explicitly opt into server-side model
+// selection. It behaves like an omitted model hint unless an alias named "*"
+// is configured, in which case the alias controls the resolved target.
+const WildcardModelHint = "*"
+
+// IsWildcardModelHint reports whether hint is the wildcard model selector.
+func IsWildcardModelHint(hint string) bool {
+	return strings.TrimSpace(hint) == WildcardModelHint
+}

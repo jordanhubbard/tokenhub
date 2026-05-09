@@ -33,11 +33,11 @@ type CompletionsRequest struct {
 
 // completionsResponse is the OpenAI-compatible response for /v1/chat/completions.
 type completionsResponse struct {
-	ID      string          `json:"id"`
-	Object  string          `json:"object"`
-	Created int64           `json:"created"`
-	Model   string          `json:"model"`
-	Choices json.RawMessage `json:"choices"`
+	ID      string           `json:"id"`
+	Object  string           `json:"object"`
+	Created int64            `json:"created"`
+	Model   string           `json:"model"`
+	Choices json.RawMessage  `json:"choices"`
 	Usage   *completionUsage `json:"usage,omitempty"`
 }
 
@@ -86,11 +86,9 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Validate required fields per OpenAI spec.
-		if req.Model == "" {
-			writeOpenAIError(w, "model is required", "invalid_request_error", http.StatusBadRequest)
-			return
-		}
+		// Messages are still required. Model is optional in TokenHub: omitted or
+		// "*" delegates model choice to the router, while aliases and exact model
+		// names keep their normal behavior.
 		if len(req.Messages) == 0 {
 			writeOpenAIError(w, "messages is required", "invalid_request_error", http.StatusBadRequest)
 			return
@@ -114,18 +112,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			params["n"] = *req.N
 		}
 
-		// Normalize model hint: strip known provider prefixes that OpenClaw
-		// and other gateway clients prepend (e.g. "nvidia/", "openai/", "anthropic/").
-		// TokenHub registers models by their bare provider-specific ID, not with
-		// the client's routing prefix. Strip at most one leading "<word>/" prefix
-		// when the resulting ID matches a known registered model; otherwise keep as-is.
-		modelHint := req.Model
-		if idx := strings.IndexByte(modelHint, '/'); idx > 0 {
-			bare := modelHint[idx+1:]
-			if d.Engine.HasModel(bare) {
-				modelHint = bare
-			}
-		}
+		modelHint := normalizeClientModelHint(d.Engine, req.Model)
 
 		// Look up tool name map for the hinted model. Used to rewrite tool names
 		// in both directions: outbound (client→model) uses the reversed map,
@@ -318,7 +305,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 			Reason:          decision.Reason,
 			RequestID:       reqID,
 			APIKeyID:        apiKeyID,
-				APIKeyName:      apiKeyName,
+			APIKeyName:      apiKeyName,
 			EstimatedTokens: estimatedTokens,
 			InputTokens:     usage.InputTokens,
 			OutputTokens:    usage.OutputTokens,

@@ -78,6 +78,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 			jsonError(w, "messages required", http.StatusBadRequest)
 			return
 		}
+		req.Request.ModelHint = normalizeClientModelHint(d.Engine, req.Request.ModelHint)
 
 		// Validate policy hints if provided.
 		if req.Policy != nil {
@@ -403,7 +404,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					ErrorMsg:        err.Error(),
 					RequestID:       middleware.GetReqID(r.Context()),
 					APIKeyID:        apiKeyID,
-					EstimatedTokens:  estimatedTokens,
+					EstimatedTokens: estimatedTokens,
 					LatencyBudgetMs: latencyBudgetMs,
 					HTTPStatus:      http.StatusBadGateway,
 					AliasFrom:       decision.AliasFrom,

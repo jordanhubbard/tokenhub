@@ -171,16 +171,34 @@ func (e *Engine) AliasResolver() *AliasResolver {
 // req.Meta[MetaAPIKeyID]) is used instead so the same credential is pinned
 // to one variant for the life of the experiment.
 func (e *Engine) resolveAlias(req *Request) string {
-	if e.aliases == nil || req.ModelHint == "" {
+	if req == nil {
 		return ""
 	}
-	target, applied := e.aliases.ResolveForRequest(req.ModelHint, req)
-	if !applied {
+	req.ModelHint = strings.TrimSpace(req.ModelHint)
+	if req.ModelHint == "" {
 		return ""
 	}
-	originalAlias := req.ModelHint
-	req.ModelHint = target
-	return originalAlias
+
+	if e.aliases != nil {
+		target, applied := e.aliases.ResolveForRequest(req.ModelHint, req)
+		if applied {
+			originalAlias := req.ModelHint
+			req.ModelHint = target
+			return originalAlias
+		}
+	}
+
+	if IsWildcardModelHint(req.ModelHint) {
+		req.ModelHint = ""
+	}
+	return ""
+}
+
+// ResolveModelHint applies TokenHub's public model-hint semantics to req:
+// aliases are rewritten to concrete models, while "*" means "let TokenHub
+// choose" unless a "*" alias is configured.
+func (e *Engine) ResolveModelHint(req *Request) string {
+	return e.resolveAlias(req)
 }
 
 // RegisterAdapter registers a provider adapter.
@@ -338,11 +356,11 @@ func (e *Engine) GetAnthropicSenderAndModel(modelHint string) (AnthropicRawSende
 	// Fallback: first adapter that implements AnthropicRawSender.
 	for _, a := range e.adapters {
 		if ars, ok := a.(AnthropicRawSender); ok {
-		// Keep fallback scoped to enabled models so disabled providers are
-		// never selected through Anthropic passthrough.
-		for resolvedID, m := range e.models {
-			if m.Enabled && m.ProviderID == a.ID() {
-				return ars, resolvedID
+			// Keep fallback scoped to enabled models so disabled providers are
+			// never selected through Anthropic passthrough.
+			for resolvedID, m := range e.models {
+				if m.Enabled && m.ProviderID == a.ID() {
+					return ars, resolvedID
 				}
 			}
 		}
