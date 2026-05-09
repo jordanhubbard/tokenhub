@@ -21,25 +21,6 @@ type aliasPayload struct {
 	StickyBy string `json:"sticky_by,omitempty"`
 }
 
-// recordToRouterAlias converts the persisted record form into the runtime
-// resolver form. Defined here (rather than in the router package) so the
-// router doesn't take a build-time dependency on store.
-func recordToRouterAlias(rec store.ModelAliasRecord) router.Alias {
-	variants := make([]router.AliasVariant, 0, len(rec.Variants))
-	for _, v := range rec.Variants {
-		variants = append(variants, router.AliasVariant{
-			ModelID: v.ModelID,
-			Weight:  v.Weight,
-		})
-	}
-	return router.Alias{
-		Name:     rec.Name,
-		Variants: variants,
-		Enabled:  rec.Enabled,
-		StickyBy: rec.StickyBy,
-	}
-}
-
 func routerAliasToRecord(a router.Alias) store.ModelAliasRecord {
 	variants := make([]store.AliasVariantStore, 0, len(a.Variants))
 	for _, v := range a.Variants {

@@ -110,7 +110,7 @@ type Engine struct {
 	bandit       *ThompsonSampler // nil = disabled
 	skipRecorder SkipRecorder
 	aliases      *AliasResolver // nil = no alias rewriting
-	wildcardRR   uint64
+	wildcardRR   int
 
 	mu       sync.RWMutex
 	models   map[string]Model
@@ -219,8 +219,9 @@ func (e *Engine) resolveDefaultWildcard(req *Request) string {
 		return ""
 	}
 
-	req.ModelHint = candidates[int(e.wildcardRR%uint64(len(candidates)))]
-	e.wildcardRR++
+	idx := e.wildcardRR % len(candidates)
+	req.ModelHint = candidates[idx]
+	e.wildcardRR = idx + 1
 	return WildcardModelHint
 }
 

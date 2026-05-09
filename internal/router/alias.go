@@ -134,14 +134,14 @@ func (a Alias) keyForRequest(req *Request) string {
 type AliasResolver struct {
 	mu         sync.RWMutex
 	aliases    map[string]Alias
-	roundRobin map[string]uint64
+	roundRobin map[string]int64
 }
 
 // NewAliasResolver returns an empty resolver.
 func NewAliasResolver() *AliasResolver {
 	return &AliasResolver{
 		aliases:    make(map[string]Alias),
-		roundRobin: make(map[string]uint64),
+		roundRobin: make(map[string]int64),
 	}
 }
 
@@ -154,7 +154,7 @@ func (r *AliasResolver) Set(a Alias) error {
 	}
 	r.mu.Lock()
 	if r.roundRobin == nil {
-		r.roundRobin = make(map[string]uint64)
+		r.roundRobin = make(map[string]int64)
 	}
 	r.aliases[a.Name] = a
 	r.mu.Unlock()
@@ -215,13 +215,13 @@ func (r *AliasResolver) Resolve(name, key string) (string, bool) {
 		return a.Variants[0].ModelID, true
 	}
 
-	var bucket int
+	var bucket int64
 	if key == "" {
-		bucket = rand.Intn(total)
+		bucket = rand.Int63n(total)
 	} else {
 		h := fnv.New32a()
 		_, _ = h.Write([]byte(key))
-		bucket = int(h.Sum32() % uint32(total))
+		bucket = int64(h.Sum32()) % total
 	}
 
 	return aliasVariantForBucket(a, bucket), true
@@ -243,10 +243,10 @@ func (r *AliasResolver) ResolveForRequest(name string, req *Request) (string, bo
 			return a.Variants[0].ModelID, true
 		}
 		if r.roundRobin == nil {
-			r.roundRobin = make(map[string]uint64)
+			r.roundRobin = make(map[string]int64)
 		}
-		bucket := int(r.roundRobin[name] % uint64(total))
-		r.roundRobin[name]++
+		bucket := r.roundRobin[name] % total
+		r.roundRobin[name] = bucket + 1
 		target := aliasVariantForBucket(a, bucket)
 		r.mu.Unlock()
 		return target, true
@@ -275,23 +275,23 @@ func (r *AliasResolver) ReplaceAll(aliases []Alias) error {
 	}
 	r.mu.Lock()
 	r.aliases = next
-	r.roundRobin = make(map[string]uint64)
+	r.roundRobin = make(map[string]int64)
 	r.mu.Unlock()
 	return firstErr
 }
 
-func aliasTotalWeight(a Alias) int {
-	var total int
+func aliasTotalWeight(a Alias) int64 {
+	var total int64
 	for _, v := range a.Variants {
-		total += v.Weight
+		total += int64(v.Weight)
 	}
 	return total
 }
 
-func aliasVariantForBucket(a Alias, bucket int) string {
-	cum := 0
+func aliasVariantForBucket(a Alias, bucket int64) string {
+	var cum int64
 	for _, v := range a.Variants {
-		cum += v.Weight
+		cum += int64(v.Weight)
 		if bucket < cum {
 			return v.ModelID
 		}

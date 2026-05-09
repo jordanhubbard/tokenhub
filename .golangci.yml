@@ -41,11 +41,11 @@ linters:
       # URLs. credProvider struct deserializes a config file, not a hardcoded secret.
       - path: internal/app/server\.go
         linters: [gosec]
-        text: "G304|G703|G704|G117|G101"
+        text: "G304|G703|G704|G117|G101|G706"
 
       # All outbound HTTP calls in the provider layer use operator-configured
       # base URLs registered via the admin API, not user-supplied input.
-      - path: internal/providers/http\.go
+      - path: internal/providers/
         linters: [gosec]
         text: "G704"
 
