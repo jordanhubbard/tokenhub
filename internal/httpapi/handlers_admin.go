@@ -81,7 +81,7 @@ func normalizeBaseURL(raw string) string {
 }
 
 var (
-	detectDockerOnce   sync.Once
+	detectDockerOnce    sync.Once
 	canRewriteLocalhost bool
 )
 
@@ -178,6 +178,21 @@ func makeKeyFunc(d Dependencies, p store.ProviderRecord, apiKeyOverride string) 
 		return func() string { return key }
 	}
 	return func() string { return "" }
+}
+
+func reloadProviderAdaptersFromStore(ctx context.Context, d Dependencies) {
+	if d.Store == nil {
+		return
+	}
+	providers, err := d.Store.ListProviders(ctx)
+	if err != nil {
+		slog.Warn("reload provider adapters: list providers failed", slog.String("error", err.Error()))
+		return
+	}
+	for _, p := range providers {
+		registerProviderAdapter(d, p, "")
+		addProbeTargetIfProbeable(d, p.ID)
+	}
 }
 
 // addProbeTargetIfProbeable checks if the adapter just registered for providerID
@@ -328,6 +343,7 @@ func VaultUnlockHandler(d Dependencies) http.HandlerFunc {
 				RequestID: middleware.GetReqID(r.Context()),
 			}))
 		}
+		reloadProviderAdaptersFromStore(r.Context(), d)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}
 }

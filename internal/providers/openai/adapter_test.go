@@ -3,9 +3,11 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jordanhubbard/tokenhub/internal/providers"
 	"github.com/jordanhubbard/tokenhub/internal/router"
@@ -48,6 +50,35 @@ func TestSendSuccess(t *testing.T) {
 	}
 	if len(parsed.Choices) == 0 || parsed.Choices[0].Message.Content != "Hello!" {
 		t.Errorf("unexpected response content")
+	}
+}
+
+func TestSendStreamDoesNotUseNonStreamingTimeout(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: first\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(30 * time.Millisecond)
+		_, _ = w.Write([]byte("data: second\n\n"))
+	}))
+	defer ts.Close()
+
+	a := New("openai", "test-key", ts.URL, WithTimeout(10*time.Millisecond))
+	body, err := a.SendStream(context.Background(), "gpt-4", router.Request{
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("SendStream failed before body read: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("stream read should not inherit 10ms client timeout: %v", err)
+	}
+	if string(data) != "data: first\n\ndata: second\n\n" {
+		t.Fatalf("stream data = %q", data)
 	}
 }
 

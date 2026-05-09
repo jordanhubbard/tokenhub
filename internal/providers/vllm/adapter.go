@@ -1,8 +1,10 @@
 package vllm
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -215,9 +217,35 @@ func (a *Adapter) authHeaders() map[string]string {
 }
 
 func (a *Adapter) makeStreamRequest(ctx context.Context, baseURL, endpoint string, payload any) (io.ReadCloser, error) {
-	return providers.DoStreamRequest(ctx, a.client, baseURL+endpoint, payload, a.authHeaders())
+	streamClient := *a.client
+	streamClient.Timeout = 0
+	return providers.DoStreamRequest(ctx, &streamClient, baseURL+endpoint, payload, a.authHeaders())
 }
 
 func (a *Adapter) makeRequest(ctx context.Context, baseURL, endpoint string, payload any) ([]byte, error) {
 	return providers.DoRequest(ctx, a.client, baseURL+endpoint, payload, a.authHeaders())
+}
+
+// SendEmbeddings proxies a raw OpenAI-compatible embeddings request using the
+// adapter's registered endpoint rotation and credential resolver.
+func (a *Adapter) SendEmbeddings(ctx context.Context, body []byte) ([]byte, int, error) {
+	baseURL := a.nextEndpoint()
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range a.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, http.StatusBadGateway, fmt.Errorf("upstream: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("read response: %w", err)
+	}
+	return data, resp.StatusCode, nil
 }

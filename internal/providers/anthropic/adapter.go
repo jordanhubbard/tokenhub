@@ -230,7 +230,9 @@ func (a *Adapter) ForwardRawStream(ctx context.Context, body []byte) (io.ReadClo
 }
 
 func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payload any) (io.ReadCloser, error) {
-	return providers.DoStreamRequest(ctx, a.client, a.baseURL+endpoint, payload, a.authHeaders())
+	streamClient := *a.client
+	streamClient.Timeout = 0
+	return providers.DoStreamRequest(ctx, &streamClient, a.baseURL+endpoint, payload, a.authHeaders())
 }
 
 func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any) ([]byte, error) {

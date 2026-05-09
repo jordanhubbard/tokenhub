@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,7 +19,14 @@ var version = "dev"
 // runHealthCheck performs an HTTP health check against the given address.
 // addr should be in the form ":port" or "host:port".
 func runHealthCheck(addr string) error {
-	resp, err := http.Get(fmt.Sprintf("http://localhost%s/healthz", addr))
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid listen address %q: %w", addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	resp, err := http.Get(fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, port)))
 	if err != nil {
 		return fmt.Errorf("health check request failed: %w", err)
 	}

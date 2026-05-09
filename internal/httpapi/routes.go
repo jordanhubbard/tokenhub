@@ -183,14 +183,15 @@ func MountRoutes(r chi.Router, d Dependencies) {
 			if d.RateLimiter != nil {
 				r.Use(d.RateLimiter.Middleware)
 			}
-			// Apply idempotency middleware before auth so cached responses are replayed early.
-			if d.IdempotencyCache != nil {
-				r.Use(idempotency.Middleware(d.IdempotencyCache))
-			}
 			// Apply API key auth middleware if key manager is configured.
 			// Pass the rate limiter for per-key rate limiting alongside the per-IP limit.
 			if d.APIKeyMgr != nil {
 				r.Use(apikey.AuthMiddleware(d.APIKeyMgr, d.BudgetChecker, d.RateLimiter, d.RateLimitRPS))
+			}
+			// Apply idempotency after auth so cached responses are scoped to the
+			// authenticated API key and cannot bypass authorization.
+			if d.IdempotencyCache != nil {
+				r.Use(idempotency.Middleware(d.IdempotencyCache))
 			}
 			// /v1/chat is the TokenHub-native chat request format (policy/output control).
 			// /v1/chat/completions remains OpenAI-compatible for interoperability.
@@ -346,4 +347,3 @@ func adminAuthMiddleware(holder *AdminTokenHolder) func(http.Handler) http.Handl
 		})
 	}
 }
-

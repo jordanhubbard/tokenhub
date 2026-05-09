@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/events"
+	"github.com/jordanhubbard/tokenhub/internal/idempotency"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 	"github.com/jordanhubbard/tokenhub/internal/stats"
@@ -44,6 +45,16 @@ func (m *mockSender) ClassifyError(err error) *router.ClassifiedError {
 		return ce
 	}
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
+}
+
+type mockEmbeddingsSender struct {
+	mockSender
+	body []byte
+}
+
+func (m *mockEmbeddingsSender) SendEmbeddings(ctx context.Context, body []byte) ([]byte, int, error) {
+	m.body = append([]byte(nil), body...)
+	return []byte(`{"object":"list","data":[]}`), http.StatusOK, nil
 }
 
 // testAPIKey is the plaintext key generated during test setup.
@@ -103,7 +114,6 @@ func authPost(url, contentType string, body *bytes.Reader) (*http.Response, erro
 	return http.DefaultClient.Do(req)
 }
 
-
 func TestHealthz(t *testing.T) {
 	ts, eng, _ := setupTestServer(t)
 	defer ts.Close()
@@ -141,7 +151,7 @@ func TestPlanSuccess(t *testing.T) {
 	defer ts.Close()
 
 	mock := &mockSender{
-		id: "p1",
+		id:   "p1",
 		resp: json.RawMessage(`{"choices":[{"message":{"content":"plan output"}}]}`),
 	}
 	eng.RegisterAdapter(mock)
@@ -219,7 +229,7 @@ func TestModelsUpsert(t *testing.T) {
 
 	// Register an adapter so the model is usable
 	mock := &mockSender{
-		id: "p1",
+		id:   "p1",
 		resp: json.RawMessage(`{"choices":[{"message":{"content":"ok"}}]}`),
 	}
 	eng.RegisterAdapter(mock)
@@ -537,6 +547,170 @@ func TestProviderUpsertWithAPIKey(t *testing.T) {
 	}
 	if key != "sk-test-12345" {
 		t.Errorf("expected sk-test-12345, got %s", key)
+	}
+}
+
+func TestIdempotencyReplayRequiresAuth(t *testing.T) {
+	r := chi.NewRouter()
+	eng := router.NewEngine(router.EngineConfig{})
+	eng.RegisterAdapter(&mockSender{id: "p1", resp: json.RawMessage(`{"choices":[{"message":{"content":"ok"}}]}`)})
+	eng.RegisterModel(router.Model{ID: "m1", ProviderID: "p1", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+
+	db, err := store.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	keyMgr := apikey.NewManager(db)
+	plaintext, _, err := keyMgr.Generate(context.Background(), "idem", `["chat"]`, 0, nil)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	cache := idempotency.New(time.Minute, 100)
+	defer cache.Stop()
+
+	MountRoutes(r, Dependencies{
+		Engine:           eng,
+		Metrics:          metrics.New(),
+		Store:            db,
+		APIKeyMgr:        keyMgr,
+		IdempotencyCache: cache,
+	})
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	body := []byte(`{"request":{"model_hint":"m1","messages":[{"role":"user","content":"hi"}]}}`)
+	req1, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat", bytes.NewReader(body))
+	req1.Header.Set("Authorization", "Bearer "+plaintext)
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("Idempotency-Key", "same-client-key")
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	_ = resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", resp1.StatusCode)
+	}
+
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Idempotency-Key", "same-client-key")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("unauthenticated replay request failed: %v", err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated replay status = %d, want 401", resp2.StatusCode)
+	}
+	if got := resp2.Header.Get("Idempotency-Replay"); got != "" {
+		t.Fatalf("unauthenticated request replayed cached response: %q", got)
+	}
+
+	req3, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat", bytes.NewReader(body))
+	req3.Header.Set("Authorization", "Bearer "+plaintext)
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("Idempotency-Key", "same-client-key")
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatalf("authenticated replay request failed: %v", err)
+	}
+	_ = resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated replay status = %d, want 200", resp3.StatusCode)
+	}
+	if got := resp3.Header.Get("Idempotency-Replay"); got != "true" {
+		t.Fatalf("authenticated replay header = %q, want true", got)
+	}
+}
+
+func TestVaultUnlockReloadsPersistedProviderAdapters(t *testing.T) {
+	authCh := make(chan string, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authCh <- r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "ok"}}},
+		})
+	}))
+	defer provider.Close()
+
+	r := chi.NewRouter()
+	eng := router.NewEngine(router.EngineConfig{})
+	v, err := vault.New(true)
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	db, err := store.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := v.Unlock([]byte("supersecret")); err != nil {
+		t.Fatalf("pre-unlock vault: %v", err)
+	}
+	if err := v.Set("provider:p1:api_key", "sk-rehydrated"); err != nil {
+		t.Fatalf("set secret: %v", err)
+	}
+	if err := db.SaveVaultBlob(context.Background(), v.Salt(), v.Export()); err != nil {
+		t.Fatalf("save vault: %v", err)
+	}
+	v.Lock()
+	providerRecord := store.ProviderRecord{ID: "p1", Type: "openai", Enabled: true, BaseURL: provider.URL, CredStore: "vault"}
+	if err := db.UpsertProvider(context.Background(), providerRecord); err != nil {
+		t.Fatalf("upsert provider: %v", err)
+	}
+
+	registerProviderAdapter(Dependencies{Engine: eng, Vault: v, Store: db, ProviderTimeout: time.Second}, providerRecord, "")
+	MountRoutes(r, Dependencies{Engine: eng, Vault: v, Metrics: metrics.New(), Store: db, ProviderTimeout: time.Second})
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	unlockBody, _ := json.Marshal(map[string]string{"admin_password": "supersecret"})
+	resp, err := http.Post(ts.URL+"/admin/v1/vault/unlock", "application/json", bytes.NewReader(unlockBody))
+	if err != nil {
+		t.Fatalf("unlock request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unlock status = %d, want 200", resp.StatusCode)
+	}
+
+	adapter := eng.GetAdapter("p1")
+	if adapter == nil {
+		t.Fatal("adapter missing after unlock")
+	}
+	_, err = adapter.Send(context.Background(), "m1", router.Request{Messages: []router.Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("adapter send after unlock: %v", err)
+	}
+	if got := <-authCh; got != "Bearer sk-rehydrated" {
+		t.Fatalf("Authorization = %q, want provider key", got)
+	}
+}
+
+func TestEmbeddingsUseRegisteredAdapter(t *testing.T) {
+	eng := router.NewEngine(router.EngineConfig{})
+	adapter := &mockEmbeddingsSender{mockSender: mockSender{id: "p1"}}
+	eng.RegisterAdapter(adapter)
+	eng.RegisterModel(router.Model{ID: "embed-1", ProviderID: "p1", Weight: 1, Enabled: true})
+
+	body := []byte(`{"model":"embed-1","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	EmbeddingsHandler(Dependencies{Engine: eng})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if string(adapter.body) != string(body) {
+		t.Fatalf("adapter body = %s, want %s", adapter.body, body)
 	}
 }
 

@@ -94,7 +94,7 @@ func TestMiddleware_FirstRequestWithKey(t *testing.T) {
 	}
 
 	// Verify the entry was cached.
-	e, ok := c.Get("first-key-001")
+	e, ok := c.Get(scopedKey(req, "first-key-001", nil))
 	if !ok {
 		t.Fatal("expected cache entry for first-key-001")
 	}
@@ -309,7 +309,7 @@ func TestMiddleware_ServerErrorNotCached(t *testing.T) {
 	}
 
 	// The 502 response must NOT be cached.
-	if _, ok := c.Get("err-key-001"); ok {
+	if _, ok := c.Get(scopedKey(req1, "err-key-001", nil)); ok {
 		t.Fatal("5xx response should not be cached")
 	}
 

@@ -570,16 +570,15 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			slog.String("model", m.ID),
 		)
 
-		// Use a fresh context for the last-resort pass — the original ctx may
-		// have already expired (e.g., a slow provider consumed the whole budget).
-		// Always cap each attempt so we never block indefinitely and violate the
-		// upstream TCP timeout window. Use PerProviderTimeoutMs when set, otherwise
-		// fall back to a 60 s hard minimum.
+		// Keep last-resort attempts under the caller's context so client
+		// cancellation and MaxLatencyMs still stop provider work.
+		// Cap each attempt as well, using PerProviderTimeoutMs when set,
+		// otherwise a 60 s hard maximum.
 		lrTimeoutMs := e.cfg.PerProviderTimeoutMs
 		if lrTimeoutMs <= 0 {
 			lrTimeoutMs = 60_000
 		}
-		lrCtx, lrCancel := context.WithTimeout(context.Background(), time.Duration(lrTimeoutMs)*time.Millisecond)
+		lrCtx, lrCancel := context.WithTimeout(ctx, time.Duration(lrTimeoutMs)*time.Millisecond)
 
 		sendStart := time.Now()
 		resp, err := adapter.Send(lrCtx, m.ID, req)

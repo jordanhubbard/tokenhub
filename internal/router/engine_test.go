@@ -63,6 +63,23 @@ func (m *mockSender) setError(model string, class ErrorClass) {
 	}
 }
 
+type contextAwareSender struct {
+	id string
+}
+
+func (s *contextAwareSender) ID() string { return s.id }
+
+func (s *contextAwareSender) Send(ctx context.Context, model string, req Request) (ProviderResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return oaiResponse("late fallback"), nil
+}
+
+func (s *contextAwareSender) ClassifyError(err error) *ClassifiedError {
+	return &ClassifiedError{Err: err, Class: ErrTransient}
+}
+
 func makeRequest(content string) Request {
 	return Request{
 		Messages: []Message{{Role: "user", Content: content}},
@@ -260,6 +277,27 @@ func TestEscalationRateLimited(t *testing.T) {
 	}
 	if dec.ProviderID != "p2" {
 		t.Errorf("expected fallback to p2, got %s", dec.ProviderID)
+	}
+}
+
+func TestRouteAndSendLastResortHonorsCanceledContext(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	primary := newMockSender("primary")
+	fallback := &contextAwareSender{id: "fallback"}
+	eng.RegisterAdapter(primary)
+	eng.RegisterAdapter(fallback)
+	eng.RegisterModel(Model{ID: "primary-model", ProviderID: "primary", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "fallback-model", ProviderID: "fallback", Weight: 1, MaxContextTokens: 4096, Enabled: true})
+	primary.setError("primary-model", ErrFatal)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	dec, _, err := eng.RouteAndSend(ctx, makeRequest("hi"), Policy{MinWeight: 5})
+	if err == nil {
+		t.Fatalf("expected canceled last-resort context to fail, got decision %+v", dec)
+	}
+	if dec.ModelID == "fallback-model" {
+		t.Fatalf("last-resort fallback succeeded despite canceled caller context")
 	}
 }
 

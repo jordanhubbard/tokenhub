@@ -1,13 +1,14 @@
 package httpapi
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jordanhubbard/tokenhub/internal/router"
 )
 
 // EmbeddingsHandler implements POST /v1/embeddings (OpenAI-compatible).
@@ -29,85 +30,54 @@ func EmbeddingsHandler(d Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Find the provider for this model.
-		var providerID string
-		for _, m := range d.Engine.ListModels() {
-			if m.ID == reqBody.Model {
-				providerID = m.ProviderID
-				break
+		modelID := reqBody.Model
+		if idx := strings.IndexByte(modelID, '/'); idx > 0 {
+			bare := modelID[idx+1:]
+			if d.Engine.HasModel(bare) {
+				modelID = bare
 			}
 		}
-		if providerID == "" {
+
+		model, ok := d.Engine.GetModel(modelID)
+		if !ok || !model.Enabled {
 			jsonError(w, "model not found: "+reqBody.Model, http.StatusNotFound)
 			return
 		}
-
-		// Look up the provider's base URL and credentials.
-		providers, err := d.Store.ListProviders(r.Context())
-		if err != nil {
-			jsonError(w, "failed to look up provider", http.StatusInternalServerError)
+		adapter := d.Engine.GetAdapter(model.ProviderID)
+		embeddings, ok := adapter.(router.EmbeddingsSender)
+		if !ok {
+			jsonError(w, "provider does not support embeddings", http.StatusServiceUnavailable)
 			return
 		}
-		var baseURL, apiKey string
-		for _, p := range providers {
-			if p.ID == providerID {
-				baseURL = p.BaseURL
-				if p.CredStore == "vault" && d.Vault != nil && !d.Vault.IsLocked() {
-					apiKey, _ = d.Vault.Get("provider:" + p.ID + ":api_key")
-				}
-				break
-			}
-		}
-		if baseURL == "" {
-			jsonError(w, "provider has no base URL configured", http.StatusServiceUnavailable)
-			return
+		if modelID != reqBody.Model {
+			body = rewriteModel(body, modelID)
 		}
 
-		// Proxy to the provider's /v1/embeddings endpoint.
-		// Strip trailing /v1 from base URL before appending to avoid double /v1/v1.
-		base := strings.TrimRight(baseURL, "/")
-		base = strings.TrimSuffix(base, "/v1")
-		target := base + "/v1/embeddings"
-		proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
-		if err != nil {
-			jsonError(w, "failed to build proxy request", http.StatusInternalServerError)
-			return
-		}
-		proxyReq.Header.Set("Content-Type", "application/json")
-		if apiKey != "" {
-			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-
-		client := &http.Client{Timeout: d.ProviderTimeout}
-		if client.Timeout == 0 {
-			client.Timeout = 30 * time.Second
-		}
 		start := time.Now()
-		resp, err := client.Do(proxyReq)
+		respBody, statusCode, err := embeddings.SendEmbeddings(r.Context(), body)
 		if err != nil {
 			slog.Warn("embeddings: provider request failed",
-				slog.String("provider", providerID),
-				slog.String("model", reqBody.Model),
+				slog.String("provider", model.ProviderID),
+				slog.String("model", modelID),
 				slog.String("error", err.Error()))
 			jsonError(w, "provider error: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		defer func() { _ = resp.Body.Close() }()
 
 		latencyMs := time.Since(start).Milliseconds()
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		w.WriteHeader(statusCode)
+		_, _ = w.Write(respBody)
 
-		success := resp.StatusCode >= 200 && resp.StatusCode < 300
+		success := statusCode >= 200 && statusCode < 300
 		recordObservability(d, observeParams{
 			Ctx:        r.Context(),
-			ModelID:    reqBody.Model,
-			ProviderID: providerID,
+			ModelID:    modelID,
+			ProviderID: model.ProviderID,
 			Mode:       "embeddings",
 			LatencyMs:  latencyMs,
 			Success:    success,
-			HTTPStatus: resp.StatusCode,
+			HTTPStatus: statusCode,
 		})
 	}
 }

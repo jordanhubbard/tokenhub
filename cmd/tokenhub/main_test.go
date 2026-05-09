@@ -31,6 +31,17 @@ func TestRunHealthCheck_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRunHealthCheck_HostPort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/healthz", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	err := runHealthCheck(srv.Listener.Addr().String())
+	require.NoError(t, err)
+}
+
 func TestRunHealthCheck_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)

@@ -19,6 +19,14 @@ type AnthropicRawSender interface {
 	ForwardRawStream(ctx context.Context, body []byte) (io.ReadCloser, error)
 }
 
+// EmbeddingsSender is an optional interface for OpenAI-compatible providers
+// that can proxy raw /v1/embeddings requests using their registered runtime
+// credentials.
+type EmbeddingsSender interface {
+	Sender
+	SendEmbeddings(ctx context.Context, body []byte) ([]byte, int, error)
+}
+
 // Request is a provider-agnostic envelope. Provider adapters translate this
 // into provider-specific API calls.
 type Request struct {
@@ -176,9 +184,9 @@ type OrchestrationDirective struct {
 // OutputFormat specifies how the response should be shaped before returning to the client.
 type OutputFormat struct {
 	Type       string `json:"type,omitempty"`        // json, markdown, text, xml
-	Schema     string `json:"schema,omitempty"`       // JSON schema to enforce (for type=json)
-	MaxTokens  int    `json:"max_tokens,omitempty"`   // Truncate response beyond this
-	StripThink bool   `json:"strip_think,omitempty"`  // Remove <think>...</think> blocks
+	Schema     string `json:"schema,omitempty"`      // JSON schema to enforce (for type=json)
+	MaxTokens  int    `json:"max_tokens,omitempty"`  // Truncate response beyond this
+	StripThink bool   `json:"strip_think,omitempty"` // Remove <think>...</think> blocks
 }
 
 type ProviderResponse = json.RawMessage

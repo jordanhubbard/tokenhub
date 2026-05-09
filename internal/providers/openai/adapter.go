@@ -150,7 +150,9 @@ func (a *Adapter) authHeaders() map[string]string {
 }
 
 func (a *Adapter) makeStreamRequest(ctx context.Context, endpoint string, payload any) (io.ReadCloser, error) {
-	return providers.DoStreamRequest(ctx, a.client, a.baseURL+endpoint, payload, a.authHeaders())
+	streamClient := *a.client
+	streamClient.Timeout = 0
+	return providers.DoStreamRequest(ctx, &streamClient, a.baseURL+endpoint, payload, a.authHeaders())
 }
 
 func (a *Adapter) makeRequest(ctx context.Context, endpoint string, payload any) ([]byte, error) {
@@ -186,6 +188,30 @@ func (a *Adapter) ForwardRawStream(ctx context.Context, body []byte) (io.ReadClo
 // that accept the Anthropic /v1/messages wire format alongside OpenAI.
 func (a *Adapter) ForwardRaw(ctx context.Context, body []byte) ([]byte, int, error) {
 	url := a.baseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range a.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, http.StatusBadGateway, fmt.Errorf("upstream: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("read response: %w", err)
+	}
+	return data, resp.StatusCode, nil
+}
+
+// SendEmbeddings proxies a raw OpenAI-compatible embeddings request using the
+// adapter's registered base URL and credential resolver.
+func (a *Adapter) SendEmbeddings(ctx context.Context, body []byte) ([]byte, int, error) {
+	url := a.baseURL + "/v1/embeddings"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("create request: %w", err)
