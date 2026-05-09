@@ -346,7 +346,7 @@ func TestSetLevel_DynamicChange(t *testing.T) {
 
 func TestRequestLogger_LogsRequestFields(t *testing.T) {
 	var buf bytes.Buffer
-	base := slog.NewJSONHandler(&buf, nil)
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := &RedactingHandler{base: base}
 	logger := slog.New(handler)
 
@@ -402,7 +402,7 @@ func TestRequestLogger_LogsRequestFields(t *testing.T) {
 
 func TestRequestLogger_LogsPostMethod(t *testing.T) {
 	var buf bytes.Buffer
-	base := slog.NewJSONHandler(&buf, nil)
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := &RedactingHandler{base: base}
 	logger := slog.New(handler)
 
@@ -434,6 +434,34 @@ func TestRequestLogger_LogsPostMethod(t *testing.T) {
 	}
 	if status, ok := logEntry["status"].(float64); !ok || int(status) != 201 {
 		t.Errorf("expected status 201, got %v", logEntry["status"])
+	}
+}
+
+func TestRequestLogger_SuppressesRoutineTrafficAtInfoLevel(t *testing.T) {
+	// Default Info level must NOT emit one log line per routine 2xx/3xx/4xx
+	// request — that was the source of multi-GB/week syslog blowups.
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	handler := &RedactingHandler{base: base}
+	logger := slog.New(handler)
+
+	for _, status := range []int{200, 201, 301, 400, 404, 499} {
+		buf.Reset()
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		})
+		mw := RequestLogger(logger)
+		server := httptest.NewServer(mw(inner))
+		resp, err := http.Get(server.URL + "/probe")
+		if err != nil {
+			server.Close()
+			t.Fatalf("status=%d request failed: %v", status, err)
+		}
+		_ = resp.Body.Close()
+		server.Close()
+		if buf.Len() != 0 {
+			t.Errorf("status=%d: expected no log output at Info level, got: %s", status, buf.String())
+		}
 	}
 }
 
@@ -470,7 +498,7 @@ func TestRequestLogger_LogsErrorStatus(t *testing.T) {
 
 func TestRequestLogger_IncludesRequestID(t *testing.T) {
 	var buf bytes.Buffer
-	base := slog.NewJSONHandler(&buf, nil)
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := &RedactingHandler{base: base}
 	logger := slog.New(handler)
 

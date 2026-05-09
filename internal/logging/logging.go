@@ -104,6 +104,10 @@ func redactAttr(a slog.Attr) slog.Attr {
 
 // RequestLogger returns chi middleware that logs HTTP requests using slog.
 // Request bodies and auth headers are never logged.
+//
+// Routine requests log at Debug; 5xx responses log at Error so problems are
+// visible at the default Info level without producing one log line per
+// request. Operators who want full access logs can call SetLevel("debug").
 func RequestLogger(logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +121,11 @@ func RequestLogger(logger *slog.Logger) func(next http.Handler) http.Handler {
 
 			next.ServeHTTP(ww, r)
 
-			logger.Info("http_request",
+			level := slog.LevelDebug
+			if ww.Status() >= 500 {
+				level = slog.LevelError
+			}
+			logger.Log(r.Context(), level, "http_request",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", ww.Status()),
