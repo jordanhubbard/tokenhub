@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/router"
 )
 
@@ -25,12 +27,34 @@ func EmbeddingsHandler(d Dependencies) http.HandlerFunc {
 		var reqBody struct {
 			Model string `json:"model"`
 		}
-		if err := json.Unmarshal(body, &reqBody); err != nil || reqBody.Model == "" {
-			jsonError(w, "model is required", http.StatusBadRequest)
+		if err := json.Unmarshal(body, &reqBody); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		modelID := reqBody.Model
+		modelHint := normalizeClientModelHint(d.Engine, reqBody.Model)
+		if strings.TrimSpace(modelHint) == "" {
+			modelHint = router.WildcardModelHint
+		}
+		routeReq := router.Request{
+			ID:        middleware.GetReqID(r.Context()),
+			ModelHint: modelHint,
+		}
+		if rec := apikey.FromContext(r.Context()); rec != nil && rec.ID != "" {
+			routeReq.Meta = map[string]any{router.MetaAPIKeyID: rec.ID}
+		}
+
+		aliasFrom := d.Engine.ResolveModelHint(&routeReq)
+		modelID := routeReq.ModelHint
+		if modelID == "" {
+			decision, _, err := d.Engine.SelectModel(r.Context(), routeReq, router.Policy{})
+			if err != nil {
+				jsonError(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			modelID = decision.ModelID
+			aliasFrom = decision.AliasFrom
+		}
 		if idx := strings.IndexByte(modelID, '/'); idx > 0 {
 			bare := modelID[idx+1:]
 			if d.Engine.HasModel(bare) {
@@ -66,6 +90,10 @@ func EmbeddingsHandler(d Dependencies) http.HandlerFunc {
 
 		latencyMs := time.Since(start).Milliseconds()
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Negotiated-Model", modelID)
+		if aliasFrom != "" {
+			w.Header().Set("X-Alias-From", aliasFrom)
+		}
 		w.WriteHeader(statusCode)
 		_, _ = w.Write(respBody)
 

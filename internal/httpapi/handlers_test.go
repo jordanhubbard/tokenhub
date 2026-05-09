@@ -714,6 +714,72 @@ func TestEmbeddingsUseRegisteredAdapter(t *testing.T) {
 	}
 }
 
+func TestEmbeddingsResolveAlias(t *testing.T) {
+	eng := router.NewEngine(router.EngineConfig{})
+	aliases := router.NewAliasResolver()
+	if err := aliases.Set(router.Alias{
+		Name:     "acc-embedding",
+		Enabled:  true,
+		StickyBy: router.StickyByAPIKey,
+		Variants: []router.AliasVariant{{
+			ModelID: "embed-1",
+			Weight:  1,
+		}},
+	}); err != nil {
+		t.Fatalf("alias setup: %v", err)
+	}
+	eng.SetAliasResolver(aliases)
+	adapter := &mockEmbeddingsSender{mockSender: mockSender{id: "p1"}}
+	eng.RegisterAdapter(adapter)
+	eng.RegisterModel(router.Model{ID: "embed-1", ProviderID: "p1", Weight: 1, Enabled: true})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader([]byte(`{"model":"acc-embedding","input":"hello"}`)))
+	rec := httptest.NewRecorder()
+	EmbeddingsHandler(Dependencies{Engine: eng})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Alias-From"); got != "acc-embedding" {
+		t.Fatalf("X-Alias-From = %q, want acc-embedding", got)
+	}
+	if got := rec.Header().Get("X-Negotiated-Model"); got != "embed-1" {
+		t.Fatalf("X-Negotiated-Model = %q, want embed-1", got)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(adapter.body, &forwarded); err != nil {
+		t.Fatalf("forwarded body: %v", err)
+	}
+	if got := forwarded["model"]; got != "embed-1" {
+		t.Fatalf("forwarded model = %v, want embed-1", got)
+	}
+}
+
+func TestEmbeddingsWildcardSelectsModel(t *testing.T) {
+	eng := router.NewEngine(router.EngineConfig{})
+	adapter := &mockEmbeddingsSender{mockSender: mockSender{id: "p1"}}
+	eng.RegisterAdapter(adapter)
+	eng.RegisterModel(router.Model{ID: "embed-1", ProviderID: "p1", Weight: 1, Enabled: true})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader([]byte(`{"model":"*","input":"hello"}`)))
+	rec := httptest.NewRecorder()
+	EmbeddingsHandler(Dependencies{Engine: eng})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Negotiated-Model"); got != "embed-1" {
+		t.Fatalf("X-Negotiated-Model = %q, want embed-1", got)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(adapter.body, &forwarded); err != nil {
+		t.Fatalf("forwarded body: %v", err)
+	}
+	if got := forwarded["model"]; got != "embed-1" {
+		t.Fatalf("forwarded model = %v, want embed-1", got)
+	}
+}
+
 func TestRoutingConfigEndpoints(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()
