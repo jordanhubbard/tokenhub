@@ -23,6 +23,10 @@ const (
 	// Use this when variants differ enough that mid-session flipping would
 	// confuse the caller (tone, output format, tool-use behaviour).
 	StickyByAPIKey = "api_key"
+	// StickyByRoundRobin ignores request attributes and cycles through alias
+	// variants in weighted order. Use this for wildcard model diversity when
+	// consecutive agents should intentionally land on different backends.
+	StickyByRoundRobin = "round_robin"
 )
 
 // MetaAPIKeyID is the Request.Meta key under which handlers stash the API
@@ -50,12 +54,13 @@ type Alias struct {
 	Name     string         `json:"name"`
 	Variants []AliasVariant `json:"variants"`
 	Enabled  bool           `json:"enabled"`
-	// StickyBy chooses the hash key used to pick a variant. Accepted values:
+	// StickyBy chooses the mechanism used to pick a variant. Accepted values:
 	// "" / "request" (hash on Request.ID — default, independent per request)
 	// or "api_key" (hash on the caller's API key ID so a given key always
-	// lands on the same variant). If "api_key" is selected but the request
-	// carries no API key ID, the resolver falls back to the request ID so
-	// traffic is never black-holed on a missing attribute.
+	// lands on the same variant), or "round_robin" (cycle through variants).
+	// If "api_key" is selected but the request carries no API key ID, the
+	// resolver falls back to the request ID so traffic is never black-holed on
+	// a missing attribute.
 	StickyBy string `json:"sticky_by,omitempty"`
 }
 
@@ -71,11 +76,11 @@ func (a Alias) Validate() error {
 		return errors.New("alias must have at least one variant")
 	}
 	switch a.StickyBy {
-	case "", StickyByRequest, StickyByAPIKey:
+	case "", StickyByRequest, StickyByAPIKey, StickyByRoundRobin:
 		// ok
 	default:
-		return fmt.Errorf("sticky_by %q: must be one of %q, %q (or empty)",
-			a.StickyBy, StickyByRequest, StickyByAPIKey)
+		return fmt.Errorf("sticky_by %q: must be one of %q, %q, %q (or empty)",
+			a.StickyBy, StickyByRequest, StickyByAPIKey, StickyByRoundRobin)
 	}
 	seen := make(map[string]bool, len(a.Variants))
 	for i, v := range a.Variants {
@@ -127,13 +132,17 @@ func (a Alias) keyForRequest(req *Request) string {
 // (usually the request ID). The same key always picks the same variant so
 // idempotent replays and retries land on the same backend.
 type AliasResolver struct {
-	mu      sync.RWMutex
-	aliases map[string]Alias
+	mu         sync.RWMutex
+	aliases    map[string]Alias
+	roundRobin map[string]uint64
 }
 
 // NewAliasResolver returns an empty resolver.
 func NewAliasResolver() *AliasResolver {
-	return &AliasResolver{aliases: make(map[string]Alias)}
+	return &AliasResolver{
+		aliases:    make(map[string]Alias),
+		roundRobin: make(map[string]uint64),
+	}
 }
 
 // Set inserts or replaces an alias. The alias must pass Validate; invalid
@@ -144,6 +153,9 @@ func (r *AliasResolver) Set(a Alias) error {
 		return err
 	}
 	r.mu.Lock()
+	if r.roundRobin == nil {
+		r.roundRobin = make(map[string]uint64)
+	}
 	r.aliases[a.Name] = a
 	r.mu.Unlock()
 	return nil
@@ -154,6 +166,7 @@ func (r *AliasResolver) Set(a Alias) error {
 func (r *AliasResolver) Delete(name string) {
 	r.mu.Lock()
 	delete(r.aliases, name)
+	delete(r.roundRobin, name)
 	r.mu.Unlock()
 }
 
@@ -195,10 +208,7 @@ func (r *AliasResolver) Resolve(name, key string) (string, bool) {
 		return name, false
 	}
 
-	var total int
-	for _, v := range a.Variants {
-		total += v.Weight
-	}
+	total := aliasTotalWeight(a)
 	if total <= 0 {
 		// Validate() prevents this in practice; fall back to the first variant
 		// as a defensive default so a malformed entry never black-holes traffic.
@@ -214,27 +224,34 @@ func (r *AliasResolver) Resolve(name, key string) (string, bool) {
 		bucket = int(h.Sum32() % uint32(total))
 	}
 
-	cum := 0
-	for _, v := range a.Variants {
-		cum += v.Weight
-		if bucket < cum {
-			return v.ModelID, true
-		}
-	}
-	// Numerical fall-through (unreachable when total > 0): return last variant.
-	return a.Variants[len(a.Variants)-1].ModelID, true
+	return aliasVariantForBucket(a, bucket), true
 }
 
-// ResolveForRequest is Resolve's request-aware sibling. It selects the hash
-// key based on the alias's StickyBy policy (request ID vs. api_key ID) and
-// then delegates to Resolve. Callers in the engine use this to transparently
-// honor per-user sticky assignments without caring about the mechanism.
+// ResolveForRequest is Resolve's request-aware sibling. It selects the variant
+// based on the alias's StickyBy policy: hash request ID, hash API key ID, or
+// advance the alias's round-robin counter. Callers in the engine use this to
+// transparently honor assignments without caring about the mechanism.
 //
 // When the alias is absent or disabled, returns (name, false) unchanged.
 func (r *AliasResolver) ResolveForRequest(name string, req *Request) (string, bool) {
-	r.mu.RLock()
+	r.mu.Lock()
 	a, ok := r.aliases[name]
-	r.mu.RUnlock()
+	if ok && a.Enabled && a.StickyBy == StickyByRoundRobin {
+		total := aliasTotalWeight(a)
+		if total <= 0 {
+			r.mu.Unlock()
+			return a.Variants[0].ModelID, true
+		}
+		if r.roundRobin == nil {
+			r.roundRobin = make(map[string]uint64)
+		}
+		bucket := int(r.roundRobin[name] % uint64(total))
+		r.roundRobin[name]++
+		target := aliasVariantForBucket(a, bucket)
+		r.mu.Unlock()
+		return target, true
+	}
+	r.mu.Unlock()
 	if !ok || !a.Enabled {
 		return name, false
 	}
@@ -258,6 +275,26 @@ func (r *AliasResolver) ReplaceAll(aliases []Alias) error {
 	}
 	r.mu.Lock()
 	r.aliases = next
+	r.roundRobin = make(map[string]uint64)
 	r.mu.Unlock()
 	return firstErr
+}
+
+func aliasTotalWeight(a Alias) int {
+	var total int
+	for _, v := range a.Variants {
+		total += v.Weight
+	}
+	return total
+}
+
+func aliasVariantForBucket(a Alias, bucket int) string {
+	cum := 0
+	for _, v := range a.Variants {
+		cum += v.Weight
+		if bucket < cum {
+			return v.ModelID
+		}
+	}
+	return a.Variants[len(a.Variants)-1].ModelID
 }

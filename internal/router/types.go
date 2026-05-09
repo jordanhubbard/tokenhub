@@ -196,6 +196,19 @@ type ProviderResponse = json.RawMessage
 // is configured, in which case the alias controls the resolved target.
 const WildcardModelHint = "*"
 
+var defaultWildcardRoundRobinModels = []string{
+	"deepseek-v4-flash",
+	"claude-opus-4-7",
+	"gpt-5.5",
+}
+
+// DefaultWildcardRoundRobinModelIDs returns the built-in diversity pool used
+// when a caller sends model="*" and operators have not configured an explicit
+// "*" alias. Only registered, enabled models with live adapters participate.
+func DefaultWildcardRoundRobinModelIDs() []string {
+	return append([]string(nil), defaultWildcardRoundRobinModels...)
+}
+
 // IsWildcardModelHint reports whether hint is the wildcard model selector.
 func IsWildcardModelHint(hint string) bool {
 	return strings.TrimSpace(hint) == WildcardModelHint

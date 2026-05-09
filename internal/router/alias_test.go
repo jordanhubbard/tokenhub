@@ -165,6 +165,59 @@ func TestAliasResolver_SingleVariantAlwaysPicksIt(t *testing.T) {
 	}
 }
 
+func TestAliasResolver_RoundRobin(t *testing.T) {
+	r := NewAliasResolver()
+	if err := r.Set(Alias{
+		Name: "exp",
+		Variants: []AliasVariant{
+			{ModelID: "a", Weight: 1},
+			{ModelID: "b", Weight: 1},
+			{ModelID: "c", Weight: 1},
+		},
+		Enabled:  true,
+		StickyBy: StickyByRoundRobin,
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	for i, want := range []string{"a", "b", "c", "a", "b", "c"} {
+		req := Request{ID: fmt.Sprintf("req-%d", i)}
+		got, applied := r.ResolveForRequest("exp", &req)
+		if !applied {
+			t.Fatalf("iteration %d: round-robin alias did not apply", i)
+		}
+		if got != want {
+			t.Fatalf("iteration %d: got %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestAliasResolver_RoundRobinHonorsWeights(t *testing.T) {
+	r := NewAliasResolver()
+	if err := r.Set(Alias{
+		Name: "exp",
+		Variants: []AliasVariant{
+			{ModelID: "a", Weight: 2},
+			{ModelID: "b", Weight: 1},
+		},
+		Enabled:  true,
+		StickyBy: StickyByRoundRobin,
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	for i, want := range []string{"a", "a", "b", "a", "a", "b"} {
+		req := Request{ID: fmt.Sprintf("req-%d", i)}
+		got, applied := r.ResolveForRequest("exp", &req)
+		if !applied {
+			t.Fatalf("iteration %d: round-robin alias did not apply", i)
+		}
+		if got != want {
+			t.Fatalf("iteration %d: got %q, want %q", i, got, want)
+		}
+	}
+}
+
 func TestAliasResolver_Delete(t *testing.T) {
 	r := NewAliasResolver()
 	_ = r.Set(Alias{
@@ -288,6 +341,92 @@ func TestEngine_ResolveWildcardAliasRewrites(t *testing.T) {
 	}
 }
 
+func TestEngine_ResolveWildcardUsesDefaultRoundRobinModels(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	for _, modelID := range DefaultWildcardRoundRobinModelIDs() {
+		providerID := "provider-" + modelID
+		eng.RegisterAdapter(newMockSender(providerID))
+		eng.RegisterModel(Model{
+			ID: modelID, ProviderID: providerID,
+			Weight: 5, MaxContextTokens: 8192, Enabled: true,
+		})
+	}
+
+	want := []string{
+		"deepseek-v4-flash",
+		"claude-opus-4-7",
+		"gpt-5.5",
+		"deepseek-v4-flash",
+		"claude-opus-4-7",
+		"gpt-5.5",
+	}
+	for i, wantModel := range want {
+		req := Request{ModelHint: WildcardModelHint, ID: fmt.Sprintf("req-%d", i)}
+		alias := eng.resolveAlias(&req)
+		if alias != WildcardModelHint {
+			t.Fatalf("iteration %d: expected AliasFrom %q, got %q", i, WildcardModelHint, alias)
+		}
+		if req.ModelHint != wantModel {
+			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, wantModel)
+		}
+	}
+}
+
+func TestEngine_ResolveWildcardDefaultRoundRobinSkipsUnavailableModels(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	for _, modelID := range []string{"deepseek-v4-flash", "gpt-5.5"} {
+		providerID := "provider-" + modelID
+		eng.RegisterAdapter(newMockSender(providerID))
+		eng.RegisterModel(Model{
+			ID: modelID, ProviderID: providerID,
+			Weight: 5, MaxContextTokens: 8192, Enabled: true,
+		})
+	}
+	eng.RegisterModel(Model{
+		ID: "claude-opus-4-7", ProviderID: "missing-adapter",
+		Weight: 5, MaxContextTokens: 8192, Enabled: true,
+	})
+
+	for i, wantModel := range []string{"deepseek-v4-flash", "gpt-5.5", "deepseek-v4-flash", "gpt-5.5"} {
+		req := Request{ModelHint: WildcardModelHint, ID: fmt.Sprintf("req-%d", i)}
+		alias := eng.resolveAlias(&req)
+		if alias != WildcardModelHint {
+			t.Fatalf("iteration %d: expected AliasFrom %q, got %q", i, WildcardModelHint, alias)
+		}
+		if req.ModelHint != wantModel {
+			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, wantModel)
+		}
+	}
+}
+
+func TestEngine_ResolveWildcardDefaultRoundRobinAcceptsProviderPrefixedModels(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	modelIDs := []string{
+		"deepseek/deepseek-v4-flash",
+		"anthropic/claude-opus-4-7",
+		"openai/gpt-5.5",
+	}
+	for _, modelID := range modelIDs {
+		providerID := "provider-" + modelID
+		eng.RegisterAdapter(newMockSender(providerID))
+		eng.RegisterModel(Model{
+			ID: modelID, ProviderID: providerID,
+			Weight: 5, MaxContextTokens: 8192, Enabled: true,
+		})
+	}
+
+	for i, wantModel := range append(modelIDs, modelIDs[0]) {
+		req := Request{ModelHint: WildcardModelHint, ID: fmt.Sprintf("req-%d", i)}
+		alias := eng.resolveAlias(&req)
+		if alias != WildcardModelHint {
+			t.Fatalf("iteration %d: expected AliasFrom %q, got %q", i, WildcardModelHint, alias)
+		}
+		if req.ModelHint != wantModel {
+			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, wantModel)
+		}
+	}
+}
+
 // --- Sticky-by-user assignment ------------------------------------------------
 
 func TestAlias_Validate_StickyBy(t *testing.T) {
@@ -299,6 +438,7 @@ func TestAlias_Validate_StickyBy(t *testing.T) {
 		{"empty is default", "", false},
 		{"explicit request", StickyByRequest, false},
 		{"api_key", StickyByAPIKey, false},
+		{"round_robin", StickyByRoundRobin, false},
 		{"bogus value rejected", "user_id", true},
 	}
 	base := []AliasVariant{{ModelID: "a", Weight: 1}}

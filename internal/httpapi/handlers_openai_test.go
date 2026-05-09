@@ -187,6 +187,61 @@ func TestCompletionsServerSelectedModelWhenModelOmittedOrWildcard(t *testing.T) 
 	}
 }
 
+func TestCompletionsWildcardUsesDefaultRoundRobinModels(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	for _, modelID := range router.DefaultWildcardRoundRobinModelIDs() {
+		providerID := "provider-" + modelID
+		eng.RegisterAdapter(&mockSender{
+			id:   providerID,
+			resp: json.RawMessage(`{"choices":[{"index":0,"message":{"role":"assistant","content":"selected"},"finish_reason":"stop"}]}`),
+		})
+		eng.RegisterModel(router.Model{
+			ID: modelID, ProviderID: providerID,
+			Weight: 5, MaxContextTokens: 8192, Enabled: true,
+		})
+	}
+
+	for i, want := range []string{
+		"deepseek-v4-flash",
+		"claude-opus-4-7",
+		"gpt-5.5",
+		"deepseek-v4-flash",
+	} {
+		body, _ := json.Marshal(CompletionsRequest{
+			Model:    router.WildcardModelHint,
+			Messages: []router.Message{{Role: "user", Content: "hi"}},
+		})
+		resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("iteration %d: request failed: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			t.Fatalf("iteration %d: expected 200, got %d: %s", i, resp.StatusCode, b)
+		}
+		if got := resp.Header.Get("X-Negotiated-Model"); got != want {
+			_ = resp.Body.Close()
+			t.Fatalf("iteration %d: X-Negotiated-Model = %q, want %q", i, got, want)
+		}
+		if got := resp.Header.Get("X-Alias-From"); got != router.WildcardModelHint {
+			_ = resp.Body.Close()
+			t.Fatalf("iteration %d: X-Alias-From = %q, want %q", i, got, router.WildcardModelHint)
+		}
+		var oai completionsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&oai); err != nil {
+			_ = resp.Body.Close()
+			t.Fatalf("iteration %d: decode response: %v", i, err)
+		}
+		_ = resp.Body.Close()
+		if oai.Model != want {
+			t.Fatalf("iteration %d: response model = %q, want %q", i, oai.Model, want)
+		}
+	}
+}
+
 func TestCompletionsMissingMessages(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	defer ts.Close()

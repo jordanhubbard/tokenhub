@@ -87,9 +87,8 @@ type ModelAliasRecord struct {
 	Name      string              `json:"name"`
 	Variants  []AliasVariantStore `json:"variants"`
 	Enabled   bool                `json:"enabled"`
-	// StickyBy selects the hash key used to pick a variant — see
-	// router.StickyByRequest / router.StickyByAPIKey. Empty means request-
-	// scoped stickiness (the default).
+	// StickyBy selects the variant assignment strategy; see router.StickyBy*
+	// constants. Empty means request-scoped stickiness (the default).
 	StickyBy  string              `json:"sticky_by,omitempty"`
 	CreatedAt time.Time           `json:"created_at"`
 	UpdatedAt time.Time           `json:"updated_at"`

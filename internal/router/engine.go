@@ -9,6 +9,7 @@ package router
 import (
 	"context"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -109,6 +110,7 @@ type Engine struct {
 	bandit       *ThompsonSampler // nil = disabled
 	skipRecorder SkipRecorder
 	aliases      *AliasResolver // nil = no alias rewriting
+	wildcardRR   uint64
 
 	mu       sync.RWMutex
 	models   map[string]Model
@@ -189,7 +191,7 @@ func (e *Engine) resolveAlias(req *Request) string {
 	}
 
 	if IsWildcardModelHint(req.ModelHint) {
-		req.ModelHint = ""
+		return e.resolveDefaultWildcard(req)
 	}
 	return ""
 }
@@ -199,6 +201,51 @@ func (e *Engine) resolveAlias(req *Request) string {
 // choose" unless a "*" alias is configured.
 func (e *Engine) ResolveModelHint(req *Request) string {
 	return e.resolveAlias(req)
+}
+
+func (e *Engine) resolveDefaultWildcard(req *Request) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	defaultModels := DefaultWildcardRoundRobinModelIDs()
+	candidates := make([]string, 0, len(defaultModels))
+	for _, preferredID := range defaultModels {
+		if id, ok := e.availableModelIDLocked(preferredID); ok {
+			candidates = append(candidates, id)
+		}
+	}
+	if len(candidates) == 0 {
+		req.ModelHint = ""
+		return ""
+	}
+
+	req.ModelHint = candidates[int(e.wildcardRR%uint64(len(candidates)))]
+	e.wildcardRR++
+	return WildcardModelHint
+}
+
+func (e *Engine) availableModelIDLocked(preferredID string) (string, bool) {
+	if m, ok := e.models[preferredID]; ok && m.Enabled {
+		if _, ok := e.adapters[m.ProviderID]; ok {
+			return preferredID, true
+		}
+	}
+
+	suffix := "/" + preferredID
+	var matches []string
+	for id, m := range e.models {
+		if !m.Enabled || !strings.HasSuffix(id, suffix) {
+			continue
+		}
+		if _, ok := e.adapters[m.ProviderID]; ok {
+			matches = append(matches, id)
+		}
+	}
+	if len(matches) == 0 {
+		return "", false
+	}
+	sort.Strings(matches)
+	return matches[0], true
 }
 
 // RegisterAdapter registers a provider adapter.

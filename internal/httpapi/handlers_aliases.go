@@ -17,7 +17,7 @@ import (
 type aliasPayload struct {
 	Variants []router.AliasVariant `json:"variants"`
 	Enabled  *bool                 `json:"enabled"`
-	// StickyBy: "request" (default) or "api_key". See router.Alias.
+	// StickyBy: "request" (default), "api_key", or "round_robin". See router.Alias.
 	StickyBy string `json:"sticky_by,omitempty"`
 }
 

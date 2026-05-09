@@ -51,7 +51,7 @@ The chat endpoint provides single-turn or multi-turn completions with automatic 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `messages` | array | Yes | Array of `{role, content}` message objects |
-| `model_hint` | string | No | Preferred model ID; tried first before scoring |
+| `model_hint` | string | No | Preferred model ID; tried first before scoring. Use `*` to let TokenHub assign a wildcard model. |
 | `estimated_input_tokens` | int | No | Token count hint for routing decisions |
 | `parameters` | object | No | Provider parameters forwarded as-is (temperature, max_tokens, top_p, etc.) |
 | `stream` | bool | No | Enable SSE streaming response |
@@ -195,6 +195,25 @@ curl -X POST http://localhost:8080/v1/chat \
         "temperature": 0.9,
         "max_tokens": 2048
       }
+    }
+  }'
+```
+
+### Request with Wildcard Model Assignment
+
+When `model_hint` is `*`, TokenHub assigns a model server-side. If no explicit
+`*` alias is configured, wildcard requests round-robin across the registered
+and enabled default diversity pool: `deepseek-v4-flash`, `claude-opus-4-7`,
+and `gpt-5.5`.
+
+```bash
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer tokenhub_..." \
+  -d '{
+    "request": {
+      "messages": [{"role": "user", "content": "Review this plan."}],
+      "model_hint": "*"
     }
   }'
 ```
