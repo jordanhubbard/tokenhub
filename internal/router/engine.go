@@ -248,6 +248,48 @@ func (e *Engine) availableModelIDLocked(preferredID string) (string, bool) {
 	return matches[0], true
 }
 
+func (e *Engine) wildcardRoutingPoolLocked(selectedID string) map[string]bool {
+	pool := make(map[string]bool)
+
+	if e.aliases != nil {
+		if alias, ok := e.aliases.Get(WildcardModelHint); ok && alias.Enabled {
+			for _, variant := range alias.Variants {
+				if id, ok := e.availableModelIDLocked(variant.ModelID); ok {
+					pool[id] = true
+				}
+			}
+		}
+	}
+	if len(pool) == 0 {
+		for _, preferredID := range DefaultWildcardRoundRobinModelIDs() {
+			if id, ok := e.availableModelIDLocked(preferredID); ok {
+				pool[id] = true
+			}
+		}
+	}
+	if selectedID != "" {
+		if id, ok := e.availableModelIDLocked(selectedID); ok {
+			pool[id] = true
+		} else {
+			pool[selectedID] = true
+		}
+	}
+	return pool
+}
+
+func filterModelsByIDSet(models []Model, allowed map[string]bool) []Model {
+	if len(allowed) == 0 {
+		return models
+	}
+	out := models[:0]
+	for _, model := range models {
+		if allowed[model.ID] {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
 // RegisterAdapter registers a provider adapter.
 func (e *Engine) RegisterAdapter(a Sender) {
 	e.mu.Lock()

@@ -275,6 +275,11 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	e.mu.RLock()
 	tokensNeeded := EstimateTokens(req)
 	eligible := e.eligibleModels(tokensNeeded, p)
+	var wildcardPool map[string]bool
+	if aliasFrom == WildcardModelHint {
+		wildcardPool = e.wildcardRoutingPoolLocked(req.ModelHint)
+		eligible = filterModelsByIDSet(eligible, wildcardPool)
+	}
 
 	if len(eligible) == 0 {
 		// All models were excluded by normal filters (health cooldown, budget, etc.).
@@ -283,6 +288,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		// preference, not a hard constraint; clients should never see a 502 simply
 		// because an internal cooldown window is active.
 		for _, m := range e.models {
+			if wildcardPool != nil && !wildcardPool[m.ID] {
+				continue
+			}
 			if m.Enabled {
 				if _, ok := e.adapters[m.ProviderID]; ok {
 					eligible = append(eligible, m)
@@ -471,7 +479,10 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 					}
 				}
 				// Step 2: escalate to a model with a larger context window.
-				larger := findLargerContextModelIn(modelSnap, adapters, m, tokensNeeded*2)
+				var larger *Model
+				if wildcardPool == nil {
+					larger = findLargerContextModelIn(modelSnap, adapters, m, tokensNeeded*2)
+				}
 				if larger != nil {
 					slog.Info("escalating on context overflow",
 						slog.String("target_model", larger.ID),
@@ -551,6 +562,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	var lastResort []Model
 	var lrAdapters map[string]Sender
 	for _, m := range e.models {
+		if wildcardPool != nil && !wildcardPool[m.ID] {
+			continue
+		}
 		if !tried[m.ID] && m.Enabled {
 			if a, ok := e.adapters[m.ProviderID]; ok {
 				lastResort = append(lastResort, m)

@@ -195,6 +195,9 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	tokensNeeded := EstimateTokens(req)
 
 	eligible := e.eligibleModels(tokensNeeded, p)
+	if aliasFrom == WildcardModelHint {
+		eligible = filterModelsByIDSet(eligible, e.wildcardRoutingPoolLocked(req.ModelHint))
+	}
 	if len(eligible) == 0 {
 		return Decision{}, nil, errors.New("no eligible models registered")
 	}

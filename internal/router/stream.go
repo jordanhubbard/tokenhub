@@ -20,6 +20,13 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	// then we fall through to last-resort streaming).
 	aliasFrom := e.resolveAlias(&req)
 	decision, eligible, err := e.SelectModel(ctx, req, p)
+	var wildcardPool map[string]bool
+	if aliasFrom == WildcardModelHint {
+		e.mu.RLock()
+		wildcardPool = e.wildcardRoutingPoolLocked(req.ModelHint)
+		e.mu.RUnlock()
+		eligible = filterModelsByIDSet(eligible, wildcardPool)
+	}
 	if aliasFrom != "" {
 		// SelectModel saw a post-rewrite ModelHint and cannot recover the
 		// original alias on its own — carry it forward explicitly.
@@ -33,6 +40,9 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		var lrAdapters map[string]Sender
 		tokensNeeded := EstimateTokens(req)
 		for _, m := range e.models {
+			if wildcardPool != nil && !wildcardPool[m.ID] {
+				continue
+			}
 			if m.Enabled {
 				if a, ok := e.adapters[m.ProviderID]; ok {
 					candidates = append(candidates, m)
@@ -123,7 +133,10 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	}
 
 	// Try remaining eligible models (those returned by SelectModel).
-	for _, m := range eligible[1:] {
+	for _, m := range eligible {
+		if m.ID == decision.ModelID {
+			continue
+		}
 		tried[m.ID] = true
 		e.mu.RLock()
 		fallbackAdapter := e.adapters[m.ProviderID]
@@ -167,6 +180,9 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	tokensNeeded := EstimateTokens(req)
 	outTok := estOutTokens(p)
 	for _, m := range e.models {
+		if wildcardPool != nil && !wildcardPool[m.ID] {
+			continue
+		}
 		if !tried[m.ID] && m.Enabled {
 			if a, ok := e.adapters[m.ProviderID]; ok {
 				lastResort = append(lastResort, m)
