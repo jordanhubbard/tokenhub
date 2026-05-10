@@ -455,6 +455,8 @@ func NewServer(cfg Config) (*Server, error) {
 				s.temporal = tmgr
 				deps.TemporalClient = tmgr.Client()
 				deps.TemporalTaskQueue = cfg.TemporalTaskQueue
+				deps.TemporalFleetTaskQueue = cfg.TemporalFleetTaskQueue
+				deps.FleetWorkerActive = tmgr.HasFleetWorker()
 				m.TemporalUp.Set(1)
 				logger.Info("temporal workflow engine started",
 					slog.String("host", cfg.TemporalHostPort),
