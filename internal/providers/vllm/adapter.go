@@ -106,17 +106,9 @@ func (a *Adapter) nextEndpoint() string {
 }
 
 func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (router.ProviderResponse, error) {
-	messages := make([]map[string]string, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-	}
-
 	payload := map[string]any{
 		"model":    model,
-		"messages": messages,
+		"messages": buildOpenAIMessages(req.Messages),
 	}
 	// Merge client parameters (temperature, max_tokens, top_p, etc.)
 	for k, v := range req.Parameters {
@@ -127,6 +119,30 @@ func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (r
 
 	baseURL := a.nextEndpoint()
 	return a.makeRequest(ctx, baseURL, "/v1/chat/completions", payload)
+}
+
+// buildOpenAIMessages converts router.Message values into the wire shape vLLM
+// (and other OpenAI-compatible servers) expect, preserving tool_calls,
+// tool_call_id, and name so assistant↔tool linkage survives.
+func buildOpenAIMessages(in []router.Message) []map[string]any {
+	out := make([]map[string]any, len(in))
+	for i, msg := range in {
+		m := map[string]any{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+		if len(msg.ToolCalls) > 0 {
+			m["tool_calls"] = msg.ToolCalls
+		}
+		if msg.ToolCallID != "" {
+			m["tool_call_id"] = msg.ToolCallID
+		}
+		if msg.Name != "" {
+			m["name"] = msg.Name
+		}
+		out[i] = m
+	}
+	return out
 }
 
 func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
@@ -180,17 +196,9 @@ func (a *Adapter) SendStream(ctx context.Context, model string, req router.Reque
 			slog.String("model", model),
 		)
 	}
-	messages := make([]map[string]string, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-	}
-
 	payload := map[string]any{
 		"model":    model,
-		"messages": messages,
+		"messages": buildOpenAIMessages(req.Messages),
 		"stream":   true,
 	}
 	for k, v := range req.Parameters {

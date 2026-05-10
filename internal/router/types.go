@@ -61,9 +61,18 @@ type Request struct {
 // sends content as an array of parts (OpenAI multi-modal format), the text
 // parts are concatenated so downstream providers that only accept string
 // content (e.g. vLLM with Nemotron) never see an unexpected type.
+//
+// ToolCalls/ToolCallID/Name carry the OpenAI tool-calling shape verbatim so
+// downstream providers receive the assistant.tool_calls and tool.tool_call_id
+// fields they require. Without these, upstream providers (Azure, litellm) raise
+// "tool_call_id" schema errors because the linkage between an assistant tool
+// call and its tool-result message is lost when forwarding.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string          `json:"role"`
+	Content    string          `json:"content"`
+	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Name       string          `json:"name,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler so that Message.Content can accept
@@ -76,14 +85,20 @@ type Message struct {
 func (m *Message) UnmarshalJSON(data []byte) error {
 	// Use an alias to avoid infinite recursion.
 	type alias struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCalls  json.RawMessage `json:"tool_calls"`
+		ToolCallID string          `json:"tool_call_id"`
+		Name       string          `json:"name"`
 	}
 	var a alias
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
 	m.Role = a.Role
+	m.ToolCalls = a.ToolCalls
+	m.ToolCallID = a.ToolCallID
+	m.Name = a.Name
 
 	if len(a.Content) == 0 {
 		return nil

@@ -69,17 +69,9 @@ func (a *Adapter) HealthEndpoint() string {
 }
 
 func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (router.ProviderResponse, error) {
-	messages := make([]map[string]string, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-	}
-
 	payload := map[string]any{
 		"model":    model,
-		"messages": messages,
+		"messages": buildOpenAIMessages(req.Messages),
 	}
 	// Merge client parameters (temperature, max_tokens, top_p, etc.)
 	for k, v := range req.Parameters {
@@ -89,6 +81,32 @@ func (a *Adapter) Send(ctx context.Context, model string, req router.Request) (r
 	}
 
 	return a.makeRequest(ctx, "/v1/chat/completions", payload)
+}
+
+// buildOpenAIMessages converts router.Message values into the wire shape
+// expected by OpenAI-compatible providers. It preserves tool_calls,
+// tool_call_id, and name so assistant↔tool linkage survives the hop —
+// upstream litellm/Azure adapters fail with a "tool_call_id" KeyError
+// when those fields are stripped.
+func buildOpenAIMessages(in []router.Message) []map[string]any {
+	out := make([]map[string]any, len(in))
+	for i, msg := range in {
+		m := map[string]any{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+		if len(msg.ToolCalls) > 0 {
+			m["tool_calls"] = msg.ToolCalls
+		}
+		if msg.ToolCallID != "" {
+			m["tool_call_id"] = msg.ToolCallID
+		}
+		if msg.Name != "" {
+			m["name"] = msg.Name
+		}
+		out[i] = m
+	}
+	return out
 }
 
 func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
@@ -121,17 +139,9 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 
 // SendStream sends a streaming request and returns the raw SSE response body.
 func (a *Adapter) SendStream(ctx context.Context, model string, req router.Request) (io.ReadCloser, error) {
-	messages := make([]map[string]string, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-	}
-
 	payload := map[string]any{
 		"model":    model,
-		"messages": messages,
+		"messages": buildOpenAIMessages(req.Messages),
 		"stream":   true,
 	}
 	for k, v := range req.Parameters {

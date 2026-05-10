@@ -53,6 +53,85 @@ func TestSendSuccess(t *testing.T) {
 	}
 }
 
+// TestSendPreservesToolCallShape asserts that an assistant tool_calls turn
+// followed by a tool tool_call_id turn survives the hop to the upstream
+// provider. Stripping these fields was producing
+// "litellm.BadRequestError: Azure_aiException - 'tool_call_id'" on every
+// streaming chat that contained a tool history.
+func TestSendPreservesToolCallShape(t *testing.T) {
+	var captured map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	a := New("openai", "test-key", ts.URL)
+	toolCallsRaw := json.RawMessage(`[{"id":"call_abc","type":"function","function":{"name":"do_thing","arguments":"{}"}}]`)
+	_, err := a.Send(context.Background(), "gpt-x", router.Request{
+		Messages: []router.Message{
+			{Role: "user", Content: "kick off"},
+			{Role: "assistant", Content: "", ToolCalls: toolCallsRaw},
+			{Role: "tool", Content: "result text", ToolCallID: "call_abc", Name: "do_thing"},
+			{Role: "assistant", Content: "done"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	msgs, ok := captured["messages"].([]any)
+	if !ok || len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %v", captured["messages"])
+	}
+
+	assistantToolCall, _ := msgs[1].(map[string]any)
+	if assistantToolCall["tool_calls"] == nil {
+		t.Errorf("assistant turn lost tool_calls; got %v", assistantToolCall)
+	}
+
+	toolMsg, _ := msgs[2].(map[string]any)
+	if toolMsg["tool_call_id"] != "call_abc" {
+		t.Errorf("tool message lost tool_call_id; got %v", toolMsg)
+	}
+	if toolMsg["name"] != "do_thing" {
+		t.Errorf("tool message lost name; got %v", toolMsg)
+	}
+}
+
+func TestSendStreamPreservesToolCallShape(t *testing.T) {
+	var captured map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	a := New("openai", "test-key", ts.URL)
+	body, err := a.SendStream(context.Background(), "gpt-x", router.Request{
+		Messages: []router.Message{
+			{Role: "assistant", Content: "", ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]`)},
+			{Role: "tool", Content: "v", ToolCallID: "call_1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendStream failed: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	_, _ = io.ReadAll(body)
+
+	msgs, _ := captured["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %v", captured["messages"])
+	}
+	tool, _ := msgs[1].(map[string]any)
+	if tool["tool_call_id"] != "call_1" {
+		t.Errorf("tool_call_id lost on streaming path; got %v", tool)
+	}
+}
+
 func TestSendStreamDoesNotUseNonStreamingTimeout(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
