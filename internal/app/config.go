@@ -53,21 +53,6 @@ type Config struct {
 	TemporalHostPort  string
 	TemporalNamespace string
 	TemporalTaskQueue string
-	// TemporalFleetTaskQueue, when set, registers a second Temporal worker on
-	// that queue running the ACC fleet rollout workflows (BuildArtifact,
-	// Rollout, SoulPersistence, SelfDevSubmit). Defaults to empty (chat-only).
-	// See ACC-etxq for the operational rollout.
-	TemporalFleetTaskQueue string
-
-	// Fleet rollout activity dependencies (used by the fleet-orchestrator
-	// worker to call into the hub and ssh into per-host helpers).
-	FleetHubURL          string // hub /api/agents/:name endpoint
-	FleetHubAuthToken    string // bearer token for hub queries
-	FleetArtifactStoreURL string // typically same as FleetHubURL
-	FleetSSHUser         string
-	// FleetSSHHosts is a comma-separated host=address map, e.g.
-	// "rocky=100.125.137.89,natasha=100.87.229.125,bullwinkle=100.72.16.110".
-	FleetSSHHosts string
 
 	// External credentials file (~/.netrc analogue for provider tokens).
 	CredentialsFile string // TOKENHUB_CREDENTIALS_FILE, default ~/.tokenhub/credentials
@@ -108,17 +93,10 @@ func LoadConfig() (Config, error) {
 		OTelEndpoint:    getEnv("TOKENHUB_OTEL_ENDPOINT", "localhost:4318"),
 		OTelServiceName: getEnv("TOKENHUB_OTEL_SERVICE_NAME", "tokenhub"),
 
-		TemporalEnabled:        getEnvBool("TOKENHUB_TEMPORAL_ENABLED", false),
-		TemporalHostPort:       getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),
-		TemporalNamespace:      getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
-		TemporalTaskQueue:      getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
-		TemporalFleetTaskQueue: getEnv("TOKENHUB_TEMPORAL_FLEET_TASK_QUEUE", ""),
-
-		FleetHubURL:           getEnv("TOKENHUB_FLEET_HUB_URL", "http://127.0.0.1:8789"),
-		FleetHubAuthToken:     getEnv("TOKENHUB_FLEET_HUB_AUTH_TOKEN", ""),
-		FleetArtifactStoreURL: getEnv("TOKENHUB_FLEET_ARTIFACT_STORE_URL", ""),
-		FleetSSHUser:          getEnv("TOKENHUB_FLEET_SSH_USER", ""),
-		FleetSSHHosts:         getEnv("TOKENHUB_FLEET_SSH_HOSTS", ""),
+		TemporalEnabled:   getEnvBool("TOKENHUB_TEMPORAL_ENABLED", false),
+		TemporalHostPort:  getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),
+		TemporalNamespace: getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
+		TemporalTaskQueue: getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
 
 		CredentialsFile: getEnv("TOKENHUB_CREDENTIALS_FILE", defaultCredentialsPath()),
 

@@ -3,39 +3,25 @@ package temporal
 import (
 	"fmt"
 
-	"github.com/jordanhubbard/tokenhub/internal/fleet_orchestrator"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
 
 // Config holds Temporal connection settings.
-//
-// `TaskQueue` is the chat-routing task queue tokenhub has always used.
-// `FleetTaskQueue`, when non-empty, registers a second worker on that queue
-// hosting the ACC fleet rollout workflows (ACC-jq9z). It is independent so
-// chat retries and fleet operations don't share retry/budget policies.
 type Config struct {
-	HostPort       string
-	Namespace      string
-	TaskQueue      string
-	FleetTaskQueue string
-	// FleetActivities, when set, registers its activity methods on the fleet
-	// worker (RolloutHost et al). Leave nil for chat-only deployments.
-	FleetActivities *fleet_orchestrator.RolloutActivities
+	HostPort  string
+	Namespace string
+	TaskQueue string
 }
 
-// Manager owns the Temporal client and the worker pool.
+// Manager owns the Temporal client and worker lifecycle.
 type Manager struct {
-	client       client.Client
-	chatWorker   worker.Worker
-	fleetWorker  worker.Worker
-	cfg          Config
+	client client.Client
+	worker worker.Worker
+	cfg    Config
 }
 
-// New creates a Temporal client and the chat worker. If cfg.FleetTaskQueue is
-// non-empty, a second worker is registered on that queue with the fleet
-// orchestrator workflows (BuildArtifact / Rollout / SoulPersistence /
-// SelfDevSubmit).
+// New creates a Temporal client and worker, registering all workflows and activities.
 func New(cfg Config, acts *Activities) (*Manager, error) {
 	c, err := client.Dial(client.Options{
 		HostPort:  cfg.HostPort,
@@ -47,12 +33,12 @@ func New(cfg Config, acts *Activities) (*Manager, error) {
 
 	w := worker.New(c, cfg.TaskQueue, worker.Options{})
 
-	// Register chat workflows.
+	// Register workflows.
 	w.RegisterWorkflow(ChatWorkflow)
 	w.RegisterWorkflow(OrchestrationWorkflow)
 	w.RegisterWorkflow(StreamLogWorkflow)
 
-	// Register chat activities.
+	// Register activities.
 	w.RegisterActivity(acts.SelectModel)
 	w.RegisterActivity(acts.SendToProvider)
 	w.RegisterActivity(acts.ClassifyAndEscalate)
@@ -61,40 +47,16 @@ func New(cfg Config, acts *Activities) (*Manager, error) {
 	w.RegisterActivity(acts.StreamSelectModel)
 	w.RegisterActivity(acts.StreamLogResult)
 
-	m := &Manager{
-		client:     c,
-		chatWorker: w,
-		cfg:        cfg,
-	}
-
-	if cfg.FleetTaskQueue != "" {
-		fw := worker.New(c, cfg.FleetTaskQueue, worker.Options{})
-		fw.RegisterWorkflow(fleet_orchestrator.BuildArtifactWorkflow)
-		fw.RegisterWorkflow(fleet_orchestrator.RolloutWorkflow)
-		fw.RegisterWorkflow(fleet_orchestrator.SoulPersistenceWorkflow)
-		fw.RegisterWorkflow(fleet_orchestrator.SelfDevSubmitWorkflow)
-		if cfg.FleetActivities != nil {
-			// RegisterActivity on a struct pointer registers each exported
-			// method as an activity named after the method (e.g. RolloutHost).
-			fw.RegisterActivity(cfg.FleetActivities)
-		}
-		m.fleetWorker = fw
-	}
-
-	return m, nil
+	return &Manager{
+		client: c,
+		worker: w,
+		cfg:    cfg,
+	}, nil
 }
 
-// Start begins each registered worker polling for tasks.
+// Start begins the worker polling for tasks.
 func (m *Manager) Start() error {
-	if err := m.chatWorker.Start(); err != nil {
-		return fmt.Errorf("chat worker start: %w", err)
-	}
-	if m.fleetWorker != nil {
-		if err := m.fleetWorker.Start(); err != nil {
-			return fmt.Errorf("fleet worker start: %w", err)
-		}
-	}
-	return nil
+	return m.worker.Start()
 }
 
 // Client returns the Temporal client for starting workflows.
@@ -102,30 +64,15 @@ func (m *Manager) Client() client.Client {
 	return m.client
 }
 
-// TaskQueue returns the chat task queue name.
+// TaskQueue returns the configured task queue name.
 func (m *Manager) TaskQueue() string {
 	return m.cfg.TaskQueue
 }
 
-// FleetTaskQueue returns the fleet orchestrator task queue name (or "").
-func (m *Manager) FleetTaskQueue() string {
-	return m.cfg.FleetTaskQueue
-}
-
-// HasFleetWorker reports whether a fleet-orchestrator worker is running.
-// Used by the /fleet/orchestrator/health endpoint to surface the worker pool
-// state to operators (ACC-etxq acceptance criteria).
-func (m *Manager) HasFleetWorker() bool {
-	return m.fleetWorker != nil
-}
-
-// Stop gracefully stops every worker and closes the client.
+// Stop gracefully stops the worker and closes the client.
 func (m *Manager) Stop() {
-	if m.chatWorker != nil {
-		m.chatWorker.Stop()
-	}
-	if m.fleetWorker != nil {
-		m.fleetWorker.Stop()
+	if m.worker != nil {
+		m.worker.Stop()
 	}
 	if m.client != nil {
 		m.client.Close()
