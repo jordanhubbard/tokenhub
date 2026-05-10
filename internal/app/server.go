@@ -439,9 +439,10 @@ func NewServer(cfg Config) (*Server, error) {
 			TSDB:     ts,
 		}
 		tmgr, err := temporalpkg.New(temporalpkg.Config{
-			HostPort:  cfg.TemporalHostPort,
-			Namespace: cfg.TemporalNamespace,
-			TaskQueue: cfg.TemporalTaskQueue,
+			HostPort:       cfg.TemporalHostPort,
+			Namespace:      cfg.TemporalNamespace,
+			TaskQueue:      cfg.TemporalTaskQueue,
+			FleetTaskQueue: cfg.TemporalFleetTaskQueue,
 		}, acts)
 		if err != nil {
 			logger.Error("failed to initialize Temporal", slog.String("error", err.Error()))
@@ -459,6 +460,8 @@ func NewServer(cfg Config) (*Server, error) {
 					slog.String("host", cfg.TemporalHostPort),
 					slog.String("namespace", cfg.TemporalNamespace),
 					slog.String("task_queue", cfg.TemporalTaskQueue),
+					slog.String("fleet_task_queue", cfg.TemporalFleetTaskQueue),
+					slog.Bool("fleet_worker", tmgr.HasFleetWorker()),
 				)
 			}
 		}

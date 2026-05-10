@@ -53,6 +53,11 @@ type Config struct {
 	TemporalHostPort  string
 	TemporalNamespace string
 	TemporalTaskQueue string
+	// TemporalFleetTaskQueue, when set, registers a second Temporal worker on
+	// that queue running the ACC fleet rollout workflows (BuildArtifact,
+	// Rollout, SoulPersistence, SelfDevSubmit). Defaults to empty (chat-only).
+	// See ACC-etxq for the operational rollout.
+	TemporalFleetTaskQueue string
 
 	// External credentials file (~/.netrc analogue for provider tokens).
 	CredentialsFile string // TOKENHUB_CREDENTIALS_FILE, default ~/.tokenhub/credentials
@@ -93,10 +98,11 @@ func LoadConfig() (Config, error) {
 		OTelEndpoint:    getEnv("TOKENHUB_OTEL_ENDPOINT", "localhost:4318"),
 		OTelServiceName: getEnv("TOKENHUB_OTEL_SERVICE_NAME", "tokenhub"),
 
-		TemporalEnabled:   getEnvBool("TOKENHUB_TEMPORAL_ENABLED", false),
-		TemporalHostPort:  getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),
-		TemporalNamespace: getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
-		TemporalTaskQueue: getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
+		TemporalEnabled:        getEnvBool("TOKENHUB_TEMPORAL_ENABLED", false),
+		TemporalHostPort:       getEnv("TOKENHUB_TEMPORAL_HOST", "localhost:7233"),
+		TemporalNamespace:      getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
+		TemporalTaskQueue:      getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
+		TemporalFleetTaskQueue: getEnv("TOKENHUB_TEMPORAL_FLEET_TASK_QUEUE", ""),
 
 		CredentialsFile: getEnv("TOKENHUB_CREDENTIALS_FILE", defaultCredentialsPath()),
 
