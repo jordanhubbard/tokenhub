@@ -1,8 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/google/uuid"
+	"go.temporal.io/sdk/client"
 
 	"github.com/jordanhubbard/tokenhub/internal/fleet_orchestrator"
 )
@@ -43,6 +49,59 @@ func FleetOrchestratorHealthHandler(d Dependencies) http.HandlerFunc {
 		}
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(body)
+	}
+}
+
+// FleetRolloutStartHandler kicks off a RolloutWorkflow execution against the
+// fleet-orchestrator task queue. Body: fleet_orchestrator.RolloutInput.
+// Returns: {workflow_id, run_id}.
+//
+// Idempotent on caller-supplied `workflow_id` if present; otherwise the
+// handler generates one.
+func FleetRolloutStartHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if d.TemporalClient == nil || !d.FleetWorkerActive {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "fleet_worker_not_active",
+			})
+			return
+		}
+		var body struct {
+			WorkflowID string                       `json:"workflow_id"`
+			Input      fleet_orchestrator.RolloutInput `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+			return
+		}
+		if body.WorkflowID == "" {
+			body.WorkflowID = fmt.Sprintf("rollout-%s-%s-%s",
+				body.Input.Component, body.Input.Version, uuid.NewString()[:8])
+		}
+		opts := client.StartWorkflowOptions{
+			ID:                       body.WorkflowID,
+			TaskQueue:                fleet_orchestrator.TaskQueue,
+			WorkflowExecutionTimeout: 1 * time.Hour,
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		run, err := d.TemporalClient.ExecuteWorkflow(ctx, opts,
+			"RolloutWorkflow", body.Input)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "execute_workflow_failed", "detail": err.Error(),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"workflow_id": run.GetID(),
+			"run_id":      run.GetRunID(),
+		})
 	}
 }
 

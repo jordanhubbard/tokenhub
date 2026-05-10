@@ -19,6 +19,9 @@ type Config struct {
 	Namespace      string
 	TaskQueue      string
 	FleetTaskQueue string
+	// FleetActivities, when set, registers its activity methods on the fleet
+	// worker (RolloutHost et al). Leave nil for chat-only deployments.
+	FleetActivities *fleet_orchestrator.RolloutActivities
 }
 
 // Manager owns the Temporal client and the worker pool.
@@ -70,6 +73,11 @@ func New(cfg Config, acts *Activities) (*Manager, error) {
 		fw.RegisterWorkflow(fleet_orchestrator.RolloutWorkflow)
 		fw.RegisterWorkflow(fleet_orchestrator.SoulPersistenceWorkflow)
 		fw.RegisterWorkflow(fleet_orchestrator.SelfDevSubmitWorkflow)
+		if cfg.FleetActivities != nil {
+			// RegisterActivity on a struct pointer registers each exported
+			// method as an activity named after the method (e.g. RolloutHost).
+			fw.RegisterActivity(cfg.FleetActivities)
+		}
 		m.fleetWorker = fw
 	}
 

@@ -21,6 +21,8 @@
 package fleet_orchestrator
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -79,37 +81,196 @@ const (
 	RolloutSerial RolloutStrategy = "serial"
 )
 
-// RolloutInput names the manifest and target hosts.
-type RolloutInput struct {
-	Component   string          `json:"component"`
-	Version     string          `json:"version"`
-	Hosts       []string        `json:"hosts"`
-	Strategy    RolloutStrategy `json:"strategy"`
-	BakeSeconds int             `json:"bake_seconds"`
+// HostSpec names a fleet host plus the per-host knobs the workflow needs.
+type HostSpec struct {
+	Name     string `json:"name"`
+	Arch     string `json:"arch"`      // "linux-x86_64" | "linux-aarch64" | "darwin-arm64"
+	Unit     string `json:"unit"`      // systemd unit, e.g. "acc-agent.service"
+	UnitUser bool   `json:"unit_user"` // true → systemctl --user; false → sudo systemctl
+	BinPath  string `json:"bin_path"`  // install path, e.g. /home/jkh/.acc/bin/acc-agent
 }
 
-// HealthSignal is the signal a host's helper sends after install + restart.
+// RolloutInput names the manifest and target hosts.
+type RolloutInput struct {
+	Component string          `json:"component"`
+	Version   string          `json:"version"`
+	Hosts     []HostSpec      `json:"hosts"`
+	Strategy  RolloutStrategy `json:"strategy"`
+	// BakeSeconds is the soak time after the canary host upgrades before the
+	// cohort starts. Ignored for non-canary strategies.
+	BakeSeconds int `json:"bake_seconds"`
+	// HealthTimeoutSeconds caps how long WaitForHealth waits for the agent
+	// to report the new ccc_version. Defaults to 300s when zero.
+	HealthTimeoutSeconds int `json:"health_timeout_seconds"`
+	// ArchSHA maps arch token (e.g. "linux-x86_64") → SHA-256 of the binary
+	// for that arch. Comes from the signed manifest in the artifact store.
+	// Mandatory: the workflow refuses to run if any host's arch is missing.
+	ArchSHA map[string]string `json:"arch_sha"`
+}
+
+// HealthSignal is the signal a host's helper sends after install + restart
+// (currently unused — health is polled, not signaled, in the MVP).
 const HealthSignal = "fleet.health"
 
-// RolloutWorkflow per-host: download → preflight → atomic install → restart →
-// wait for health signal with deadline → commit or rollback. Replayable. STUB.
-func RolloutWorkflow(ctx workflow.Context, in RolloutInput) (Result, error) {
+// HostOutcome captures what happened on a single host.
+type HostOutcome struct {
+	Host      string `json:"host"`
+	Skipped   bool   `json:"skipped"`   // already at target
+	Installed bool   `json:"installed"` // new binary written
+	Healthy   bool   `json:"healthy"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// RolloutResult extends Result with per-host outcomes.
+type RolloutResult struct {
+	Result
+	Hosts []HostOutcome `json:"hosts"`
+}
+
+// RolloutWorkflow rolls a component+version across a set of hosts using the
+// selected strategy. Per host: Preflight → (DownloadArtifact → InstallBinary
+// → RestartService when not already at target) → WaitForHealth. Replayable:
+// re-running on a converged fleet hits AlreadyAtTarget for every host and
+// becomes a no-op on the install side while still verifying health.
+func RolloutWorkflow(ctx workflow.Context, in RolloutInput) (RolloutResult, error) {
 	logger := workflow.GetLogger(ctx)
-	logger.Info("RolloutWorkflow stub invoked",
+	logger.Info("RolloutWorkflow start",
 		"component", in.Component, "version", in.Version,
-		"hosts", in.Hosts, "strategy", in.Strategy)
-	// Placeholder: spec a tight retry policy so the future activities inherit it.
-	_ = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
+		"hosts", hostNames(in.Hosts), "strategy", in.Strategy,
+		"bake_seconds", in.BakeSeconds)
+
+	if err := validateRolloutInput(in); err != nil {
+		return RolloutResult{}, err
+	}
+
+	groups, err := groupHosts(in)
+	if err != nil {
+		return RolloutResult{}, err
+	}
+
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 15 * time.Minute,
 		HeartbeatTimeout:    30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    5 * time.Second,
 			BackoffCoefficient: 2.0,
-			MaximumInterval:    2 * time.Minute,
+			MaximumInterval:    1 * time.Minute,
 			MaximumAttempts:    3,
 		},
-	})
-	return stubResult("RolloutWorkflow"), nil
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+
+	var outcomes []HostOutcome
+	for groupIdx, group := range groups {
+		// Run hosts in this group concurrently.
+		futures := make([]workflow.Future, 0, len(group))
+		for _, host := range group {
+			host := host
+			f := workflow.ExecuteActivity(ctx, "RolloutHost", rolloutHostInput{
+				Host:                 host,
+				Component:            in.Component,
+				Version:              in.Version,
+				ArchSHA:              in.ArchSHA,
+				HealthTimeoutSeconds: in.HealthTimeoutSeconds,
+			})
+			futures = append(futures, f)
+		}
+		for i, f := range futures {
+			var out HostOutcome
+			if err := f.Get(ctx, &out); err != nil {
+				outcomes = append(outcomes, HostOutcome{
+					Host: group[i].Name, Reason: err.Error(),
+				})
+				return RolloutResult{
+					Result: Result{
+						Workflow: "RolloutWorkflow",
+						Status:   "failed",
+						Note:     "host activity failed; halting before subsequent groups",
+					},
+					Hosts: outcomes,
+				}, err
+			}
+			outcomes = append(outcomes, out)
+		}
+		// Canary bake between group 0 (canary) and group 1 (cohort).
+		if in.Strategy == RolloutCanary && groupIdx == 0 && len(groups) > 1 && in.BakeSeconds > 0 {
+			logger.Info("canary baked; sleeping before cohort",
+				"bake_seconds", in.BakeSeconds)
+			if err := workflow.Sleep(ctx, time.Duration(in.BakeSeconds)*time.Second); err != nil {
+				return RolloutResult{}, err
+			}
+		}
+	}
+
+	return RolloutResult{
+		Result: Result{Workflow: "RolloutWorkflow", Status: "ok"},
+		Hosts:  outcomes,
+	}, nil
+}
+
+func validateRolloutInput(in RolloutInput) error {
+	if in.Component == "" {
+		return errors.New("component required")
+	}
+	if in.Version == "" {
+		return errors.New("version required")
+	}
+	if len(in.Hosts) == 0 {
+		return errors.New("at least one host required")
+	}
+	if len(in.ArchSHA) == 0 {
+		return errors.New("arch_sha map required (from signed manifest)")
+	}
+	for _, h := range in.Hosts {
+		if h.Name == "" || h.Arch == "" || h.Unit == "" || h.BinPath == "" {
+			return fmt.Errorf("incomplete HostSpec: %+v", h)
+		}
+		if _, ok := in.ArchSHA[h.Arch]; !ok {
+			return fmt.Errorf("no manifest entry for arch %q (host %s)", h.Arch, h.Name)
+		}
+	}
+	switch in.Strategy {
+	case RolloutCanary, RolloutCohort, RolloutSerial:
+	default:
+		return fmt.Errorf("unknown strategy: %q", in.Strategy)
+	}
+	return nil
+}
+
+func groupHosts(in RolloutInput) ([][]HostSpec, error) {
+	switch in.Strategy {
+	case RolloutCanary:
+		if len(in.Hosts) == 1 {
+			return [][]HostSpec{in.Hosts}, nil
+		}
+		return [][]HostSpec{{in.Hosts[0]}, in.Hosts[1:]}, nil
+	case RolloutCohort:
+		return [][]HostSpec{in.Hosts}, nil
+	case RolloutSerial:
+		groups := make([][]HostSpec, 0, len(in.Hosts))
+		for _, h := range in.Hosts {
+			groups = append(groups, []HostSpec{h})
+		}
+		return groups, nil
+	}
+	return nil, fmt.Errorf("unknown strategy: %q", in.Strategy)
+}
+
+func hostNames(hosts []HostSpec) []string {
+	out := make([]string, len(hosts))
+	for i, h := range hosts {
+		out[i] = h.Name
+	}
+	return out
+}
+
+// rolloutHostInput carries all per-host context across activity boundaries.
+type rolloutHostInput struct {
+	Host                 HostSpec
+	Component            string
+	Version              string
+	ArchSHA              map[string]string
+	HealthTimeoutSeconds int
 }
 
 // ── SoulPersistenceWorkflow ──────────────────────────────────────────────────

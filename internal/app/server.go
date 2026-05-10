@@ -20,6 +20,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 	"github.com/jordanhubbard/tokenhub/internal/circuitbreaker"
 	"github.com/jordanhubbard/tokenhub/internal/events"
+	"github.com/jordanhubbard/tokenhub/internal/fleet_orchestrator"
 	"github.com/jordanhubbard/tokenhub/internal/health"
 	"github.com/jordanhubbard/tokenhub/internal/httpapi"
 	"github.com/jordanhubbard/tokenhub/internal/idempotency"
@@ -438,11 +439,28 @@ func NewServer(cfg Config) (*Server, error) {
 			Stats:    sc,
 			TSDB:     ts,
 		}
+		// Construct the fleet rollout activities only when the fleet task queue
+		// is enabled — otherwise leave nil so the worker pool runs chat-only.
+		var fleetActs *fleet_orchestrator.RolloutActivities
+		if cfg.TemporalFleetTaskQueue != "" {
+			storeURL := cfg.FleetArtifactStoreURL
+			if storeURL == "" {
+				storeURL = cfg.FleetHubURL
+			}
+			fleetActs = &fleet_orchestrator.RolloutActivities{
+				HubURL:           cfg.FleetHubURL,
+				HubAuthToken:     cfg.FleetHubAuthToken,
+				ArtifactStoreURL: storeURL,
+				SSHUser:          cfg.FleetSSHUser,
+				SSHHosts:         parseFleetSSHHosts(cfg.FleetSSHHosts),
+			}
+		}
 		tmgr, err := temporalpkg.New(temporalpkg.Config{
-			HostPort:       cfg.TemporalHostPort,
-			Namespace:      cfg.TemporalNamespace,
-			TaskQueue:      cfg.TemporalTaskQueue,
-			FleetTaskQueue: cfg.TemporalFleetTaskQueue,
+			HostPort:        cfg.TemporalHostPort,
+			Namespace:       cfg.TemporalNamespace,
+			TaskQueue:       cfg.TemporalTaskQueue,
+			FleetTaskQueue:  cfg.TemporalFleetTaskQueue,
+			FleetActivities: fleetActs,
 		}, acts)
 		if err != nil {
 			logger.Error("failed to initialize Temporal", slog.String("error", err.Error()))
@@ -457,6 +475,7 @@ func NewServer(cfg Config) (*Server, error) {
 				deps.TemporalTaskQueue = cfg.TemporalTaskQueue
 				deps.TemporalFleetTaskQueue = cfg.TemporalFleetTaskQueue
 				deps.FleetWorkerActive = tmgr.HasFleetWorker()
+				deps.TemporalNamespace = cfg.TemporalNamespace
 				m.TemporalUp.Set(1)
 				logger.Info("temporal workflow engine started",
 					slog.String("host", cfg.TemporalHostPort),
@@ -1240,3 +1259,26 @@ func loadRoutingConfig(eng *router.Engine, db store.Store, logger *slog.Logger) 
 	}
 }
 
+
+// parseFleetSSHHosts parses a comma-separated host=address spec into a map
+// suitable for fleet_orchestrator.RolloutActivities. Whitespace tolerant.
+// Empty input returns an empty (non-nil) map.
+func parseFleetSSHHosts(spec string) fleet_orchestrator.HostMap {
+	out := fleet_orchestrator.HostMap{}
+	for _, pair := range strings.Split(spec, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, val, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if key != "" {
+			out[key] = val
+		}
+	}
+	return out
+}

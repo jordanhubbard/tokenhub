@@ -54,6 +54,7 @@ type Dependencies struct {
 	// Temporal workflow client (nil when Temporal is disabled).
 	TemporalClient        client.Client
 	TemporalTaskQueue     string
+	TemporalNamespace     string
 	// FleetTaskQueue is non-empty when the second Temporal worker (fleet
 	// orchestrator) is running. Used by /admin/v1/fleet/orchestrator/health.
 	TemporalFleetTaskQueue string
@@ -275,6 +276,7 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Put("/routing-config", RoutingConfigSetHandler(d))
 		r.Get("/health", HealthStatsHandler(d))
 		r.Get("/fleet/orchestrator/health", FleetOrchestratorHealthHandler(d))
+		r.Post("/fleet/rollout/start", FleetRolloutStartHandler(d))
 		r.Get("/stats", StatsHandler(d))
 		r.Get("/logs", RequestLogsHandler(d))
 		r.Get("/audit", AuditLogsHandler(d))
