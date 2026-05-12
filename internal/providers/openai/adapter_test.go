@@ -317,5 +317,83 @@ func TestRetryAfterHeader(t *testing.T) {
 	}
 }
 
+func TestSendPayload_PreservesToolCalls(t *testing.T) {
+	var receivedPayload map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&receivedPayload)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	// Construct a router.Request from an OpenAI-style tool-chat history
+	// (assistant emits tool_calls, then a tool role replies with tool_call_id).
+	body := []byte(`{
+		"messages": [
+			{"role":"user","content":"weather in SF?"},
+			{"role":"assistant","content":null,"tool_calls":[
+				{"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}
+			]},
+			{"role":"tool","tool_call_id":"call_abc","content":"72F sunny"}
+		]
+	}`)
+	var rr router.Request
+	if err := json.Unmarshal(body, &rr); err != nil {
+		t.Fatalf("decode router.Request: %v", err)
+	}
+
+	a := New("openai", "key", ts.URL)
+	if _, err := a.Send(context.Background(), "gpt-4", rr); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	msgs, ok := receivedPayload["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages should be an array, got %T", receivedPayload["messages"])
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// Assistant message must keep tool_calls intact.
+	assistant, ok := msgs[1].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1] type: %T", msgs[1])
+	}
+	if assistant["role"] != "assistant" {
+		t.Errorf("assistant.role = %v", assistant["role"])
+	}
+	toolCalls, ok := assistant["tool_calls"].([]any)
+	if !ok || len(toolCalls) == 0 {
+		t.Fatalf("assistant message missing tool_calls; got %v", assistant)
+	}
+	tc0, _ := toolCalls[0].(map[string]any)
+	if tc0["id"] != "call_abc" {
+		t.Errorf("tool_calls[0].id = %v", tc0["id"])
+	}
+	fn, _ := tc0["function"].(map[string]any)
+	if fn["name"] != "get_weather" {
+		t.Errorf("tool_calls[0].function.name = %v", fn["name"])
+	}
+	if fn["arguments"] != `{"city":"SF"}` {
+		t.Errorf("tool_calls[0].function.arguments = %v", fn["arguments"])
+	}
+
+	// Tool reply must keep tool_call_id intact.
+	toolMsg, ok := msgs[2].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[2] type: %T", msgs[2])
+	}
+	if toolMsg["role"] != "tool" {
+		t.Errorf("tool.role = %v", toolMsg["role"])
+	}
+	if toolMsg["tool_call_id"] != "call_abc" {
+		t.Errorf("tool.tool_call_id = %v", toolMsg["tool_call_id"])
+	}
+	if toolMsg["content"] != "72F sunny" {
+		t.Errorf("tool.content = %v", toolMsg["content"])
+	}
+}
+
 // Keep providers import used.
 var _ = providers.StatusError{}
