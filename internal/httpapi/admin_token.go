@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jordanhubbard/tokenhub/internal/apikey"
 )
@@ -19,10 +20,10 @@ import (
 // persistence to the data directory. The token survives container restarts
 // and can be rotated at runtime via the admin API.
 type AdminTokenHolder struct {
-	mu          sync.RWMutex
-	token       string
-	hostAPIKey  string // plaintext of the auto-provisioned host-local API key
-	dbDSN       string // used to derive the data directory for persistence
+	mu         sync.RWMutex
+	token      string
+	hostAPIKey string // plaintext of the auto-provisioned host-local API key
+	dbDSN      string // used to derive the data directory for persistence
 }
 
 // NewAdminTokenHolder creates a holder and resolves the initial token using
@@ -168,12 +169,22 @@ func (h *AdminTokenHolder) ProvisionHostAPIKey(ctx context.Context, mgr *apikey.
 	if data, err := os.ReadFile(keyFile); err == nil {
 		plaintext := strings.TrimSpace(string(data))
 		if plaintext != "" {
-			h.mu.Lock()
-			h.hostAPIKey = plaintext
-			h.mu.Unlock()
-			h.persist(logger)
-			logger.Info("host API key loaded from disk")
-			return plaintext, nil
+			if _, err := mgr.Validate(ctx, plaintext); err == nil {
+				h.mu.Lock()
+				h.hostAPIKey = plaintext
+				h.mu.Unlock()
+				h.persist(logger)
+				logger.Info("host API key loaded from disk")
+				return plaintext, nil
+			}
+			backup := keyFile + ".invalid-" + time.Now().UTC().Format("20060102T150405Z")
+			if err := os.Rename(keyFile, backup); err != nil {
+				logger.Warn("host API key on disk is invalid and could not be backed up",
+					slog.String("error", err.Error()))
+			} else {
+				logger.Warn("host API key on disk is invalid; provisioning replacement",
+					slog.String("backup", backup))
+			}
 		}
 	}
 
