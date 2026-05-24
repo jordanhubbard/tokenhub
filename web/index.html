@@ -31,6 +31,7 @@
     .leaderboard table, .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .leaderboard th, .admin-table th { text-align: left; color: #8a8d9a; padding: 6px 8px; border-bottom: 1px solid #2a2d3a; }
     .leaderboard td, .admin-table td { padding: 6px 8px; border-bottom: 1px solid #1f2233; }
+    .admin-table .alias { color: #ffb74d; font-family: monospace; }
     .weight-slider { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
     .weight-slider label { min-width: 120px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .weight-slider input[type=range] { flex: 1; accent-color: #4caf50; }
@@ -56,9 +57,10 @@
     .admin-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2d3a; }
     .admin-form .field, .routing-form .field, .modal .field { display: flex; flex-direction: column; gap: 3px; }
     .admin-form .field label, .routing-form .field label, .modal .field label { font-size: 11px; color: #8a8d9a; }
-    .admin-form .field input, .admin-form .field select, .routing-form .field input, .routing-form .field select { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 5px 8px; border-radius: 4px; font-size: 12px; }
+    .admin-form .field input, .admin-form .field select, .routing-form .field input, .routing-form .field select, .routing-form .field textarea { background: #12141d; border: 1px solid #2a2d3a; color: #e0e0e0; padding: 5px 8px; border-radius: 4px; font-size: 12px; }
     .admin-form .field select, .routing-form .field select { min-width: 120px; }
     .admin-form .field input, .routing-form .field input { min-width: 100px; }
+    .routing-form .field textarea { min-width: 340px; min-height: 64px; font-family: monospace; resize: vertical; }
     .routing-form { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
     .toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 18px; border-radius: 6px; font-size: 13px; color: #fff; z-index: 1000; opacity: 0; transition: opacity 0.3s; }
     .toast.success { background: #1b5e20; }
@@ -94,6 +96,7 @@
     .live-feed .entry { padding: 3px 0; border-bottom: 1px solid #1a1d29; display: flex; gap: 8px; align-items: baseline; }
     .live-feed .ts { color: #555; min-width: 70px; }
     .live-feed .model { color: #64b5f6; }
+    .live-feed .alias { color: #ffb74d; }
     .live-feed .provider { color: #ce93d8; }
     .live-feed .latency { color: #ffc107; min-width: 60px; text-align: right; }
     .live-feed .cost { color: #4caf50; min-width: 70px; text-align: right; }
@@ -342,6 +345,22 @@
       </div>
     </div>
 
+    <div class="panel full-width">
+      <h2>Model Aliases <span style="font-size:11px;color:#555;text-transform:none;letter-spacing:0">Wildcard "*" controls dynamic model substitution</span></h2>
+      <div class="routing-form">
+        <div class="field"><label>Alias</label><input type="text" id="alias-name" value="*" style="width:120px"></div>
+        <div class="field"><label>Sticky By</label><select id="alias-sticky"><option value="request">request</option><option value="api_key">api_key</option><option value="round_robin">round_robin</option></select></div>
+        <div class="field"><label>Enabled</label><select id="alias-enabled"><option value="true">yes</option><option value="false">no</option></select></div>
+        <div class="field"><label>Variants JSON</label><textarea id="alias-variants" spellcheck="false">[{"model_id":"deepseek-v4-flash","weight":1},{"model_id":"claude-opus-4-7","weight":1},{"model_id":"gpt-5.5","weight":1}]</textarea></div>
+        <button class="btn primary" onclick="saveAlias()">Save Alias</button>
+        <button class="btn" onclick="clearAliasForm()">Reset</button>
+      </div>
+      <div class="table-wrap" style="margin-top:12px">
+        <table class="admin-table"><thead><tr><th>Alias</th><th>Sticky By</th><th>Enabled</th><th>Variants</th><th>Updated</th><th>Actions</th></tr></thead>
+        <tbody id="aliases-body"></tbody></table>
+      </div>
+    </div>
+
     <div class="panel">
       <h2>Health Status</h2>
       <div class="table-wrap">
@@ -499,7 +518,7 @@
     <div class="panel full-width">
       <h2>Request Log (Historical)</h2>
       <div class="table-wrap">
-        <table class="admin-table"><thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Status</th><th>Request ID</th></tr></thead>
+        <table class="admin-table"><thead><tr><th>Time</th><th>Alias</th><th>Model</th><th>Provider</th><th>Mode</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Status</th><th>Request ID</th></tr></thead>
         <tbody id="request-log-body"></tbody></table>
       </div>
       <div class="pagination">
@@ -902,6 +921,16 @@ function modeClass(m) {
   return known.includes(m) ? 'mode-' + m : 'mode-other';
 }
 
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
 function appendFeedEntry(d, isErr) {
   const feed = document.getElementById('live-feed');
   const ts = new Date(d.timestamp || Date.now()).toLocaleTimeString();
@@ -911,10 +940,11 @@ function appendFeedEntry(d, isErr) {
   const cls = isErr ? 'entry error' : 'entry';
   const modeTag = d.mode ? `<span class="mode-badge ${modeClass(d.mode)} mode-tag">${d.mode}</span>` : '';
   const keyTag = d.api_key_name ? `<span class="api-key">${d.api_key_name}</span>` : '';
+  const aliasTag = d.alias_from ? `<span class="alias">${escapeHTML(d.alias_from)} -&gt;</span>` : '';
   const detail = isErr
     ? `<span class="err">${d.error_class || 'error'}: ${(d.error_msg||'').slice(0,60)}</span>`
     : `<span class="reason">${d.reason || ''}</span>`;
-  const html = `<div class="${cls}"><span class="ts">${ts}</span><span class="model">${d.model_id||'-'}</span><span class="provider">${d.provider_id||'-'}</span>${modeTag}${keyTag}<span class="latency">${lat}</span><span class="cost">${cost}</span>${tok ? `<span class="tokens">${tok}</span>` : ''}${detail}</div>`;
+  const html = `<div class="${cls}"><span class="ts">${ts}</span>${aliasTag}<span class="model">${escapeHTML(d.model_id||'-')}</span><span class="provider">${escapeHTML(d.provider_id||'-')}</span>${modeTag}${keyTag}<span class="latency">${lat}</span><span class="cost">${cost}</span>${tok ? `<span class="tokens">${tok}</span>` : ''}${detail}</div>`;
   feed.insertAdjacentHTML('afterbegin', html);
   feedEntries++;
   if (feedEntries > 200) feed.lastElementChild?.remove();
@@ -1551,6 +1581,84 @@ function saveRoutingConfig() {
   })}).then(r => { if (!r.ok) throw 0; showToast('Saved','success'); }).catch(() => showToast('Failed','error'));
 }
 
+let aliasesCache = [];
+
+function formatAliasVariants(variants) {
+  if (!Array.isArray(variants) || variants.length === 0) return '-';
+  return variants.map(v => `${escapeHTML(v.model_id || '-')}:${escapeHTML(v.weight ?? 1)}`).join(', ');
+}
+
+function fetchAliases() {
+  fetch('/admin/v1/aliases').then(r=>r.json()).then(data => {
+    aliasesCache = data.items || [];
+    const tbody = document.getElementById('aliases-body');
+    tbody.innerHTML = aliasesCache.length === 0
+      ? '<tr><td colspan="6" style="color:#8a8d9a;text-align:center">No aliases configured</td></tr>'
+      : aliasesCache.map((alias, idx) => {
+        const sticky = alias.sticky_by || 'request';
+        const enabled = !!alias.enabled;
+        const updated = alias.updated_at ? new Date(alias.updated_at).toLocaleString() : '-';
+        return `<tr><td style="font-family:monospace">${escapeHTML(alias.name)}</td><td>${escapeHTML(sticky)}</td><td style="color:${enabled ? '#4caf50' : '#f44336'}">${enabled ? 'yes' : 'no'}</td><td>${formatAliasVariants(alias.variants)}</td><td>${updated}</td><td><button class="btn sm" onclick="editAlias(${idx})">Edit</button> <button class="btn danger sm" onclick="deleteAlias(${idx})">Delete</button></td></tr>`;
+      }).join('');
+  }).catch(() => {});
+}
+
+function clearAliasForm() {
+  document.getElementById('alias-name').value = '*';
+  document.getElementById('alias-sticky').value = 'request';
+  document.getElementById('alias-enabled').value = 'true';
+  document.getElementById('alias-variants').value = '[{"model_id":"deepseek-v4-flash","weight":1},{"model_id":"claude-opus-4-7","weight":1},{"model_id":"gpt-5.5","weight":1}]';
+}
+
+function editAlias(idx) {
+  const alias = aliasesCache[idx];
+  if (!alias) return;
+  document.getElementById('alias-name').value = alias.name || '*';
+  document.getElementById('alias-sticky').value = alias.sticky_by || 'request';
+  document.getElementById('alias-enabled').value = alias.enabled ? 'true' : 'false';
+  document.getElementById('alias-variants').value = JSON.stringify(alias.variants || [], null, 2);
+}
+
+function parseAliasVariants() {
+  const raw = document.getElementById('alias-variants').value.trim();
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error('variants must be a JSON array');
+  return parsed.map(v => ({
+    model_id: String(v.model_id || '').trim(),
+    weight: Number(v.weight || 1)
+  }));
+}
+
+function saveAlias() {
+  const name = document.getElementById('alias-name').value.trim();
+  if (!name) { showToast('Alias name required', 'error'); return; }
+  let variants;
+  try {
+    variants = parseAliasVariants();
+  } catch (err) {
+    showToast(err.message || 'Invalid variants JSON', 'error');
+    return;
+  }
+  fetch('/admin/v1/aliases/' + encodeURIComponent(name), {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      variants,
+      enabled: document.getElementById('alias-enabled').value === 'true',
+      sticky_by: document.getElementById('alias-sticky').value
+    })
+  }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error || 'Failed'); }); showToast('Alias saved','success'); fetchAliases(); })
+    .catch(err => showToast(err.message || 'Failed', 'error'));
+}
+
+function deleteAlias(idx) {
+  const alias = aliasesCache[idx];
+  if (!alias || !confirm(`Delete alias ${alias.name}?`)) return;
+  fetch('/admin/v1/aliases/' + encodeURIComponent(alias.name), { method:'DELETE' })
+    .then(r => { if (!r.ok) throw 0; showToast('Alias deleted','success'); fetchAliases(); })
+    .catch(() => showToast('Failed','error'));
+}
+
 function fetchHealthStatus() {
   fetch('/admin/v1/health').then(r=>r.json()).then(data => {
     const tbody = document.getElementById('health-body');
@@ -1587,13 +1695,13 @@ function fetchRequestLogs() {
     const logs = data.logs || [];
     const tbody = document.getElementById('request-log-body');
     tbody.innerHTML = logs.length === 0 && requestLogOffset === 0
-      ? '<tr><td colspan="9" style="color:#8a8d9a;text-align:center">No logs</td></tr>'
+      ? '<tr><td colspan="10" style="color:#8a8d9a;text-align:center">No logs</td></tr>'
       : logs.map(e => {
         const latCls = e.latency_ms < 1000 ? 'color:#4caf50' : e.latency_ms <= 5000 ? 'color:#ffc107' : 'color:#f44336';
         const stCls = e.status_code === 200 ? 'color:#4caf50' : 'color:#f44336';
         const tok = e.total_tokens > 0 ? e.total_tokens.toLocaleString() : '-';
         const modeBadge = e.mode ? `<span class="mode-badge ${modeClass(e.mode)}">${e.mode}</span>` : '-';
-        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.model_id||'-'}</td><td>${e.provider_id||'-'}</td><td>${modeBadge}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${e.request_id||'-'}</td></tr>`;
+        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td class="alias">${escapeHTML(e.alias_from||'-')}</td><td>${escapeHTML(e.model_id||'-')}</td><td>${escapeHTML(e.provider_id||'-')}</td><td>${modeBadge}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${escapeHTML(e.request_id||'-')}</td></tr>`;
       }).join('');
     document.getElementById('req-log-page-info').textContent = `Page ${Math.floor(requestLogOffset/50)+1}`;
     document.getElementById('req-log-prev').disabled = requestLogOffset === 0;
@@ -1714,12 +1822,13 @@ function initDashboard() {
   seedStatsFromServer();
   connectSSE();
   updateLeaderboard(); fetchAuditLog(); fetchVaultStatus(); fetchProviders();
-  fetchModels(); fetchRoutingConfig(); fetchHealthStatus(); fetchRequestLogs();
+  fetchModels(); fetchRoutingConfig(); fetchAliases(); fetchHealthStatus(); fetchRequestLogs();
   fetchAPIKeys(); fetchWorkflows(); fetchTrend('cost');
   setInterval(fetchRequestLogs, 15000);
   setInterval(fetchAuditLog, 10000);
   setInterval(fetchProviders, 30000);
   setInterval(fetchModels, 30000);
+  setInterval(fetchAliases, 15000);
   setInterval(fetchHealthStatus, 10000);
   setInterval(fetchVaultStatus, 15000);
   setInterval(fetchAPIKeys, 15000);

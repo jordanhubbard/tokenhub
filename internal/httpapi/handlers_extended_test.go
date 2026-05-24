@@ -3,11 +3,13 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jordanhubbard/tokenhub/internal/router"
 )
@@ -387,7 +389,7 @@ func TestPlanInvalidOutputSchema(t *testing.T) {
 		},
 		Orchestration: router.OrchestrationDirective{
 			Mode:         "planning",
-			OutputSchema:  "not json",
+			OutputSchema: "not json",
 		},
 	})
 	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
@@ -418,7 +420,7 @@ func TestPlanWithOutputSchemaValidated(t *testing.T) {
 		},
 		Orchestration: router.OrchestrationDirective{
 			Mode:         "planning",
-			OutputSchema:  `{"type":"object","required":["name"]}`,
+			OutputSchema: `{"type":"object","required":["name"]}`,
 		},
 	})
 	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
@@ -456,7 +458,7 @@ func TestPlanWithOutputSchemaMismatch(t *testing.T) {
 		},
 		Orchestration: router.OrchestrationDirective{
 			Mode:         "planning",
-			OutputSchema:  `{"type":"object","required":["name","age"]}`,
+			OutputSchema: `{"type":"object","required":["name","age"]}`,
 		},
 	})
 	resp, err := authPost(ts.URL+"/v1/plan", "application/json", bytes.NewReader(body))
@@ -1271,8 +1273,8 @@ func TestAPIKeyCreateWithBudget(t *testing.T) {
 	defer ts.Close()
 
 	body, _ := json.Marshal(map[string]any{
-		"name":              "budget-key",
-		"scopes":            `["chat"]`,
+		"name":               "budget-key",
+		"scopes":             `["chat"]`,
 		"monthly_budget_usd": 50.0,
 	})
 	resp, err := http.Post(ts.URL+"/admin/v1/apikeys", "application/json", bytes.NewReader(body))
@@ -1552,6 +1554,32 @@ func TestAdminAuthMiddleware(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for correct token, got %d", resp.StatusCode)
+	}
+}
+
+func TestAdminSessionTicketClaimSetsCookieAndRedirects(t *testing.T) {
+	holder, _ := NewAdminTokenHolder("secret-token", ":memory:", slog.Default())
+	expires := time.Now().Add(time.Minute).Unix()
+	signature := adminSessionTicketSignature("secret-token", expires)
+	handler := AdminSessionTicketClaimHandler(Dependencies{AdminToken: holder})
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/admin/v1/session/claim?expires="+fmt.Sprint(expires)+"&signature="+signature+"&redirect=/docs/",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rec.Code)
+	}
+	if rec.Header().Get("Location") != "/docs/" {
+		t.Fatalf("unexpected redirect location: %s", rec.Header().Get("Location"))
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "th_admin_session" || cookies[0].Value != "secret-token" {
+		t.Fatalf("expected admin session cookie, got %+v", cookies)
 	}
 }
 

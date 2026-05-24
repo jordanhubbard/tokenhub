@@ -1,6 +1,7 @@
 package events
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -120,11 +121,15 @@ func TestEventJSON(t *testing.T) {
 		Timestamp:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		ModelID:    "gpt-4",
 		ProviderID: "openai",
+		AliasFrom:  "*",
 		LatencyMs:  42.5,
 	}
 	b := e.JSON()
 	if len(b) == 0 {
 		t.Fatal("expected non-empty JSON")
+	}
+	if !bytes.Contains(b, []byte(`"alias_from":"*"`)) {
+		t.Fatalf("expected alias_from in JSON, got %s", string(b))
 	}
 }
 

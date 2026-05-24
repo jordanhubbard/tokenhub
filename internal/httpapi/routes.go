@@ -203,6 +203,8 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		})
 	})
 
+	r.Get("/admin/v1/session/claim", AdminSessionTicketClaimHandler(d))
+
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Use(bodySizeLimit(maxRequestBodySize))
 		// Admin rate limiter runs before auth so unauthenticated floods are

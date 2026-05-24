@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +28,8 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/store"
 	"github.com/jordanhubbard/tokenhub/internal/vault"
 )
+
+const adminSessionTicketPurpose = "tokenhub-admin-session-v1"
 
 // registerProviderAdapter constructs and registers a runtime adapter for the
 // given provider record. It resolves the API key from the vault when the
@@ -230,6 +235,53 @@ func AdminSessionHandler(d Dependencies) http.HandlerFunc {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
+func adminSessionTicketSignature(secret string, expires int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = fmt.Fprintf(mac, "%s:%d", adminSessionTicketPurpose, expires)
+	return fmt.Sprintf("%x", mac.Sum(nil))
+}
+
+// AdminSessionTicketClaimHandler exchanges a short-lived HMAC ticket for the
+// normal admin session cookie, then redirects to the TokenHub UI. It lets a
+// trusted control-plane UI hand off to TokenHub without putting the admin token
+// in the browser URL.
+func AdminSessionTicketClaimHandler(d Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.AdminToken == nil {
+			http.Error(w, "admin token not configured", http.StatusServiceUnavailable)
+			return
+		}
+		expires, err := strconv.ParseInt(r.URL.Query().Get("expires"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid session ticket", http.StatusUnauthorized)
+			return
+		}
+		now := time.Now().Unix()
+		if expires < now || expires > now+300 {
+			http.Error(w, "expired session ticket", http.StatusUnauthorized)
+			return
+		}
+		expected := adminSessionTicketSignature(d.AdminToken.Get(), expires)
+		provided := strings.TrimSpace(r.URL.Query().Get("signature"))
+		if !hmac.Equal([]byte(provided), []byte(expected)) {
+			http.Error(w, "invalid session ticket", http.StatusUnauthorized)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "th_admin_session",
+			Value:    d.AdminToken.Get(),
+			Path:     "/admin",
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
+		redirect := r.URL.Query().Get("redirect")
+		if !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
+			redirect = "/"
+		}
+		http.Redirect(w, r, redirect, http.StatusSeeOther)
 	}
 }
 

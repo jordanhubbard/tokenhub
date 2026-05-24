@@ -15,7 +15,7 @@ const (
 	EventEscalation         EventType = "escalation"
 	EventStreamStarted      EventType = "stream_started"
 	EventHealthChange       EventType = "health_change"
-	EventWorkflowStarted   EventType = "workflow_started"
+	EventWorkflowStarted    EventType = "workflow_started"
 	EventActivityCompleted  EventType = "activity_completed"
 	EventWorkflowCompleted  EventType = "workflow_completed"
 	EventWorkflowFailed     EventType = "workflow_failed"
@@ -31,6 +31,7 @@ type Event struct {
 	// Routing fields (populated for route events).
 	ModelID      string  `json:"model_id,omitempty"`
 	ProviderID   string  `json:"provider_id,omitempty"`
+	AliasFrom    string  `json:"alias_from,omitempty"`
 	LatencyMs    float64 `json:"latency_ms,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
 	InputTokens  int     `json:"input_tokens,omitempty"`
