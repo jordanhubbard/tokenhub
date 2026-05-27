@@ -191,12 +191,14 @@ $release_notes
 ### Downloads
 
 Pre-built binaries are available for multiple platforms:
-- **macOS (Intel x86-64)**: \`tokenhub-v${version}-darwin-amd64\`, \`tokenhubctl-v${version}-darwin-amd64\`
-- **macOS (Apple Silicon ARM64)**: \`tokenhub-v${version}-darwin-arm64\`, \`tokenhubctl-v${version}-darwin-arm64\`
-- **Linux (x86-64)**: \`tokenhub-v${version}-linux-amd64\`, \`tokenhubctl-v${version}-linux-amd64\`
-- **Linux (ARM64)**: \`tokenhub-v${version}-linux-arm64\`, \`tokenhubctl-v${version}-linux-arm64\`
+- **macOS (Intel x86-64)**: \`tokenhub-v${version}-darwin-amd64.tar.gz\`
+- **macOS (Apple Silicon ARM64)**: \`tokenhub-v${version}-darwin-arm64.tar.gz\`
+- **Linux (x86-64)**: \`tokenhub-v${version}-linux-amd64.tar.gz\`
+- **Linux (ARM64)**: \`tokenhub-v${version}-linux-arm64.tar.gz\`
 
-Binaries are automatically built and uploaded by GitHub Actions. Check back in a few minutes if they're not yet available.
+Each archive contains \`tokenhub\` and \`tokenhubctl\`. Binaries are automatically
+built and uploaded by GitHub Actions. Check back in a few minutes if they're not
+yet available.
 
 ### Installation
 

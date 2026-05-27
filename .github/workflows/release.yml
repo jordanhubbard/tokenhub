@@ -27,14 +27,15 @@ jobs:
             arch: arm64
             goos: linux
             goarch: arm64
-          # macOS Intel
-          - runner: macos-13
+          # macOS Intel. TokenHub builds with CGO disabled, so Linux-hosted
+          # cross-compilation avoids macOS runner queue delays.
+          - runner: ubuntu-latest
             os: darwin
             arch: amd64
             goos: darwin
             goarch: amd64
           # macOS Apple Silicon
-          - runner: macos-14
+          - runner: ubuntu-latest
             os: darwin
             arch: arm64
             goos: darwin
@@ -61,9 +62,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          mkdir -p bin
+          mkdir -p "dist/${{ matrix.os }}-${{ matrix.arch }}"
           go build -trimpath -ldflags="-s -w -X main.version=${{ steps.version.outputs.version_clean }}" \
-            -o "bin/tokenhub-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}" \
+            -o "dist/${{ matrix.os }}-${{ matrix.arch }}/tokenhub" \
             ./cmd/tokenhub
 
       - name: Build tokenhubctl
@@ -72,24 +73,24 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          mkdir -p bin
+          mkdir -p "dist/${{ matrix.os }}-${{ matrix.arch }}"
           go build -trimpath -ldflags="-s -w -X main.version=${{ steps.version.outputs.version_clean }}" \
-            -o "bin/tokenhubctl-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}" \
+            -o "dist/${{ matrix.os }}-${{ matrix.arch }}/tokenhubctl" \
             ./cmd/tokenhubctl
 
       - name: Create tarball
         run: |
-          cd bin
+          cd "dist/${{ matrix.os }}-${{ matrix.arch }}"
           tar czf "tokenhub-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" \
-            "tokenhub-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}" \
-            "tokenhubctl-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}"
+            tokenhub \
+            tokenhubctl
           ls -lh *.tar.gz
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.os }}-${{ matrix.arch }}
-          path: bin/tokenhub-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          path: dist/${{ matrix.os }}-${{ matrix.arch }}/tokenhub-${{ steps.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
           retention-days: 7
 
   create-release-assets:

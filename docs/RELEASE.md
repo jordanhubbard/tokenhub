@@ -97,12 +97,13 @@ TokenHub binaries are built for all of these platforms:
 
 | Platform | Binary |
 |----------|--------|
-| macOS (Intel x86-64) | `tokenhub-v*.darwin-amd64` |
-| macOS (Apple Silicon ARM64) | `tokenhub-v*.darwin-arm64` |
-| Linux (x86-64) | `tokenhub-v*.linux-amd64` |
-| Linux (ARM64) | `tokenhub-v*.linux-arm64` |
+| macOS (Intel x86-64) | `tokenhub-v*-darwin-amd64.tar.gz` |
+| macOS (Apple Silicon ARM64) | `tokenhub-v*-darwin-arm64.tar.gz` |
+| Linux (x86-64) | `tokenhub-v*-linux-amd64.tar.gz` |
+| Linux (ARM64) | `tokenhub-v*-linux-arm64.tar.gz` |
 
-Each release includes both `tokenhub` and `tokenhubctl` binaries for every platform.
+Each release archive includes unversioned `tokenhub` and `tokenhubctl` binaries
+for every platform.
 
 ## Installation
 
