@@ -8,6 +8,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -115,6 +116,8 @@ type Engine struct {
 	mu       sync.RWMutex
 	models   map[string]Model
 	adapters map[string]Sender // provider_id -> adapter
+
+	budgetExhaustedProviders map[string]string
 }
 
 func NewEngine(cfg EngineConfig) *Engine {
@@ -122,9 +125,10 @@ func NewEngine(cfg EngineConfig) *Engine {
 		cfg.MaxRetries = 2
 	}
 	return &Engine{
-		cfg:      cfg,
-		models:   make(map[string]Model),
-		adapters: make(map[string]Sender),
+		cfg:                      cfg,
+		models:                   make(map[string]Model),
+		adapters:                 make(map[string]Sender),
+		budgetExhaustedProviders: make(map[string]string),
 	}
 }
 
@@ -310,12 +314,22 @@ func (e *Engine) UnregisterAdapter(id string) {
 func (e *Engine) RegisterModel(m Model) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if m.Enabled {
+		delete(e.budgetExhaustedProviders, m.ProviderID)
+	}
 	e.models[m.ID] = m
 }
 
 func (e *Engine) disableProviderModels(providerID string) int {
+	return e.disableProviderModelsForBudget(providerID, nil)
+}
+
+func (e *Engine) disableProviderModelsForBudget(providerID string, err error) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if err != nil {
+		e.budgetExhaustedProviders[providerID] = err.Error()
+	}
 	disabled := 0
 	for id, model := range e.models {
 		if model.ProviderID != providerID || !model.Enabled {
@@ -326,6 +340,34 @@ func (e *Engine) disableProviderModels(providerID string) int {
 		disabled++
 	}
 	return disabled
+}
+
+func (e *Engine) providerBudgetExhaustedError() error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.providerBudgetExhaustedErrorLocked()
+}
+
+func (e *Engine) providerBudgetExhaustedErrorLocked() error {
+	if len(e.budgetExhaustedProviders) == 0 {
+		return nil
+	}
+	providers := make([]string, 0, len(e.budgetExhaustedProviders))
+	for providerID := range e.budgetExhaustedProviders {
+		providers = append(providers, providerID)
+	}
+	sort.Strings(providers)
+	if len(providers) == 1 {
+		msg := e.budgetExhaustedProviders[providers[0]]
+		if msg == "" {
+			msg = fmt.Sprintf("provider budget exhausted: %s", providers[0])
+		}
+		return &ClassifiedError{Err: fmt.Errorf("%s", msg), Class: ErrBudgetExceeded}
+	}
+	return &ClassifiedError{
+		Err:   fmt.Errorf("provider budgets exhausted: %s", strings.Join(providers, ", ")),
+		Class: ErrBudgetExceeded,
+	}
 }
 
 // HasModel returns true if a model with the given ID is registered (enabled or not).

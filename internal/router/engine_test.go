@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -62,6 +63,37 @@ func (m *mockSender) setError(model string, class ErrorClass) {
 		err: &ClassifiedError{Err: fmt.Errorf("%s error", class), Class: class},
 	}
 }
+
+type mockStreamSender struct {
+	*mockSender
+}
+
+func newMockStreamSender(id string) *mockStreamSender {
+	return &mockStreamSender{mockSender: newMockSender(id)}
+}
+
+func (m *mockStreamSender) SendStream(ctx context.Context, model string, req Request) (io.ReadCloser, error) {
+	m.mu.Lock()
+	m.calls = append(m.calls, mockCall{Model: model, Req: req})
+	m.mu.Unlock()
+	if r, ok := m.responses[model]; ok {
+		if r.err != nil {
+			return nil, r.err
+		}
+		data := string(r.data)
+		if data == "" {
+			data = "data: [DONE]\n\n"
+		}
+		return io.NopCloser(strings.NewReader(data)), nil
+	}
+	return io.NopCloser(strings.NewReader("data: mock response\n\n")), nil
+}
+
+type unavailableHealth struct{}
+
+func (unavailableHealth) IsAvailable(string) bool       { return false }
+func (unavailableHealth) RecordSuccess(string, float64) {}
+func (unavailableHealth) RecordError(string, string)    {}
 
 type contextAwareSender struct {
 	id string
@@ -388,6 +420,131 @@ func TestBudgetErrorDisablesProviderModels(t *testing.T) {
 		if model.Enabled {
 			t.Fatalf("model %s still enabled after provider budget failure", id)
 		}
+	}
+}
+
+func TestBudgetErrorPersistsWhenOnlyHealthExcludedModelsRemain(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockSender("openai")
+	eng.RegisterAdapter(openai)
+	eng.RegisterModel(Model{ID: "gpt-4", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-4", ErrBudgetExceeded)
+
+	_, _, err := eng.RouteAndSend(context.Background(), makeRequest("hi"), Policy{})
+	if err == nil {
+		t.Fatal("expected initial budget error")
+	}
+	var classified *ClassifiedError
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected initial ErrBudgetExceeded, got %v", err)
+	}
+
+	unhealthy := newMockSender("unhealthy")
+	eng.RegisterAdapter(unhealthy)
+	eng.RegisterModel(Model{ID: "slow", ProviderID: "unhealthy", Weight: 1, MaxContextTokens: 4096, Enabled: true})
+	eng.SetHealthChecker(unavailableHealth{})
+
+	_, _, err = eng.RouteAndSend(context.Background(), makeRequest("hi again"), Policy{})
+	if err == nil {
+		t.Fatal("expected persisted budget error")
+	}
+	classified = nil
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected persisted ErrBudgetExceeded, got %v", err)
+	}
+	if got := len(unhealthy.calls); got != 0 {
+		t.Fatalf("health-excluded provider should not be probed after persisted budget failure, got %d calls", got)
+	}
+}
+
+func TestBudgetErrorReturnsBeforeFallbackProvider(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockSender("openai")
+	fallback := newMockSender("fallback")
+	eng.RegisterAdapter(openai)
+	eng.RegisterAdapter(fallback)
+	eng.RegisterModel(Model{ID: "gpt-4", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "other", ProviderID: "fallback", Weight: 9, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-4", ErrBudgetExceeded)
+	fallback.setError("other", ErrFatal)
+
+	_, _, err := eng.RouteAndSend(context.Background(), makeRequest("hi"), Policy{})
+	if err == nil {
+		t.Fatal("expected budget error")
+	}
+	var classified *ClassifiedError
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected ErrBudgetExceeded, got %v", err)
+	}
+	if got := len(fallback.calls); got != 0 {
+		t.Fatalf("fallback provider should not mask budget exhaustion, got %d calls", got)
+	}
+}
+
+func TestStreamBudgetErrorPersistsWhenOnlyHealthExcludedModelsRemain(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockStreamSender("openai")
+	eng.RegisterAdapter(openai)
+	eng.RegisterModel(Model{ID: "gpt-4", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-4", ErrBudgetExceeded)
+
+	_, body, err := eng.RouteAndStream(context.Background(), makeRequest("hi"), Policy{})
+	if body != nil {
+		_ = body.Close()
+	}
+	if err == nil {
+		t.Fatal("expected initial stream budget error")
+	}
+	var classified *ClassifiedError
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected initial stream ErrBudgetExceeded, got %v", err)
+	}
+
+	unhealthy := newMockStreamSender("unhealthy")
+	eng.RegisterAdapter(unhealthy)
+	eng.RegisterModel(Model{ID: "slow", ProviderID: "unhealthy", Weight: 1, MaxContextTokens: 4096, Enabled: true})
+	eng.SetHealthChecker(unavailableHealth{})
+
+	_, body, err = eng.RouteAndStream(context.Background(), makeRequest("hi again"), Policy{})
+	if body != nil {
+		_ = body.Close()
+	}
+	if err == nil {
+		t.Fatal("expected persisted stream budget error")
+	}
+	classified = nil
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected persisted stream ErrBudgetExceeded, got %v", err)
+	}
+	if got := len(unhealthy.calls); got != 0 {
+		t.Fatalf("health-excluded stream provider should not be probed after persisted budget failure, got %d calls", got)
+	}
+}
+
+func TestStreamBudgetErrorReturnsBeforeFallbackProvider(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockStreamSender("openai")
+	fallback := newMockStreamSender("fallback")
+	eng.RegisterAdapter(openai)
+	eng.RegisterAdapter(fallback)
+	eng.RegisterModel(Model{ID: "gpt-4", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "other", ProviderID: "fallback", Weight: 9, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-4", ErrBudgetExceeded)
+	fallback.setError("other", ErrFatal)
+
+	_, body, err := eng.RouteAndStream(context.Background(), makeRequest("hi"), Policy{})
+	if body != nil {
+		_ = body.Close()
+	}
+	if err == nil {
+		t.Fatal("expected stream budget error")
+	}
+	var classified *ClassifiedError
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected stream ErrBudgetExceeded, got %v", err)
+	}
+	if got := len(fallback.calls); got != 0 {
+		t.Fatalf("stream fallback provider should not mask budget exhaustion, got %d calls", got)
 	}
 }
 

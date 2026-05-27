@@ -33,7 +33,11 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		decision.AliasFrom = aliasFrom
 	}
 	if err != nil {
+		if budgetErr := e.providerBudgetExhaustedError(); budgetErr != nil {
+			return Decision{}, nil, budgetErr
+		}
 		budgetProviders := map[string]bool{}
+		failedProviders := map[string]bool{}
 		var budgetErr error
 		// SelectModel failed because eligibleModels returned empty. Attempt
 		// last-resort routing over all enabled models before surfacing the error.
@@ -66,6 +70,9 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 				if budgetProviders[m.ProviderID] {
 					continue
 				}
+				if failedProviders[m.ProviderID] {
+					continue
+				}
 				a := lrAdapters[m.ProviderID]
 				fs, ok := a.(StreamSender)
 				if !ok {
@@ -87,17 +94,19 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 				if e.health != nil {
 					e.health.RecordError(m.ProviderID, serr.Error())
 				}
+				failedProviders[m.ProviderID] = true
 				if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
 					if budgetErr == nil {
 						budgetErr = fc
 					}
 					budgetProviders[m.ProviderID] = true
-					disabled := e.disableProviderModels(m.ProviderID)
+					disabled := e.disableProviderModelsForBudget(m.ProviderID, fc)
 					slog.Warn("provider budget exhausted (stream last resort), disabling models",
 						slog.String("provider", m.ProviderID),
 						slog.String("model", m.ID),
 						slog.Int("disabled_models", disabled),
 					)
+					return Decision{}, nil, fc
 				}
 			}
 		}
@@ -136,12 +145,13 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	if classified := adapter.ClassifyError(err); classified.Class == ErrBudgetExceeded {
 		budgetErr = classified
 		budgetProviders[decision.ProviderID] = true
-		disabled := e.disableProviderModels(decision.ProviderID)
+		disabled := e.disableProviderModelsForBudget(decision.ProviderID, classified)
 		slog.Warn("provider budget exhausted (stream), disabling models",
 			slog.String("provider", decision.ProviderID),
 			slog.String("model", decision.ModelID),
 			slog.Int("disabled_models", disabled),
 		)
+		return Decision{}, nil, classified
 	}
 
 	// Try remaining eligible models (those returned by SelectModel).
@@ -178,13 +188,21 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 				budgetErr = fc
 			}
 			budgetProviders[m.ProviderID] = true
-			disabled := e.disableProviderModels(m.ProviderID)
+			disabled := e.disableProviderModelsForBudget(m.ProviderID, fc)
 			slog.Warn("provider budget exhausted (stream fallback), disabling models",
 				slog.String("provider", m.ProviderID),
 				slog.String("model", m.ID),
 				slog.Int("disabled_models", disabled),
 			)
+			return Decision{}, nil, fc
 		}
+	}
+
+	if budgetErr != nil {
+		return Decision{}, nil, budgetErr
+	}
+	if priorBudgetErr := e.providerBudgetExhaustedError(); priorBudgetErr != nil {
+		return Decision{}, nil, priorBudgetErr
 	}
 
 	// All eligible models failed. Last-resort pass: try any enabled model not
@@ -210,8 +228,12 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	}
 	e.mu.RUnlock()
 
+	failedProviders := map[string]bool{}
 	for _, m := range lastResort {
 		if budgetProviders[m.ProviderID] {
+			continue
+		}
+		if failedProviders[m.ProviderID] {
 			continue
 		}
 		a := lrAdapters[m.ProviderID]
@@ -239,17 +261,19 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		if e.health != nil {
 			e.health.RecordError(m.ProviderID, serr.Error())
 		}
+		failedProviders[m.ProviderID] = true
 		if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
 			if budgetErr == nil {
 				budgetErr = fc
 			}
 			budgetProviders[m.ProviderID] = true
-			disabled := e.disableProviderModels(m.ProviderID)
+			disabled := e.disableProviderModelsForBudget(m.ProviderID, fc)
 			slog.Warn("provider budget exhausted (stream last resort), disabling models",
 				slog.String("provider", m.ProviderID),
 				slog.String("model", m.ID),
 				slog.Int("disabled_models", disabled),
 			)
+			return Decision{}, nil, fc
 		}
 		slog.Warn("stream: last-resort provider also failed",
 			slog.String("provider", m.ProviderID),
