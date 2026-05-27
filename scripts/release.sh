@@ -69,6 +69,95 @@ calculate_next_version() {
     echo "$major.$minor.$patch"
 }
 
+# Generate changelog entry from git log
+generate_changelog_entry() {
+    local prev_version=$1
+    local new_version=$2
+    local date=$(date +%Y-%m-%d)
+
+    info "Generating changelog from v$prev_version to HEAD..." >&2
+
+    # Get commits since last version (handle first-release case)
+    local commits
+    if git rev-parse "v$prev_version" &>/dev/null; then
+        commits=$(git log "v$prev_version"..HEAD --pretty=format:"%h %s" --no-merges)
+    else
+        commits=$(git log --pretty=format:"%h %s" --no-merges)
+    fi
+
+    # Categorize commits
+    local added=""
+    local changed=""
+    local fixed=""
+
+    while IFS= read -r line; do
+        if [[ $line =~ ^[a-f0-9]+\ feat(\(.*\))?:\ (.*) ]]; then
+            added+="- ${BASH_REMATCH[2]}\n"
+        elif [[ $line =~ ^[a-f0-9]+\ fix(\(.*\))?:\ (.*) ]]; then
+            fixed+="- ${BASH_REMATCH[2]}\n"
+        elif [[ $line =~ ^[a-f0-9]+\ refactor(\(.*\))?:\ (.*) ]]; then
+            changed+="- ${BASH_REMATCH[2]}\n"
+        fi
+    done <<< "$commits"
+
+    # Build changelog entry
+    local entry="## [$new_version] - $date\n\n"
+
+    if [[ -n "$added" ]]; then
+        entry+="### Added\n$added\n"
+    fi
+
+    if [[ -n "$changed" ]]; then
+        entry+="### Changed\n$changed\n"
+    fi
+
+    if [[ -n "$fixed" ]]; then
+        entry+="### Fixed\n$fixed\n"
+    fi
+
+    echo -e "$entry"
+}
+
+# Update CHANGELOG.md
+update_changelog() {
+    local changelog_entry=$1
+    local changelog_file="CHANGELOG.md"
+
+    if [[ ! -f "$changelog_file" ]]; then
+        warn "CHANGELOG.md not found, skipping changelog update"
+        warn "Create CHANGELOG.md with '## [Unreleased]' section to enable changelog generation"
+        return
+    fi
+
+    info "Updating $changelog_file..."
+
+    # Create temp files
+    local temp_file=$(mktemp)
+    local entry_file=$(mktemp)
+
+    # Write the entry to a file (handles multi-line strings)
+    echo -e "$changelog_entry" > "$entry_file"
+
+    # Read changelog and insert new entry after ## [Unreleased]
+    awk '
+        /^## \[Unreleased\]/ {
+            print $0
+            print ""
+            while ((getline line < "'"$entry_file"'") > 0) {
+                print line
+            }
+            close("'"$entry_file"'")
+            next
+        }
+        { print }
+    ' "$changelog_file" > "$temp_file"
+
+    mv "$temp_file" "$changelog_file"
+    rm -f "$entry_file"
+
+    success "CHANGELOG.md updated"
+}
+
 create_release() {
     local version=$1
     local prev_tag=$2
@@ -99,6 +188,25 @@ create_release() {
 
 $release_notes
 
+### Downloads
+
+Pre-built binaries are available for multiple platforms:
+- **macOS (Intel x86-64)**: \`tokenhub-v${version}-darwin-amd64\`, \`tokenhubctl-v${version}-darwin-amd64\`
+- **macOS (Apple Silicon ARM64)**: \`tokenhub-v${version}-darwin-arm64\`, \`tokenhubctl-v${version}-darwin-arm64\`
+- **Linux (x86-64)**: \`tokenhub-v${version}-linux-amd64\`, \`tokenhubctl-v${version}-linux-amd64\`
+- **Linux (ARM64)**: \`tokenhub-v${version}-linux-arm64\`, \`tokenhubctl-v${version}-linux-arm64\`
+
+Binaries are automatically built and uploaded by GitHub Actions. Check back in a few minutes if they're not yet available.
+
+### Installation
+
+Extract the binary and make it executable:
+\`\`\`bash
+tar xzf tokenhub-v${version}-<platform>.tar.gz
+sudo mv tokenhub /usr/local/bin/
+sudo mv tokenhubctl /usr/local/bin/
+\`\`\`
+
 ### Links
 - [Full Changelog](https://github.com/jordanhubbard/tokenhub/compare/$compare_base...v$version)
 
@@ -107,12 +215,22 @@ $release_notes
 **Full Changelog**: https://github.com/jordanhubbard/tokenhub/compare/$compare_base...v$version
 EOF
 
+    # Commit changelog if CHANGELOG.md exists
+    if [[ -f CHANGELOG.md ]]; then
+        info "Committing CHANGELOG.md..."
+        git add CHANGELOG.md
+        if ! git diff --cached --quiet; then
+            git commit -m "docs: Update CHANGELOG for v$version release"
+        fi
+    fi
+
     # Create annotated git tag
     info "Creating git tag v$version..."
     git tag -a "v$version" -m "Release v$version"
 
-    # Push tag
-    info "Pushing tag to origin..."
+    # Push commits and tag
+    info "Pushing changes to origin..."
+    git push origin main
     git push origin "v$version"
 
     # Create GitHub release
@@ -183,6 +301,18 @@ main() {
         fi
     fi
 
+    # Generate and apply changelog if CHANGELOG.md exists
+    if [[ -f CHANGELOG.md ]]; then
+        echo ""
+        CHANGELOG_ENTRY=$(generate_changelog_entry "$CURRENT_VERSION" "$NEXT_VERSION")
+        info "Generated changelog entry:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo -e "$CHANGELOG_ENTRY"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        update_changelog "$CHANGELOG_ENTRY"
+        echo ""
+    fi
+
     # Run tests
     info "Running tests..."
     local test_output_file=$(mktemp)
@@ -220,6 +350,10 @@ main() {
     echo ""
     echo "Release: https://github.com/jordanhubbard/tokenhub/releases/tag/v$NEXT_VERSION"
     echo "Docker:  tokenhub:v$NEXT_VERSION"
+    echo ""
+    echo "Next: GitHub Actions will build and upload multi-platform binaries."
+    echo "      Check release assets in a few minutes:"
+    echo "      https://github.com/jordanhubbard/tokenhub/releases/tag/v$NEXT_VERSION"
     echo ""
 }
 
