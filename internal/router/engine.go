@@ -251,14 +251,6 @@ func (e *Engine) availableModelIDLocked(preferredID string) (string, bool) {
 	return matches[0], true
 }
 
-func (e *Engine) wildcardRoutingPoolLocked(selectedID string) map[string]bool {
-	pool := make(map[string]bool)
-	for _, id := range e.wildcardRoutingOrderLocked(selectedID) {
-		pool[id] = true
-	}
-	return pool
-}
-
 func (e *Engine) wildcardRoutingOrderLocked(selectedID string) []string {
 	var order []string
 	seen := make(map[string]bool)
@@ -328,10 +320,6 @@ func (e *Engine) RegisterModel(m Model) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.models[m.ID] = m
-}
-
-func (e *Engine) disableProviderModels(providerID string) int {
-	return e.disableProviderModelsForBudget(providerID, nil)
 }
 
 func (e *Engine) disableModelForBudget(modelID string, err error) bool {
