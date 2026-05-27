@@ -56,6 +56,8 @@ type Config struct {
 
 	// External credentials file (~/.netrc analogue for provider tokens).
 	CredentialsFile string // TOKENHUB_CREDENTIALS_FILE, default ~/.tokenhub/credentials
+	// Optional JSON/YAML file that seeds the model="*" fail-down ladder.
+	WildcardModelsFile string // TOKENHUB_WILDCARD_MODELS_FILE, default empty
 
 	// Pricing refresh from LiteLLM pricing JSON.
 	PricingRefreshEnabled      bool // TOKENHUB_PRICING_REFRESH_ENABLED, default true
@@ -67,14 +69,14 @@ type Config struct {
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		ListenAddr: getEnv("TOKENHUB_LISTEN_ADDR", ":8090"),
-		LogLevel:   getEnv("TOKENHUB_LOG_LEVEL", "info"),
-		DBDSN:      getEnv("TOKENHUB_DB_DSN", "file:/data/tokenhub.sqlite"),
+		ListenAddr:    getEnv("TOKENHUB_LISTEN_ADDR", ":8090"),
+		LogLevel:      getEnv("TOKENHUB_LOG_LEVEL", "info"),
+		DBDSN:         getEnv("TOKENHUB_DB_DSN", "file:/data/tokenhub.sqlite"),
 		VaultEnabled:  getEnvBool("TOKENHUB_VAULT_ENABLED", true),
 		VaultPassword: getEnv("TOKENHUB_VAULT_PASSWORD", ""),
 
-		DefaultMode: getEnv("TOKENHUB_DEFAULT_MODE", "normal"),
-		DefaultMaxBudget: getEnvFloat("TOKENHUB_DEFAULT_MAX_BUDGET_USD", 0.05),
+		DefaultMode:         getEnv("TOKENHUB_DEFAULT_MODE", "normal"),
+		DefaultMaxBudget:    getEnvFloat("TOKENHUB_DEFAULT_MAX_BUDGET_USD", 0.05),
 		DefaultMaxLatencyMs: getEnvInt("TOKENHUB_DEFAULT_MAX_LATENCY_MS", 120000),
 		ExplorationTemp:     getEnvFloat("TOKENHUB_EXPLORATION_TEMP", 0.3),
 
@@ -82,10 +84,10 @@ func LoadConfig() (Config, error) {
 		HedgeAfterMs:        getEnvInt("TOKENHUB_HEDGE_AFTER_MS", 0),
 		MaxHedgedProviders:  getEnvInt("TOKENHUB_MAX_HEDGED_PROVIDERS", 3),
 
-		AdminToken:     getEnv("TOKENHUB_ADMIN_TOKEN", ""),
-		CORSOrigins:    getEnvStringSlice("TOKENHUB_CORS_ORIGINS", nil),
-		RateLimitRPS:   getEnvInt("TOKENHUB_RATE_LIMIT_RPS", 60),
-		RateLimitBurst: getEnvInt("TOKENHUB_RATE_LIMIT_BURST", 120),
+		AdminToken:          getEnv("TOKENHUB_ADMIN_TOKEN", ""),
+		CORSOrigins:         getEnvStringSlice("TOKENHUB_CORS_ORIGINS", nil),
+		RateLimitRPS:        getEnvInt("TOKENHUB_RATE_LIMIT_RPS", 60),
+		RateLimitBurst:      getEnvInt("TOKENHUB_RATE_LIMIT_BURST", 120),
 		AdminRateLimitRPS:   getEnvInt("TOKENHUB_ADMIN_RATE_LIMIT_RPS", 30),
 		AdminRateLimitBurst: getEnvInt("TOKENHUB_ADMIN_RATE_LIMIT_BURST", 60),
 
@@ -98,7 +100,8 @@ func LoadConfig() (Config, error) {
 		TemporalNamespace: getEnv("TOKENHUB_TEMPORAL_NAMESPACE", "tokenhub"),
 		TemporalTaskQueue: getEnv("TOKENHUB_TEMPORAL_TASK_QUEUE", "tokenhub-tasks"),
 
-		CredentialsFile: getEnv("TOKENHUB_CREDENTIALS_FILE", defaultCredentialsPath()),
+		CredentialsFile:    getEnv("TOKENHUB_CREDENTIALS_FILE", defaultCredentialsPath()),
+		WildcardModelsFile: getEnv("TOKENHUB_WILDCARD_MODELS_FILE", ""),
 
 		PricingRefreshEnabled:      getEnvBool("TOKENHUB_PRICING_REFRESH_ENABLED", true),
 		PricingRefreshIntervalSecs: getEnvInt("TOKENHUB_PRICING_REFRESH_INTERVAL_SECS", 3600),

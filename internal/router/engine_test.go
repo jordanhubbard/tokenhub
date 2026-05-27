@@ -482,6 +482,68 @@ func TestBudgetErrorReturnsBeforeFallbackProvider(t *testing.T) {
 	}
 }
 
+func TestWildcardBudgetErrorFailsDownSameProviderModel(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockSender("openai")
+	eng.RegisterAdapter(openai)
+	if err := eng.SetWildcardModelIDs([]string{"gpt-5.5", "gpt-5.4-mini"}); err != nil {
+		t.Fatalf("set wildcard ladder: %v", err)
+	}
+	eng.RegisterModel(Model{ID: "gpt-5.5", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "gpt-5.4-mini", ProviderID: "openai", Weight: 8, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-5.5", ErrBudgetExceeded)
+	openai.setResponse("gpt-5.4-mini", oaiResponse("mini success"), nil)
+
+	req := makeRequest("hi")
+	req.ModelHint = WildcardModelHint
+	decision, _, err := eng.RouteAndSend(context.Background(), req, Policy{})
+	if err != nil {
+		t.Fatalf("unexpected wildcard fallback error: %v", err)
+	}
+	if decision.ModelID != "gpt-5.4-mini" {
+		t.Fatalf("expected wildcard to fail down to gpt-5.4-mini, got %q", decision.ModelID)
+	}
+	if got := len(openai.calls); got != 2 {
+		t.Fatalf("expected two provider calls, got %d", got)
+	}
+	if model, ok := eng.GetModel("gpt-5.5"); !ok || model.Enabled {
+		t.Fatalf("budget-exhausted wildcard model should be disabled, got %+v", model)
+	}
+	if model, ok := eng.GetModel("gpt-5.4-mini"); !ok || !model.Enabled {
+		t.Fatalf("same-provider fallback model should remain enabled, got %+v", model)
+	}
+}
+
+func TestWildcardBudgetErrorFailsDownAcrossProviders(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockSender("openai")
+	nvidia := newMockSender("nvidia")
+	eng.RegisterAdapter(openai)
+	eng.RegisterAdapter(nvidia)
+	if err := eng.SetWildcardModelIDs([]string{"gpt-5.5", "gpt-5.4-mini", "minimaxai/minimax-m2.7"}); err != nil {
+		t.Fatalf("set wildcard ladder: %v", err)
+	}
+	eng.RegisterModel(Model{ID: "gpt-5.5", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "gpt-5.4-mini", ProviderID: "openai", Weight: 8, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "minimaxai/minimax-m2.7", ProviderID: "nvidia", Weight: 8, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-5.5", ErrBudgetExceeded)
+	openai.setError("gpt-5.4-mini", ErrBudgetExceeded)
+	nvidia.setResponse("minimaxai/minimax-m2.7", oaiResponse("minimax success"), nil)
+
+	req := makeRequest("hi")
+	req.ModelHint = WildcardModelHint
+	decision, _, err := eng.RouteAndSend(context.Background(), req, Policy{})
+	if err != nil {
+		t.Fatalf("unexpected wildcard cross-provider fallback error: %v", err)
+	}
+	if decision.ModelID != "minimaxai/minimax-m2.7" {
+		t.Fatalf("expected minimax fallback, got %q", decision.ModelID)
+	}
+	if got := len(nvidia.calls); got != 1 {
+		t.Fatalf("expected one nvidia fallback call, got %d", got)
+	}
+}
+
 func TestStreamBudgetErrorPersistsWhenOnlyHealthExcludedModelsRemain(t *testing.T) {
 	eng := NewEngine(EngineConfig{})
 	openai := newMockStreamSender("openai")
@@ -547,6 +609,35 @@ func TestStreamBudgetErrorReturnsBeforeFallbackProvider(t *testing.T) {
 	}
 	if got := len(fallback.calls); got != 0 {
 		t.Fatalf("stream fallback provider should not mask budget exhaustion, got %d calls", got)
+	}
+}
+
+func TestWildcardStreamBudgetErrorFailsDownSameProviderModel(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	openai := newMockStreamSender("openai")
+	eng.RegisterAdapter(openai)
+	if err := eng.SetWildcardModelIDs([]string{"gpt-5.5", "gpt-5.4-mini"}); err != nil {
+		t.Fatalf("set wildcard ladder: %v", err)
+	}
+	eng.RegisterModel(Model{ID: "gpt-5.5", ProviderID: "openai", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "gpt-5.4-mini", ProviderID: "openai", Weight: 8, MaxContextTokens: 4096, Enabled: true})
+	openai.setError("gpt-5.5", ErrBudgetExceeded)
+	openai.setResponse("gpt-5.4-mini", json.RawMessage("data: mini success\n\n"), nil)
+
+	req := makeRequest("hi")
+	req.ModelHint = WildcardModelHint
+	decision, body, err := eng.RouteAndStream(context.Background(), req, Policy{})
+	if body != nil {
+		_ = body.Close()
+	}
+	if err != nil {
+		t.Fatalf("unexpected wildcard stream fallback error: %v", err)
+	}
+	if decision.ModelID != "gpt-5.4-mini" {
+		t.Fatalf("expected stream wildcard to fail down to gpt-5.4-mini, got %q", decision.ModelID)
+	}
+	if got := len(openai.calls); got != 2 {
+		t.Fatalf("expected two stream provider calls, got %d", got)
 	}
 }
 

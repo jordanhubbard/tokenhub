@@ -267,6 +267,8 @@ func MountRoutes(r chi.Router, d Dependencies) {
 		r.Get("/aliases/{name}", AliasGetHandler(d))
 		r.Put("/aliases/{name}", AliasUpsertHandler(d))
 		r.Delete("/aliases/{name}", AliasDeleteHandler(d))
+		r.Get("/wildcard-models", WildcardModelsGetHandler(d))
+		r.Put("/wildcard-models", WildcardModelsSetHandler(d))
 		r.Get("/routing-config", RoutingConfigGetHandler(d))
 		r.Put("/routing-config", RoutingConfigSetHandler(d))
 		r.Get("/health", HealthStatsHandler(d))

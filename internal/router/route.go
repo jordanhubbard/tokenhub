@@ -264,6 +264,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	// on the same backend. The original alias name rides in Decision.AliasFrom
 	// so request logs can group outcomes for experiment analysis.
 	aliasFrom := e.resolveAlias(&req)
+	wildcardRequest := aliasFrom == WildcardModelHint
 
 	// Enforce latency budget with context timeout.
 	if p.MaxLatencyMs > 0 {
@@ -280,15 +281,24 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	eligible := e.eligibleModels(tokensNeeded, p)
 	lastResortOnly := false
 	var wildcardPool map[string]bool
+	var wildcardOrder []string
 	if aliasFrom == WildcardModelHint {
-		wildcardPool = e.wildcardRoutingPoolLocked(req.ModelHint)
+		wildcardOrder = e.wildcardRoutingOrderLocked(req.ModelHint)
+		wildcardPool = modelIDSet(wildcardOrder)
 		eligible = filterModelsByIDSet(eligible, wildcardPool)
+		sortModelsByIDOrder(eligible, wildcardOrder)
 	}
 
 	if len(eligible) == 0 {
-		if budgetErr := e.providerBudgetExhaustedErrorLocked(); budgetErr != nil {
+		if !wildcardRequest {
+			if budgetErr := e.providerBudgetExhaustedErrorLocked(); budgetErr != nil {
+				e.mu.RUnlock()
+				return Decision{}, nil, budgetErr
+			}
+		}
+		if wildcardRequest && len(wildcardOrder) == 0 {
 			e.mu.RUnlock()
-			return Decision{}, nil, budgetErr
+			return Decision{}, nil, errors.New("no eligible models registered")
 		}
 		lastResortOnly = true
 		// All models were excluded by normal filters (health cooldown, budget, etc.).
@@ -333,6 +343,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	if hintModelID == "" {
 		// No exact match — fall back to probabilistic hint boost.
 		e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
+		if wildcardRequest {
+			sortModelsByIDOrder(eligible, wildcardOrder)
+		}
 	}
 	// Snapshot adapters for all eligible providers plus the full model map for escalation.
 	adapters := make(map[string]Sender, len(eligible))
@@ -361,7 +374,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	// with staggered launch times. The first successful response wins.
 	// Exception: if we have an exact model hint match, bypass hedging entirely —
 	// we must not race the hinted model against local vLLM providers that respond faster.
-	if e.cfg.HedgeAfterMs > 0 && hintModelID == "" {
+	if e.cfg.HedgeAfterMs > 0 && hintModelID == "" && !wildcardRequest {
 		maxHedge := e.cfg.MaxHedgedProviders
 		if maxHedge <= 0 {
 			maxHedge = 3
@@ -406,10 +419,10 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		// Sequential fallback: try each eligible model in weight order with full
 		// per-error-class handling (context shrink, rate-limit skip, etc.).
 		for i, m := range eligible {
-			if budgetProviders[m.ProviderID] {
+			if !wildcardRequest && budgetProviders[m.ProviderID] {
 				continue
 			}
-			if lastResortOnly && failedLastResortProviders[m.ProviderID] {
+			if !wildcardRequest && lastResortOnly && failedLastResortProviders[m.ProviderID] {
 				continue
 			}
 			tried[m.ID] = true
@@ -441,7 +454,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 					e.health.RecordSuccess(m.ProviderID, sendMs)
 				}
 				reason := fmt.Sprintf("routed-weight-%d", m.Weight)
-				if hintModelID != "" && m.ID == hintModelID {
+				if wildcardRequest {
+					reason = "routed-wildcard-gradient"
+				} else if hintModelID != "" && m.ID == hintModelID {
 					reason = "routed-hint-boost"
 				}
 				return Decision{
@@ -556,12 +571,19 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 				continue
 
 			case ErrBudgetExceeded:
-				// The provider's spending budget is permanently exhausted. Disable the
-				// provider's models immediately so they are not selected again until manually re-enabled
-				// via the admin API. This prevents wasteful round-trips on every request.
 				if budgetErr == nil {
 					budgetErr = classified
 				}
+				if wildcardRequest {
+					disabled := e.disableModelForBudget(m.ID, classified)
+					slog.Warn("model budget exhausted during wildcard routing, disabling model and failing down",
+						slog.String("provider", m.ProviderID),
+						slog.String("model", m.ID),
+						slog.Bool("disabled", disabled),
+					)
+					continue
+				}
+				// Explicit model requests preserve provider-wide budget behavior.
 				budgetProviders[m.ProviderID] = true
 				disabled := e.disableProviderModelsForBudget(m.ProviderID, classified)
 				slog.Warn("provider budget exhausted, disabling models",
@@ -578,11 +600,13 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		}
 	} // end sequential-fallback else block
 
-	if budgetErr != nil {
+	if budgetErr != nil && !wildcardRequest {
 		return Decision{}, nil, budgetErr
 	}
-	if priorBudgetErr := e.providerBudgetExhaustedError(); priorBudgetErr != nil {
-		return Decision{}, nil, priorBudgetErr
+	if !wildcardRequest {
+		if priorBudgetErr := e.providerBudgetExhaustedError(); priorBudgetErr != nil {
+			return Decision{}, nil, priorBudgetErr
+		}
 	}
 
 	// Primary pass exhausted all eligible models. As a last resort, probe any
@@ -608,13 +632,16 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		}
 	}
 	e.mu.RUnlock()
+	if wildcardRequest {
+		sortModelsByIDOrder(lastResort, wildcardOrder)
+	}
 
 	failedLastResortProviders = map[string]bool{}
 	for _, m := range lastResort {
-		if budgetProviders[m.ProviderID] {
+		if !wildcardRequest && budgetProviders[m.ProviderID] {
 			continue
 		}
-		if failedLastResortProviders[m.ProviderID] {
+		if !wildcardRequest && failedLastResortProviders[m.ProviderID] {
 			continue
 		}
 		adapter := lrAdapters[m.ProviderID]
@@ -658,6 +685,15 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		if classified.Class == ErrBudgetExceeded {
 			if budgetErr == nil {
 				budgetErr = classified
+			}
+			if wildcardRequest {
+				disabled := e.disableModelForBudget(m.ID, classified)
+				slog.Warn("model budget exhausted during wildcard last resort, disabling model and failing down",
+					slog.String("provider", m.ProviderID),
+					slog.String("model", m.ID),
+					slog.Bool("disabled", disabled),
+				)
+				continue
 			}
 			budgetProviders[m.ProviderID] = true
 			disabled := e.disableProviderModelsForBudget(m.ProviderID, classified)

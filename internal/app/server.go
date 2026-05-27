@@ -56,16 +56,16 @@ type Server struct {
 	stopBandit       func()                      // nil when Thompson Sampling disabled
 	tsdb             *tsdb.Store                 // nil when TSDB failed to init
 
-	stopPrune    chan struct{} // signals TSDB prune goroutine to stop
-	stopLogPrune chan struct{} // signals log prune goroutine to stop
-	stopRotation chan struct{} // signals key rotation enforcement goroutine to stop
-	stopPricing    chan struct{} // signals pricing refresh goroutine to stop
-	stopHeartbeat  chan struct{} // signals heartbeat goroutine to stop
-	apiKeyMgr    *apikey.Manager
-	eventBus     *events.Bus
+	stopPrune     chan struct{} // signals TSDB prune goroutine to stop
+	stopLogPrune  chan struct{} // signals log prune goroutine to stop
+	stopRotation  chan struct{} // signals key rotation enforcement goroutine to stop
+	stopPricing   chan struct{} // signals pricing refresh goroutine to stop
+	stopHeartbeat chan struct{} // signals heartbeat goroutine to stop
+	apiKeyMgr     *apikey.Manager
+	eventBus      *events.Bus
 
-	storeWriteQueue chan func()      // buffered channel for async store writes
-	storeWriteDone  chan struct{}    // closed by the write worker when it exits
+	storeWriteQueue chan func()   // buffered channel for async store writes
+	storeWriteDone  chan struct{} // closed by the write worker when it exits
 
 	httpServer *http.Server // set via SetHTTPServer; used by Close() to drain in-flight requests
 }
@@ -228,6 +228,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// Load persisted models from DB.
 	loadPersistedModels(eng, db, logger)
 	loadRoutingConfig(eng, db, logger)
+	loadWildcardModelConfig(eng, db, cfg.WildcardModelsFile, logger)
 
 	// Startup validation: warn if system cannot route requests.
 	adapterIDs := eng.ListAdapterIDs()
@@ -486,6 +487,7 @@ func (s *Server) Reload(cfg Config) {
 		s.adminRateLimiter.UpdateLimits(cfg.AdminRateLimitRPS, cfg.AdminRateLimitBurst)
 	}
 	s.engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudget, cfg.DefaultMaxLatencyMs)
+	loadWildcardModelConfig(s.engine, s.store, cfg.WildcardModelsFile, s.logger)
 	logging.SetLevel(cfg.LogLevel)
 	s.cfg = cfg
 	s.logger.Info("configuration reloaded",
@@ -1111,7 +1113,7 @@ func normalizeBaseURL(raw string) string {
 }
 
 var (
-	detectDockerOnce   sync.Once
+	detectDockerOnce    sync.Once
 	canRewriteLocalhost bool
 )
 
@@ -1235,4 +1237,53 @@ func loadRoutingConfig(eng *router.Engine, db store.Store, logger *slog.Logger) 
 	}
 }
 
+func loadWildcardModelConfig(eng *router.Engine, db store.Store, path string, logger *slog.Logger) {
+	ctx := context.Background()
+	if db != nil {
+		modelIDs, err := db.LoadWildcardModelIDs(ctx)
+		if err != nil {
+			logger.Warn("failed to load wildcard model ladder", slog.String("error", err.Error()))
+		} else if len(modelIDs) > 0 {
+			if err := eng.SetWildcardModelIDs(modelIDs); err != nil {
+				logger.Warn("invalid persisted wildcard model ladder", slog.String("error", err.Error()))
+			} else {
+				logger.Info("loaded wildcard model ladder from DB", slog.Int("models", len(modelIDs)))
+			}
+		}
+	}
 
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		logger.Warn("failed to read wildcard model ladder file",
+			slog.String("path", path),
+			slog.String("error", err.Error()))
+		return
+	}
+	modelIDs, err := router.ParseWildcardModelIDs(body)
+	if err != nil {
+		logger.Warn("invalid wildcard model ladder file",
+			slog.String("path", path),
+			slog.String("error", err.Error()))
+		return
+	}
+	if err := eng.SetWildcardModelIDs(modelIDs); err != nil {
+		logger.Warn("invalid wildcard model ladder",
+			slog.String("path", path),
+			slog.String("error", err.Error()))
+		return
+	}
+	if db != nil {
+		if err := db.SaveWildcardModelIDs(ctx, modelIDs); err != nil {
+			logger.Warn("failed to persist wildcard model ladder",
+				slog.String("path", path),
+				slog.String("error", err.Error()))
+		}
+	}
+	logger.Info("loaded wildcard model ladder from file",
+		slog.String("path", path),
+		slog.Int("models", len(modelIDs)))
+}

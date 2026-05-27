@@ -96,6 +96,21 @@ The file is idempotent — providers and models are upserted, so it can remain
 in place across restarts. `api_key` is optional for keyless providers (vLLM,
 Ollama). All providers default to `enabled: true` unless explicitly set to `false`.
 
+## Wildcard Model Ladder
+
+`TOKENHUB_WILDCARD_MODELS_FILE` optionally points at a JSON or YAML file that
+seeds the ordered fail-down ladder used when clients request `model="*"`.
+
+```yaml
+models:
+  - gpt-5.5
+  - gpt-5.4-mini
+  - minimaxai/minimax-m2.7
+```
+
+The same list can be refreshed at runtime with `PUT /admin/v1/wildcard-models`;
+runtime changes are persisted to SQLite.
+
 ## Example Configuration
 
 ### Minimal
@@ -142,6 +157,7 @@ export TOKENHUB_OTEL_ENDPOINT="otel-collector:4318"
 The following settings can be changed at runtime via the admin API or `tokenhubctl` without restarting:
 
 - **Routing defaults**: `PUT /admin/v1/routing-config` or `tokenhubctl routing set`
+- **Wildcard model ladder**: `PUT /admin/v1/wildcard-models`
 - **Models**: `POST/PATCH/DELETE /admin/v1/models` or `tokenhubctl model add/edit/delete`
 - **Providers**: `POST/PATCH/DELETE /admin/v1/providers` or `tokenhubctl provider add/edit/delete`
 - **API keys**: `POST/PATCH/DELETE /admin/v1/apikeys` or `tokenhubctl apikey create/edit/delete`

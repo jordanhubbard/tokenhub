@@ -202,9 +202,9 @@ curl -X POST http://localhost:8080/v1/chat \
 ### Request with Wildcard Model Assignment
 
 When `model_hint` is `*`, TokenHub assigns a model server-side. If no explicit
-`*` alias is configured, wildcard requests round-robin across the registered
-and enabled default diversity pool: `deepseek-v4-flash`, `claude-opus-4-7`,
-and `gpt-5.5`.
+`*` alias is configured, wildcard requests use an ordered fail-down ladder.
+Administrators can replace that ladder with `PUT /admin/v1/wildcard-models` or
+seed it at startup with `TOKENHUB_WILDCARD_MODELS_FILE`.
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat \

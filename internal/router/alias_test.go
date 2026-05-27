@@ -341,7 +341,7 @@ func TestEngine_ResolveWildcardAliasRewrites(t *testing.T) {
 	}
 }
 
-func TestEngine_ResolveWildcardUsesDefaultRoundRobinModels(t *testing.T) {
+func TestEngine_ResolveWildcardUsesDefaultModelLadder(t *testing.T) {
 	eng := NewEngine(EngineConfig{})
 	for _, modelID := range DefaultWildcardRoundRobinModelIDs() {
 		providerID := "provider-" + modelID
@@ -352,15 +352,8 @@ func TestEngine_ResolveWildcardUsesDefaultRoundRobinModels(t *testing.T) {
 		})
 	}
 
-	want := []string{
-		"deepseek-v4-flash",
-		"claude-opus-4-7",
-		"gpt-5.5",
-		"deepseek-v4-flash",
-		"claude-opus-4-7",
-		"gpt-5.5",
-	}
-	for i, wantModel := range want {
+	wantModel := DefaultWildcardRoundRobinModelIDs()[0]
+	for i := 0; i < 6; i++ {
 		req := Request{ModelHint: WildcardModelHint, ID: fmt.Sprintf("req-%d", i)}
 		alias := eng.resolveAlias(&req)
 		if alias != WildcardModelHint {
@@ -372,9 +365,9 @@ func TestEngine_ResolveWildcardUsesDefaultRoundRobinModels(t *testing.T) {
 	}
 }
 
-func TestEngine_ResolveWildcardDefaultRoundRobinSkipsUnavailableModels(t *testing.T) {
+func TestEngine_ResolveWildcardDefaultLadderSkipsUnavailableModels(t *testing.T) {
 	eng := NewEngine(EngineConfig{})
-	for _, modelID := range []string{"deepseek-v4-flash", "gpt-5.5"} {
+	for _, modelID := range []string{"gpt-5.4-mini", "gpt-5-nano"} {
 		providerID := "provider-" + modelID
 		eng.RegisterAdapter(newMockSender(providerID))
 		eng.RegisterModel(Model{
@@ -383,28 +376,28 @@ func TestEngine_ResolveWildcardDefaultRoundRobinSkipsUnavailableModels(t *testin
 		})
 	}
 	eng.RegisterModel(Model{
-		ID: "claude-opus-4-7", ProviderID: "missing-adapter",
+		ID: "gpt-5.5", ProviderID: "missing-adapter",
 		Weight: 5, MaxContextTokens: 8192, Enabled: true,
 	})
 
-	for i, wantModel := range []string{"deepseek-v4-flash", "gpt-5.5", "deepseek-v4-flash", "gpt-5.5"} {
+	for i := 0; i < 4; i++ {
 		req := Request{ModelHint: WildcardModelHint, ID: fmt.Sprintf("req-%d", i)}
 		alias := eng.resolveAlias(&req)
 		if alias != WildcardModelHint {
 			t.Fatalf("iteration %d: expected AliasFrom %q, got %q", i, WildcardModelHint, alias)
 		}
-		if req.ModelHint != wantModel {
-			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, wantModel)
+		if req.ModelHint != "gpt-5.4-mini" {
+			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, "gpt-5.4-mini")
 		}
 	}
 }
 
-func TestEngine_ResolveWildcardDefaultRoundRobinAcceptsProviderPrefixedModels(t *testing.T) {
+func TestEngine_ResolveWildcardDefaultLadderAcceptsProviderPrefixedModels(t *testing.T) {
 	eng := NewEngine(EngineConfig{})
 	modelIDs := []string{
-		"deepseek/deepseek-v4-flash",
-		"anthropic/claude-opus-4-7",
 		"openai/gpt-5.5",
+		"openai/gpt-5.4-mini",
+		"nvidia/minimaxai/minimax-m2.7",
 	}
 	for _, modelID := range modelIDs {
 		providerID := "provider-" + modelID
@@ -415,15 +408,50 @@ func TestEngine_ResolveWildcardDefaultRoundRobinAcceptsProviderPrefixedModels(t 
 		})
 	}
 
-	for i, wantModel := range append(modelIDs, modelIDs[0]) {
+	for i := 0; i < 4; i++ {
 		req := Request{ModelHint: WildcardModelHint, ID: fmt.Sprintf("req-%d", i)}
 		alias := eng.resolveAlias(&req)
 		if alias != WildcardModelHint {
 			t.Fatalf("iteration %d: expected AliasFrom %q, got %q", i, WildcardModelHint, alias)
 		}
-		if req.ModelHint != wantModel {
-			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, wantModel)
+		if req.ModelHint != "openai/gpt-5.5" {
+			t.Fatalf("iteration %d: got %q, want %q", i, req.ModelHint, "openai/gpt-5.5")
 		}
+	}
+}
+
+func TestEngine_ResolveWildcardUsesConfiguredModelLadder(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	if err := eng.SetWildcardModelIDs([]string{"custom-large", "custom-mini"}); err != nil {
+		t.Fatalf("set wildcard ladder: %v", err)
+	}
+	for _, modelID := range []string{"custom-large", "custom-mini"} {
+		providerID := "provider-" + modelID
+		eng.RegisterAdapter(newMockSender(providerID))
+		eng.RegisterModel(Model{
+			ID: modelID, ProviderID: providerID,
+			Weight: 5, MaxContextTokens: 8192, Enabled: true,
+		})
+	}
+
+	req := Request{ModelHint: WildcardModelHint, ID: "req-abc"}
+	alias := eng.resolveAlias(&req)
+	if alias != WildcardModelHint {
+		t.Fatalf("expected AliasFrom %q, got %q", WildcardModelHint, alias)
+	}
+	if req.ModelHint != "custom-large" {
+		t.Fatalf("got %q, want custom-large", req.ModelHint)
+	}
+}
+
+func TestParseWildcardModelIDsYAML(t *testing.T) {
+	got, err := ParseWildcardModelIDs([]byte("models:\n  - gpt-5.5\n  - gpt-5.4-mini\n  - gpt-5.4-mini\n"))
+	if err != nil {
+		t.Fatalf("parse wildcard YAML: %v", err)
+	}
+	want := []string{"gpt-5.5", "gpt-5.4-mini"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 

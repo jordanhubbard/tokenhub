@@ -225,7 +225,7 @@ func TestCompletionsServerSelectedModelWhenModelOmittedOrWildcard(t *testing.T) 
 	}
 }
 
-func TestCompletionsWildcardUsesDefaultRoundRobinModels(t *testing.T) {
+func TestCompletionsWildcardUsesDefaultModelLadder(t *testing.T) {
 	ts, eng, _ := setupTestServer(t)
 	defer ts.Close()
 
@@ -241,12 +241,8 @@ func TestCompletionsWildcardUsesDefaultRoundRobinModels(t *testing.T) {
 		})
 	}
 
-	for i, want := range []string{
-		"deepseek-v4-flash",
-		"claude-opus-4-7",
-		"gpt-5.5",
-		"deepseek-v4-flash",
-	} {
+	want := router.DefaultWildcardRoundRobinModelIDs()[0]
+	for i := 0; i < 4; i++ {
 		body, _ := json.Marshal(CompletionsRequest{
 			Model:    router.WildcardModelHint,
 			Messages: []router.Message{{Role: "user", Content: "hi"}},

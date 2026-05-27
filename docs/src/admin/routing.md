@@ -39,6 +39,27 @@ curl -X PUT http://localhost:8080/admin/v1/routing-config \
 
 Changes take effect immediately for new requests and are persisted to the database.
 
+## Wildcard Model Ladder
+
+Requests with `model="*"` use an ordered ladder: TokenHub starts with the first
+registered, enabled model in the list and fails downward when a wildcard
+candidate reports budget or quota exhaustion. Update the ladder at runtime:
+
+```bash
+curl -X PUT http://localhost:8080/admin/v1/wildcard-models \
+  -H "Content-Type: application/yaml" \
+  --data-binary @wildcard-models.yaml
+```
+
+```yaml
+models:
+  - gpt-5.5
+  - gpt-5.4-mini
+  - minimaxai/minimax-m2.7
+```
+
+Use `GET /admin/v1/wildcard-models` to see the effective ladder.
+
 ## Routing Modes
 
 Each mode applies different weights to the four scoring objectives:
@@ -133,4 +154,5 @@ Response:
 
 ## Audit Trail
 
-Routing configuration changes are logged as `routing-config.update` in the audit trail.
+Routing configuration changes are logged as `routing-config.update`; wildcard
+ladder changes are logged as `wildcard-models.update`.

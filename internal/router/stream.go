@@ -19,13 +19,17 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	// got far enough to apply the rewrite itself (e.g. no eligible models,
 	// then we fall through to last-resort streaming).
 	aliasFrom := e.resolveAlias(&req)
+	wildcardRequest := aliasFrom == WildcardModelHint
 	decision, eligible, err := e.SelectModel(ctx, req, p)
 	var wildcardPool map[string]bool
+	var wildcardOrder []string
 	if aliasFrom == WildcardModelHint {
 		e.mu.RLock()
-		wildcardPool = e.wildcardRoutingPoolLocked(req.ModelHint)
+		wildcardOrder = e.wildcardRoutingOrderLocked(req.ModelHint)
 		e.mu.RUnlock()
+		wildcardPool = modelIDSet(wildcardOrder)
 		eligible = filterModelsByIDSet(eligible, wildcardPool)
+		sortModelsByIDOrder(eligible, wildcardOrder)
 	}
 	if aliasFrom != "" {
 		// SelectModel saw a post-rewrite ModelHint and cannot recover the
@@ -33,8 +37,10 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		decision.AliasFrom = aliasFrom
 	}
 	if err != nil {
-		if budgetErr := e.providerBudgetExhaustedError(); budgetErr != nil {
-			return Decision{}, nil, budgetErr
+		if !wildcardRequest {
+			if budgetErr := e.providerBudgetExhaustedError(); budgetErr != nil {
+				return Decision{}, nil, budgetErr
+			}
 		}
 		budgetProviders := map[string]bool{}
 		failedProviders := map[string]bool{}
@@ -61,16 +67,19 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		}
 		outTok := estOutTokens(p)
 		e.mu.RUnlock()
+		if wildcardRequest {
+			sortModelsByIDOrder(candidates, wildcardOrder)
+		}
 
 		if len(candidates) > 0 {
 			slog.Warn("stream: no eligible models from primary filter; attempting last-resort routing",
 				slog.Int("candidates", len(candidates)),
 			)
 			for _, m := range candidates {
-				if budgetProviders[m.ProviderID] {
+				if !wildcardRequest && budgetProviders[m.ProviderID] {
 					continue
 				}
-				if failedProviders[m.ProviderID] {
+				if !wildcardRequest && failedProviders[m.ProviderID] {
 					continue
 				}
 				a := lrAdapters[m.ProviderID]
@@ -98,6 +107,15 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 				if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
 					if budgetErr == nil {
 						budgetErr = fc
+					}
+					if wildcardRequest {
+						disabled := e.disableModelForBudget(m.ID, fc)
+						slog.Warn("model budget exhausted (stream wildcard last resort), disabling model and failing down",
+							slog.String("provider", m.ProviderID),
+							slog.String("model", m.ID),
+							slog.Bool("disabled", disabled),
+						)
+						continue
 					}
 					budgetProviders[m.ProviderID] = true
 					disabled := e.disableProviderModelsForBudget(m.ProviderID, fc)
@@ -144,14 +162,23 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	// Primary model failed. Handle budget exhaustion then try eligible fallbacks.
 	if classified := adapter.ClassifyError(err); classified.Class == ErrBudgetExceeded {
 		budgetErr = classified
-		budgetProviders[decision.ProviderID] = true
-		disabled := e.disableProviderModelsForBudget(decision.ProviderID, classified)
-		slog.Warn("provider budget exhausted (stream), disabling models",
-			slog.String("provider", decision.ProviderID),
-			slog.String("model", decision.ModelID),
-			slog.Int("disabled_models", disabled),
-		)
-		return Decision{}, nil, classified
+		if wildcardRequest {
+			disabled := e.disableModelForBudget(decision.ModelID, classified)
+			slog.Warn("model budget exhausted (stream wildcard), disabling model and failing down",
+				slog.String("provider", decision.ProviderID),
+				slog.String("model", decision.ModelID),
+				slog.Bool("disabled", disabled),
+			)
+		} else {
+			budgetProviders[decision.ProviderID] = true
+			disabled := e.disableProviderModelsForBudget(decision.ProviderID, classified)
+			slog.Warn("provider budget exhausted (stream), disabling models",
+				slog.String("provider", decision.ProviderID),
+				slog.String("model", decision.ModelID),
+				slog.Int("disabled_models", disabled),
+			)
+			return Decision{}, nil, classified
+		}
 	}
 
 	// Try remaining eligible models (those returned by SelectModel).
@@ -159,7 +186,7 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		if m.ID == decision.ModelID {
 			continue
 		}
-		if budgetProviders[m.ProviderID] {
+		if !wildcardRequest && budgetProviders[m.ProviderID] {
 			continue
 		}
 		tried[m.ID] = true
@@ -187,6 +214,15 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 			if budgetErr == nil {
 				budgetErr = fc
 			}
+			if wildcardRequest {
+				disabled := e.disableModelForBudget(m.ID, fc)
+				slog.Warn("model budget exhausted (stream wildcard fallback), disabling model and failing down",
+					slog.String("provider", m.ProviderID),
+					slog.String("model", m.ID),
+					slog.Bool("disabled", disabled),
+				)
+				continue
+			}
 			budgetProviders[m.ProviderID] = true
 			disabled := e.disableProviderModelsForBudget(m.ProviderID, fc)
 			slog.Warn("provider budget exhausted (stream fallback), disabling models",
@@ -198,11 +234,13 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		}
 	}
 
-	if budgetErr != nil {
+	if budgetErr != nil && !wildcardRequest {
 		return Decision{}, nil, budgetErr
 	}
-	if priorBudgetErr := e.providerBudgetExhaustedError(); priorBudgetErr != nil {
-		return Decision{}, nil, priorBudgetErr
+	if !wildcardRequest {
+		if priorBudgetErr := e.providerBudgetExhaustedError(); priorBudgetErr != nil {
+			return Decision{}, nil, priorBudgetErr
+		}
 	}
 
 	// All eligible models failed. Last-resort pass: try any enabled model not
@@ -227,13 +265,16 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		}
 	}
 	e.mu.RUnlock()
+	if wildcardRequest {
+		sortModelsByIDOrder(lastResort, wildcardOrder)
+	}
 
 	failedProviders := map[string]bool{}
 	for _, m := range lastResort {
-		if budgetProviders[m.ProviderID] {
+		if !wildcardRequest && budgetProviders[m.ProviderID] {
 			continue
 		}
-		if failedProviders[m.ProviderID] {
+		if !wildcardRequest && failedProviders[m.ProviderID] {
 			continue
 		}
 		a := lrAdapters[m.ProviderID]
@@ -265,6 +306,15 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
 			if budgetErr == nil {
 				budgetErr = fc
+			}
+			if wildcardRequest {
+				disabled := e.disableModelForBudget(m.ID, fc)
+				slog.Warn("model budget exhausted (stream wildcard last resort), disabling model and failing down",
+					slog.String("provider", m.ProviderID),
+					slog.String("model", m.ID),
+					slog.Bool("disabled", disabled),
+				)
+				continue
 			}
 			budgetProviders[m.ProviderID] = true
 			disabled := e.disableProviderModelsForBudget(m.ProviderID, fc)

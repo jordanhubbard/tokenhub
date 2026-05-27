@@ -1137,6 +1137,41 @@ func TestRoutingConfigSetValid(t *testing.T) {
 	}
 }
 
+func TestWildcardModelsSetYAML(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	req, _ := http.NewRequest("PUT", ts.URL+"/admin/v1/wildcard-models",
+		bytes.NewReader([]byte("models:\n  - gpt-5.5\n  - gpt-5.4-mini\n")))
+	req.Header.Set("Content-Type", "application/yaml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var got struct {
+		Models     []string `json:"models"`
+		Configured bool     `json:"configured"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !got.Configured {
+		t.Fatalf("expected configured=true")
+	}
+	want := []string{"gpt-5.5", "gpt-5.4-mini"}
+	if fmt.Sprint(got.Models) != fmt.Sprint(want) {
+		t.Fatalf("response models = %v, want %v", got.Models, want)
+	}
+	if effective := eng.WildcardModelIDs(); fmt.Sprint(effective) != fmt.Sprint(want) {
+		t.Fatalf("engine models = %v, want %v", effective, want)
+	}
+}
+
 // --- Additional coverage tests ---
 
 func TestVaultLockHandler(t *testing.T) {

@@ -8,17 +8,17 @@ import (
 // APIKeyRecord is the persisted form of a client API key.
 type APIKeyRecord struct {
 	ID               string     `json:"id"`
-	KeyHash          string     `json:"-"`                     // bcrypt hash, never serialized
-	KeyPrefix        string     `json:"key_prefix"`            // first 8 chars for identification
+	KeyHash          string     `json:"-"`          // bcrypt hash, never serialized
+	KeyPrefix        string     `json:"key_prefix"` // first 8 chars for identification
 	Name             string     `json:"name"`
-	Scopes           string     `json:"scopes"`                // JSON array stored as text
+	Scopes           string     `json:"scopes"` // JSON array stored as text
 	CreatedAt        time.Time  `json:"created_at"`
 	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
-	RotationDays     int        `json:"rotation_days"`          // 0 = manual rotation only
-	MonthlyBudgetUSD float64    `json:"monthly_budget_usd"`     // 0 = unlimited
+	RotationDays     int        `json:"rotation_days"`      // 0 = manual rotation only
+	MonthlyBudgetUSD float64    `json:"monthly_budget_usd"` // 0 = unlimited
 	BudgetResetAt    *time.Time `json:"budget_reset_at,omitempty"`
-	RateLimitRPS     int        `json:"rate_limit_rps"`         // 0 = global default, -1 = unlimited
+	RateLimitRPS     int        `json:"rate_limit_rps"` // 0 = global default, -1 = unlimited
 	Enabled          bool       `json:"enabled"`
 }
 
@@ -47,6 +47,8 @@ type Store interface {
 	// Routing config persistence
 	SaveRoutingConfig(ctx context.Context, cfg RoutingConfig) error
 	LoadRoutingConfig(ctx context.Context) (RoutingConfig, error)
+	SaveWildcardModelIDs(ctx context.Context, ids []string) error
+	LoadWildcardModelIDs(ctx context.Context) ([]string, error)
 
 	// Audit logging
 	LogAudit(ctx context.Context, entry AuditEntry) error
@@ -84,14 +86,14 @@ type Store interface {
 // a client-facing model name into one of several weighted target models.
 // The Variants slice is serialized as JSON in the `variants` column.
 type ModelAliasRecord struct {
-	Name      string              `json:"name"`
-	Variants  []AliasVariantStore `json:"variants"`
-	Enabled   bool                `json:"enabled"`
+	Name     string              `json:"name"`
+	Variants []AliasVariantStore `json:"variants"`
+	Enabled  bool                `json:"enabled"`
 	// StickyBy selects the variant assignment strategy; see router.StickyBy*
 	// constants. Empty means request-scoped stickiness (the default).
-	StickyBy  string              `json:"sticky_by,omitempty"`
-	CreatedAt time.Time           `json:"created_at"`
-	UpdatedAt time.Time           `json:"updated_at"`
+	StickyBy  string    `json:"sticky_by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // AliasVariantStore is the persisted form of a single alias split target.
@@ -134,7 +136,7 @@ type RoutingConfig struct {
 type AuditEntry struct {
 	ID        int64     `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
-	Action    string    `json:"action"`              // e.g. "model.upsert", "provider.delete", "vault.unlock"
+	Action    string    `json:"action"`               // e.g. "model.upsert", "provider.delete", "vault.unlock"
 	Resource  string    `json:"resource"`             // e.g. "gpt-4", "openai"
 	Detail    string    `json:"detail,omitempty"`     // optional JSON with change details
 	RequestID string    `json:"request_id,omitempty"` // correlates to HTTP request ID

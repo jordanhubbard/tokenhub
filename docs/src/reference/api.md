@@ -248,6 +248,22 @@ Set routing defaults.
 
 ---
 
+### GET /admin/v1/wildcard-models
+
+Get the effective `model="*"` fail-down ladder and whether it is using an operator-configured override.
+
+**Response**: `200 OK` → `{"models":["gpt-5.5","gpt-5.4-mini"],"configured":true,"configured_models":["gpt-5.5","gpt-5.4-mini"],"defaults":[...]}`
+
+---
+
+### PUT /admin/v1/wildcard-models
+
+Replace the `model="*"` fail-down ladder. The body may be JSON or YAML, either as `{"models":["gpt-5.5","gpt-5.4-mini"]}` or a top-level list. Send an empty list to restore built-in defaults.
+
+**Response**: `200 OK` → same shape as `GET /admin/v1/wildcard-models`
+
+---
+
 ### POST /admin/v1/routing/simulate
 
 Run a what-if routing simulation without sending a real request.

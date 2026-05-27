@@ -195,8 +195,11 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	tokensNeeded := EstimateTokens(req)
 
 	eligible := e.eligibleModels(tokensNeeded, p)
+	wildcardRequest := aliasFrom == WildcardModelHint
 	if aliasFrom == WildcardModelHint {
-		eligible = filterModelsByIDSet(eligible, e.wildcardRoutingPoolLocked(req.ModelHint))
+		order := e.wildcardRoutingOrderLocked(req.ModelHint)
+		eligible = filterModelsByIDSet(eligible, modelIDSet(order))
+		sortModelsByIDOrder(eligible, order)
 	}
 	if len(eligible) == 0 {
 		return Decision{}, nil, errors.New("no eligible models registered")
@@ -213,11 +216,15 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 		for _, m := range eligible {
 			if m.ID == req.ModelHint {
 				estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
+				reason := "routed-hint-exact"
+				if wildcardRequest {
+					reason = "routed-wildcard-gradient"
+				}
 				return Decision{
 					ModelID:          m.ID,
 					ProviderID:       m.ProviderID,
 					EstimatedCostUSD: estCost,
-					Reason:           "routed-hint-exact",
+					Reason:           reason,
 					AliasFrom:        aliasFrom,
 				}, eligible, nil
 			}

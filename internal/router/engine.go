@@ -111,12 +111,12 @@ type Engine struct {
 	bandit       *ThompsonSampler // nil = disabled
 	skipRecorder SkipRecorder
 	aliases      *AliasResolver // nil = no alias rewriting
-	wildcardRR   int
 
 	mu       sync.RWMutex
 	models   map[string]Model
 	adapters map[string]Sender // provider_id -> adapter
 
+	wildcardModelIDs         []string
 	budgetExhaustedProviders map[string]string
 }
 
@@ -211,7 +211,7 @@ func (e *Engine) resolveDefaultWildcard(req *Request) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	defaultModels := DefaultWildcardRoundRobinModelIDs()
+	defaultModels := e.effectiveWildcardModelIDsLocked()
 	candidates := make([]string, 0, len(defaultModels))
 	for _, preferredID := range defaultModels {
 		if id, ok := e.availableModelIDLocked(preferredID); ok {
@@ -223,9 +223,7 @@ func (e *Engine) resolveDefaultWildcard(req *Request) string {
 		return ""
 	}
 
-	idx := e.wildcardRR % len(candidates)
-	req.ModelHint = candidates[idx]
-	e.wildcardRR = idx + 1
+	req.ModelHint = candidates[0]
 	return WildcardModelHint
 }
 
@@ -255,31 +253,46 @@ func (e *Engine) availableModelIDLocked(preferredID string) (string, bool) {
 
 func (e *Engine) wildcardRoutingPoolLocked(selectedID string) map[string]bool {
 	pool := make(map[string]bool)
+	for _, id := range e.wildcardRoutingOrderLocked(selectedID) {
+		pool[id] = true
+	}
+	return pool
+}
 
+func (e *Engine) wildcardRoutingOrderLocked(selectedID string) []string {
+	var order []string
+	seen := make(map[string]bool)
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		order = append(order, id)
+	}
 	if e.aliases != nil {
 		if alias, ok := e.aliases.Get(WildcardModelHint); ok && alias.Enabled {
 			for _, variant := range alias.Variants {
 				if id, ok := e.availableModelIDLocked(variant.ModelID); ok {
-					pool[id] = true
+					add(id)
 				}
 			}
 		}
 	}
-	if len(pool) == 0 {
-		for _, preferredID := range DefaultWildcardRoundRobinModelIDs() {
+	if len(order) == 0 {
+		for _, preferredID := range e.effectiveWildcardModelIDsLocked() {
 			if id, ok := e.availableModelIDLocked(preferredID); ok {
-				pool[id] = true
+				add(id)
 			}
 		}
 	}
 	if selectedID != "" {
 		if id, ok := e.availableModelIDLocked(selectedID); ok {
-			pool[id] = true
+			add(id)
 		} else {
-			pool[selectedID] = true
+			add(selectedID)
 		}
 	}
-	return pool
+	return order
 }
 
 func filterModelsByIDSet(models []Model, allowed map[string]bool) []Model {
@@ -319,6 +332,18 @@ func (e *Engine) RegisterModel(m Model) {
 
 func (e *Engine) disableProviderModels(providerID string) int {
 	return e.disableProviderModelsForBudget(providerID, nil)
+}
+
+func (e *Engine) disableModelForBudget(modelID string, err error) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	model, ok := e.models[modelID]
+	if !ok || !model.Enabled {
+		return false
+	}
+	model.Enabled = false
+	e.models[modelID] = model
+	return true
 }
 
 func (e *Engine) disableProviderModelsForBudget(providerID string, err error) int {

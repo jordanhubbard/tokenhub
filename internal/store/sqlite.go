@@ -57,7 +57,6 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
-
 // migration is a versioned, ordered schema change.
 // run receives a *sql.DB and must be idempotent (safe to call on already-migrated databases).
 type migration struct {
@@ -92,7 +91,6 @@ func sqlMigration(version int, name string, stmts ...string) migration {
 		},
 	}
 }
-
 
 // schemaMigrations is the ordered list of all schema changes.
 // New migrations must be appended at the end with a strictly increasing version.
@@ -134,11 +132,16 @@ var schemaMigrations = []migration{
 			data TEXT NOT NULL DEFAULT '{}'
 		)`,
 		`CREATE TABLE IF NOT EXISTS routing_config (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			default_mode TEXT NOT NULL DEFAULT 'normal',
-			default_max_budget_usd REAL NOT NULL DEFAULT 0.05,
-			default_max_latency_ms INTEGER NOT NULL DEFAULT 20000
-		)`,
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				default_mode TEXT NOT NULL DEFAULT 'normal',
+				default_max_budget_usd REAL NOT NULL DEFAULT 0.05,
+				default_max_latency_ms INTEGER NOT NULL DEFAULT 20000
+			)`,
+		`CREATE TABLE IF NOT EXISTS wildcard_model_config (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				model_ids TEXT NOT NULL DEFAULT '[]',
+				updated_at TEXT NOT NULL
+			)`,
 		`CREATE TABLE IF NOT EXISTS audit_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -262,6 +265,13 @@ var schemaMigrations = []migration{
 	),
 	sqlMigration(13, "add_model_aliases_sticky_by",
 		`ALTER TABLE model_aliases ADD COLUMN sticky_by TEXT NOT NULL DEFAULT ''`,
+	),
+	sqlMigration(14, "create_wildcard_model_config",
+		`CREATE TABLE IF NOT EXISTS wildcard_model_config (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				model_ids TEXT NOT NULL DEFAULT '[]',
+				updated_at TEXT NOT NULL
+			)`,
 	),
 }
 
@@ -504,6 +514,42 @@ func (s *SQLiteStore) LoadRoutingConfig(ctx context.Context) (RoutingConfig, err
 		return RoutingConfig{}, nil
 	}
 	return cfg, nil
+}
+
+func (s *SQLiteStore) SaveWildcardModelIDs(ctx context.Context, ids []string) error {
+	payload, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("marshal wildcard model ids: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO wildcard_model_config (id, model_ids, updated_at)
+		 VALUES (1, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   model_ids=excluded.model_ids,
+		   updated_at=excluded.updated_at`,
+		string(payload), time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("save wildcard model ids: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadWildcardModelIDs(ctx context.Context) ([]string, error) {
+	var payload string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT model_ids FROM wildcard_model_config WHERE id = 1`).
+		Scan(&payload)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load wildcard model ids: %w", err)
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(payload), &ids); err != nil {
+		return nil, fmt.Errorf("decode wildcard model ids: %w", err)
+	}
+	return ids, nil
 }
 
 func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int) ([]RequestLog, error) {

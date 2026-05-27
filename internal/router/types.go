@@ -207,17 +207,38 @@ type OutputFormat struct {
 type ProviderResponse = json.RawMessage
 
 // WildcardModelHint lets callers explicitly opt into server-side model
-// selection. It behaves like an omitted model hint unless an alias named "*"
-// is configured, in which case the alias controls the resolved target.
+// selection through the ordered wildcard ladder. An alias named "*" can still
+// override the initial assignment when operators want explicit variant control.
 const WildcardModelHint = "*"
 
+// defaultWildcardRoundRobinModels is the built-in fail-down gradient used when
+// callers send model="*" and operators have not configured an explicit "*"
+// alias. The name is preserved for API compatibility with existing tests and
+// callers, but the order is now quality/capability first, then lower-cost and
+// provider-diverse fallbacks.
 var defaultWildcardRoundRobinModels = []string{
-	"deepseek-v4-flash",
-	"claude-opus-4-7",
 	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.4-nano",
+	"gpt-5.2",
+	"gpt-5.1",
+	"gpt-5",
+	"gpt-5-mini",
+	"gpt-5-nano",
+	"minimaxai/minimax-m2.7",
+	"minimax-m2.7",
+	"gpt-4.1-mini",
+	"gpt-4.1-nano",
+	"gpt-4o-mini",
+	"openai/gpt-oss-120b",
+	"openai/gpt-oss-20b",
+	"meta/llama-3.3-70b-instruct",
+	"deepseek-ai/deepseek-v4-flash",
+	"deepseek-v4-flash",
 }
 
-// DefaultWildcardRoundRobinModelIDs returns the built-in diversity pool used
+// DefaultWildcardRoundRobinModelIDs returns the built-in fail-down pool used
 // when a caller sends model="*" and operators have not configured an explicit
 // "*" alias. Only registered, enabled models with live adapters participate.
 func DefaultWildcardRoundRobinModelIDs() []string {
