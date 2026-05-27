@@ -314,9 +314,6 @@ func (e *Engine) UnregisterAdapter(id string) {
 func (e *Engine) RegisterModel(m Model) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if m.Enabled {
-		delete(e.budgetExhaustedProviders, m.ProviderID)
-	}
 	e.models[m.ID] = m
 }
 

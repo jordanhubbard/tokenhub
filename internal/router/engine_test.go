@@ -438,6 +438,7 @@ func TestBudgetErrorPersistsWhenOnlyHealthExcludedModelsRemain(t *testing.T) {
 	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
 		t.Fatalf("expected initial ErrBudgetExceeded, got %v", err)
 	}
+	eng.RegisterModel(Model{ID: "gpt-4.1-mini", ProviderID: "openai", Weight: 9, MaxContextTokens: 4096, Enabled: true})
 
 	unhealthy := newMockSender("unhealthy")
 	eng.RegisterAdapter(unhealthy)
@@ -499,6 +500,7 @@ func TestStreamBudgetErrorPersistsWhenOnlyHealthExcludedModelsRemain(t *testing.
 	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
 		t.Fatalf("expected initial stream ErrBudgetExceeded, got %v", err)
 	}
+	eng.RegisterModel(Model{ID: "gpt-4.1-mini", ProviderID: "openai", Weight: 9, MaxContextTokens: 4096, Enabled: true})
 
 	unhealthy := newMockStreamSender("unhealthy")
 	eng.RegisterAdapter(unhealthy)
