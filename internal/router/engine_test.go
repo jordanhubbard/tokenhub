@@ -359,6 +359,38 @@ func TestFatalError(t *testing.T) {
 	}
 }
 
+func TestBudgetErrorDisablesProviderModels(t *testing.T) {
+	eng := NewEngine(EngineConfig{})
+	mock := newMockSender("p1")
+	eng.RegisterAdapter(mock)
+
+	eng.RegisterModel(Model{ID: "m1", ProviderID: "p1", Weight: 10, MaxContextTokens: 4096, Enabled: true})
+	eng.RegisterModel(Model{ID: "m2", ProviderID: "p1", Weight: 9, MaxContextTokens: 4096, Enabled: true})
+	mock.setError("m1", ErrBudgetExceeded)
+	mock.setError("m2", ErrBudgetExceeded)
+
+	_, _, err := eng.RouteAndSend(context.Background(), makeRequest("hi"), Policy{})
+	if err == nil {
+		t.Fatal("expected budget error")
+	}
+	var classified *ClassifiedError
+	if !errors.As(err, &classified) || classified.Class != ErrBudgetExceeded {
+		t.Fatalf("expected ErrBudgetExceeded, got %v", err)
+	}
+	if got := len(mock.calls); got != 1 {
+		t.Fatalf("expected one provider call after provider-wide budget failure, got %d", got)
+	}
+	for _, id := range []string{"m1", "m2"} {
+		model, ok := eng.GetModel(id)
+		if !ok {
+			t.Fatalf("model %s missing", id)
+		}
+		if model.Enabled {
+			t.Fatalf("model %s still enabled after provider budget failure", id)
+		}
+	}
+}
+
 func TestOrchestrateSingleRoute(t *testing.T) {
 	eng := NewEngine(EngineConfig{})
 	mock := newMockSender("p1")

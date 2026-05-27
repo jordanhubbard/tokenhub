@@ -205,6 +205,7 @@ func (e *Engine) hedgedSend(
 
 	received := 0
 	var lastErr error
+	var budgetErr error
 	for received < n {
 		select {
 		case <-hedgeCtx.Done():
@@ -223,16 +224,15 @@ func (e *Engine) hedgedSend(
 			}
 			// Disable the model immediately when its budget is exhausted.
 			if result.classified != nil && result.classified.Class == ErrBudgetExceeded {
-				slog.Warn("provider budget exhausted (hedged), disabling model",
+				if budgetErr == nil {
+					budgetErr = result.classified
+				}
+				disabled := e.disableProviderModels(result.model.ProviderID)
+				slog.Warn("provider budget exhausted (hedged), disabling models",
 					slog.String("provider", result.model.ProviderID),
 					slog.String("model", result.model.ID),
+					slog.Int("disabled_models", disabled),
 				)
-				e.mu.Lock()
-				if mod, ok := e.models[result.model.ID]; ok {
-					mod.Enabled = false
-					e.models[result.model.ID] = mod
-				}
-				e.mu.Unlock()
 			}
 			lastErr = result.err
 			slog.Warn("hedged provider failed",
@@ -241,6 +241,9 @@ func (e *Engine) hedgedSend(
 				slog.String("error", result.err.Error()),
 			)
 		}
+	}
+	if budgetErr != nil {
+		return Model{}, nil, 0, budgetErr
 	}
 	return Model{}, nil, 0, lastErr
 }
@@ -344,6 +347,8 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	// Track which model IDs were attempted in the primary pass so the fallback
 	// pass can skip them and only probe untried candidates.
 	tried := make(map[string]bool, len(eligible))
+	budgetProviders := map[string]bool{}
+	var budgetErr error
 
 	// When hedging is enabled, dispatch the primary eligible set in parallel
 	// with staggered launch times. The first successful response wins.
@@ -390,6 +395,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		// Sequential fallback: try each eligible model in weight order with full
 		// per-error-class handling (context shrink, rate-limit skip, etc.).
 		for i, m := range eligible {
+			if budgetProviders[m.ProviderID] {
+				continue
+			}
 			tried[m.ID] = true
 			adapter := adapters[m.ProviderID]
 			estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
@@ -532,18 +540,18 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 
 			case ErrBudgetExceeded:
 				// The provider's spending budget is permanently exhausted. Disable the
-				// model immediately so it is not selected again until manually re-enabled
+				// provider's models immediately so they are not selected again until manually re-enabled
 				// via the admin API. This prevents wasteful round-trips on every request.
-				slog.Warn("provider budget exhausted, disabling model",
+				if budgetErr == nil {
+					budgetErr = classified
+				}
+				budgetProviders[m.ProviderID] = true
+				disabled := e.disableProviderModels(m.ProviderID)
+				slog.Warn("provider budget exhausted, disabling models",
 					slog.String("provider", m.ProviderID),
 					slog.String("model", m.ID),
+					slog.Int("disabled_models", disabled),
 				)
-				e.mu.Lock()
-				if mod, ok := e.models[m.ID]; ok {
-					mod.Enabled = false
-					e.models[m.ID] = mod
-				}
-				e.mu.Unlock()
 				continue
 
 			case ErrFatal:
@@ -578,6 +586,9 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 	e.mu.RUnlock()
 
 	for _, m := range lastResort {
+		if budgetProviders[m.ProviderID] {
+			continue
+		}
 		adapter := lrAdapters[m.ProviderID]
 		slog.Warn("last-resort routing: probing health-excluded provider",
 			slog.String("provider", m.ProviderID),
@@ -614,12 +625,29 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 		if e.health != nil {
 			e.health.RecordError(m.ProviderID, err.Error())
 		}
+		classified := adapter.ClassifyError(err)
+		if classified.Class == ErrBudgetExceeded {
+			if budgetErr == nil {
+				budgetErr = classified
+			}
+			budgetProviders[m.ProviderID] = true
+			disabled := e.disableProviderModels(m.ProviderID)
+			slog.Warn("provider budget exhausted (last resort), disabling models",
+				slog.String("provider", m.ProviderID),
+				slog.String("model", m.ID),
+				slog.Int("disabled_models", disabled),
+			)
+		}
 		slog.Warn("last-resort provider also failed",
 			slog.String("provider", m.ProviderID),
 			slog.String("model", m.ID),
 			slog.String("error", err.Error()),
+			slog.String("class", string(classified.Class)),
 		)
 	}
 
+	if budgetErr != nil {
+		return Decision{}, nil, budgetErr
+	}
 	return Decision{}, nil, errors.New("all providers failed")
 }

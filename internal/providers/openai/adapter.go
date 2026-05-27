@@ -114,6 +114,9 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 	if errors.As(err, &se) {
 		switch {
 		case se.StatusCode == 429:
+			if isQuotaExhausted(se.Body) {
+				return &router.ClassifiedError{Err: err, Class: router.ErrBudgetExceeded}
+			}
 			ce := &router.ClassifiedError{Err: err, Class: router.ErrRateLimited}
 			if se.RetryAfterSecs > 0 {
 				ce.RetryAfter = se.RetryAfterSecs
@@ -135,6 +138,15 @@ func (a *Adapter) ClassifyError(err error) *router.ClassifiedError {
 		return &router.ClassifiedError{Err: err, Class: router.ErrTransient}
 	}
 	return &router.ClassifiedError{Err: err, Class: router.ErrFatal}
+}
+
+func isQuotaExhausted(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "insufficient_quota") ||
+		strings.Contains(lower, "exceeded your current quota") ||
+		strings.Contains(lower, "quota") && strings.Contains(lower, "billing") ||
+		strings.Contains(lower, "hard limit") ||
+		strings.Contains(lower, "budget_exceeded")
 }
 
 // SendStream sends a streaming request and returns the raw SSE response body.

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -71,6 +72,45 @@ func writeOpenAIError(w http.ResponseWriter, msg, errType string, code int) {
 			Code:    nil,
 		},
 	})
+}
+
+func writeOpenAIRoutingError(w http.ResponseWriter, err error) {
+	var classified *router.ClassifiedError
+	if errors.As(err, &classified) {
+		switch classified.Class {
+		case router.ErrBudgetExceeded:
+			writeOpenAIError(w, err.Error(), string(router.ErrBudgetExceeded), http.StatusTooManyRequests)
+			return
+		case router.ErrRateLimited:
+			writeOpenAIError(w, err.Error(), string(router.ErrRateLimited), http.StatusTooManyRequests)
+			return
+		case router.ErrContextOverflow:
+			writeOpenAIError(w, err.Error(), string(router.ErrContextOverflow), http.StatusBadRequest)
+			return
+		}
+	}
+	writeOpenAIError(w, err.Error(), "server_error", http.StatusBadGateway)
+}
+
+func routingErrorClass(err error) string {
+	var classified *router.ClassifiedError
+	if errors.As(err, &classified) {
+		return string(classified.Class)
+	}
+	return "routing_failure"
+}
+
+func routingErrorStatus(err error) int {
+	var classified *router.ClassifiedError
+	if errors.As(err, &classified) {
+		switch classified.Class {
+		case router.ErrBudgetExceeded, router.ErrRateLimited:
+			return http.StatusTooManyRequests
+		case router.ErrContextOverflow:
+			return http.StatusBadRequest
+		}
+	}
+	return http.StatusBadGateway
 }
 
 // ChatCompletionsHandler returns an http.HandlerFunc for the OpenAI-compatible
@@ -181,7 +221,22 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 		if req.Stream {
 			decision, body, serr := d.Engine.RouteAndStream(reqCtx, routerReq, policy)
 			if serr != nil {
-				writeOpenAIError(w, serr.Error(), "server_error", http.StatusBadGateway)
+				streamLatencyMs := time.Since(start).Milliseconds()
+				httpStatus := routingErrorStatus(serr)
+				recordObservability(d, observeParams{
+					Ctx:             r.Context(),
+					Mode:            policy.Mode,
+					LatencyMs:       streamLatencyMs,
+					Success:         false,
+					ErrorClass:      routingErrorClass(serr),
+					ErrorMsg:        serr.Error(),
+					RequestID:       reqID,
+					APIKeyID:        apiKeyID,
+					APIKeyName:      apiKeyName,
+					EstimatedTokens: estimatedTokens,
+					HTTPStatus:      httpStatus,
+				})
+				writeOpenAIRoutingError(w, serr)
 				return
 			}
 			// Apply model-specific output transformations.
@@ -274,20 +329,21 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 		latencyMs := time.Since(start).Milliseconds()
 
 		if err != nil {
+			httpStatus := routingErrorStatus(err)
 			recordObservability(d, observeParams{
 				Ctx:             r.Context(),
 				Mode:            policy.Mode,
 				LatencyMs:       latencyMs,
 				Success:         false,
-				ErrorClass:      "routing_failure",
+				ErrorClass:      routingErrorClass(err),
 				ErrorMsg:        err.Error(),
 				RequestID:       reqID,
 				APIKeyID:        apiKeyID,
 				APIKeyName:      apiKeyName,
 				EstimatedTokens: estimatedTokens,
-				HTTPStatus:      http.StatusBadGateway,
+				HTTPStatus:      httpStatus,
 			})
-			writeOpenAIError(w, err.Error(), "server_error", http.StatusBadGateway)
+			writeOpenAIRoutingError(w, err)
 			return
 		}
 

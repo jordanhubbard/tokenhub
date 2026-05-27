@@ -33,6 +33,8 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		decision.AliasFrom = aliasFrom
 	}
 	if err != nil {
+		budgetProviders := map[string]bool{}
+		var budgetErr error
 		// SelectModel failed because eligibleModels returned empty. Attempt
 		// last-resort routing over all enabled models before surfacing the error.
 		e.mu.RLock()
@@ -61,6 +63,9 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 				slog.Int("candidates", len(candidates)),
 			)
 			for _, m := range candidates {
+				if budgetProviders[m.ProviderID] {
+					continue
+				}
 				a := lrAdapters[m.ProviderID]
 				fs, ok := a.(StreamSender)
 				if !ok {
@@ -83,20 +88,29 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 					e.health.RecordError(m.ProviderID, serr.Error())
 				}
 				if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
-					e.mu.Lock()
-					if mod, ok := e.models[m.ID]; ok {
-						mod.Enabled = false
-						e.models[m.ID] = mod
+					if budgetErr == nil {
+						budgetErr = fc
 					}
-					e.mu.Unlock()
+					budgetProviders[m.ProviderID] = true
+					disabled := e.disableProviderModels(m.ProviderID)
+					slog.Warn("provider budget exhausted (stream last resort), disabling models",
+						slog.String("provider", m.ProviderID),
+						slog.String("model", m.ID),
+						slog.Int("disabled_models", disabled),
+					)
 				}
 			}
+		}
+		if budgetErr != nil {
+			return Decision{}, nil, budgetErr
 		}
 		return Decision{}, nil, err
 	}
 
 	// Build set of tried model IDs for the fallback pass below.
 	tried := map[string]bool{decision.ModelID: true}
+	budgetProviders := map[string]bool{}
+	var budgetErr error
 
 	e.mu.RLock()
 	adapter := e.adapters[decision.ProviderID]
@@ -120,21 +134,22 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 
 	// Primary model failed. Handle budget exhaustion then try eligible fallbacks.
 	if classified := adapter.ClassifyError(err); classified.Class == ErrBudgetExceeded {
-		slog.Warn("provider budget exhausted (stream), disabling model",
+		budgetErr = classified
+		budgetProviders[decision.ProviderID] = true
+		disabled := e.disableProviderModels(decision.ProviderID)
+		slog.Warn("provider budget exhausted (stream), disabling models",
 			slog.String("provider", decision.ProviderID),
 			slog.String("model", decision.ModelID),
+			slog.Int("disabled_models", disabled),
 		)
-		e.mu.Lock()
-		if mod, ok := e.models[decision.ModelID]; ok {
-			mod.Enabled = false
-			e.models[decision.ModelID] = mod
-		}
-		e.mu.Unlock()
 	}
 
 	// Try remaining eligible models (those returned by SelectModel).
 	for _, m := range eligible {
 		if m.ID == decision.ModelID {
+			continue
+		}
+		if budgetProviders[m.ProviderID] {
 			continue
 		}
 		tried[m.ID] = true
@@ -159,16 +174,16 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 			e.health.RecordError(m.ProviderID, err.Error())
 		}
 		if fc := fallbackAdapter.ClassifyError(err); fc.Class == ErrBudgetExceeded {
-			slog.Warn("provider budget exhausted (stream fallback), disabling model",
+			if budgetErr == nil {
+				budgetErr = fc
+			}
+			budgetProviders[m.ProviderID] = true
+			disabled := e.disableProviderModels(m.ProviderID)
+			slog.Warn("provider budget exhausted (stream fallback), disabling models",
 				slog.String("provider", m.ProviderID),
 				slog.String("model", m.ID),
+				slog.Int("disabled_models", disabled),
 			)
-			e.mu.Lock()
-			if mod, ok := e.models[m.ID]; ok {
-				mod.Enabled = false
-				e.models[m.ID] = mod
-			}
-			e.mu.Unlock()
 		}
 	}
 
@@ -196,6 +211,9 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 	e.mu.RUnlock()
 
 	for _, m := range lastResort {
+		if budgetProviders[m.ProviderID] {
+			continue
+		}
 		a := lrAdapters[m.ProviderID]
 		fs, ok := a.(StreamSender)
 		if !ok {
@@ -221,6 +239,18 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		if e.health != nil {
 			e.health.RecordError(m.ProviderID, serr.Error())
 		}
+		if fc := a.ClassifyError(serr); fc.Class == ErrBudgetExceeded {
+			if budgetErr == nil {
+				budgetErr = fc
+			}
+			budgetProviders[m.ProviderID] = true
+			disabled := e.disableProviderModels(m.ProviderID)
+			slog.Warn("provider budget exhausted (stream last resort), disabling models",
+				slog.String("provider", m.ProviderID),
+				slog.String("model", m.ID),
+				slog.Int("disabled_models", disabled),
+			)
+		}
 		slog.Warn("stream: last-resort provider also failed",
 			slog.String("provider", m.ProviderID),
 			slog.String("model", m.ID),
@@ -228,5 +258,8 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 		)
 	}
 
+	if budgetErr != nil {
+		return Decision{}, nil, budgetErr
+	}
 	return Decision{}, nil, fmt.Errorf("all providers failed for streaming: %w", err)
 }

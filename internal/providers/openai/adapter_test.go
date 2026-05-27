@@ -182,6 +182,27 @@ func TestSendRateLimit(t *testing.T) {
 	}
 }
 
+func TestSendQuotaExhausted(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}`))
+	}))
+	defer ts.Close()
+
+	a := New("openai", "test-key", ts.URL)
+	_, err := a.Send(context.Background(), "gpt-4", router.Request{
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	classified := a.ClassifyError(err)
+	if classified.Class != router.ErrBudgetExceeded {
+		t.Errorf("expected ErrBudgetExceeded, got %s", classified.Class)
+	}
+}
+
 func TestSendServerError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

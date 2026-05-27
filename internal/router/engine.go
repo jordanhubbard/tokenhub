@@ -313,6 +313,21 @@ func (e *Engine) RegisterModel(m Model) {
 	e.models[m.ID] = m
 }
 
+func (e *Engine) disableProviderModels(providerID string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	disabled := 0
+	for id, model := range e.models {
+		if model.ProviderID != providerID || !model.Enabled {
+			continue
+		}
+		model.Enabled = false
+		e.models[id] = model
+		disabled++
+	}
+	return disabled
+}
+
 // HasModel returns true if a model with the given ID is registered (enabled or not).
 func (e *Engine) HasModel(id string) bool {
 	e.mu.RLock()

@@ -122,6 +122,44 @@ func TestCompletionsSuccess(t *testing.T) {
 	}
 }
 
+func TestCompletionsBudgetExceededError(t *testing.T) {
+	ts, eng, _ := setupTestServer(t)
+	defer ts.Close()
+
+	eng.RegisterAdapter(&mockSender{
+		id:  "p1",
+		err: &router.ClassifiedError{Err: errors.New("provider quota exhausted"), Class: router.ErrBudgetExceeded},
+	})
+	eng.RegisterModel(router.Model{
+		ID: "gpt-4", ProviderID: "p1",
+		Weight: 5, MaxContextTokens: 8192, Enabled: true,
+	})
+
+	body, _ := json.Marshal(CompletionsRequest{
+		Model:    "gpt-4",
+		Messages: []router.Message{{Role: "user", Content: "hi"}},
+	})
+
+	resp, err := authPost(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusTooManyRequests {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 429, got %d: %s", resp.StatusCode, b)
+	}
+
+	var errBody openaiErrorBody
+	if err := json.NewDecoder(resp.Body).Decode(&errBody); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if errBody.Error.Type != string(router.ErrBudgetExceeded) {
+		t.Fatalf("expected error type %q, got %q", router.ErrBudgetExceeded, errBody.Error.Type)
+	}
+}
+
 func TestCompletionsServerSelectedModelWhenModelOmittedOrWildcard(t *testing.T) {
 	for _, tc := range []struct {
 		name string
