@@ -104,6 +104,13 @@ Capabilities influence which routing mode profile is used when no explicit mode 
 {
   "negotiated_model": "gpt-4",
   "estimated_cost_usd": 0.0023,
+  "cost": {
+    "total": 0.0023,
+    "currency": "USD",
+    "source": "model_pricing",
+    "pricing_source": "internal-pricing-snapshot",
+    "pricing_as_of": "2026-08-01"
+  },
   "routing_reason": "routed-weight-8",
   "response": {
     "id": "chatcmpl-...",
@@ -125,7 +132,8 @@ Capabilities influence which routing mode profile is used when no explicit mode 
 | Field | Description |
 |-------|-------------|
 | `negotiated_model` | The model ID that was selected |
-| `estimated_cost_usd` | Estimated cost based on model pricing and token counts |
+| `estimated_cost_usd` | Backward-compatible scalar for the accounted USD cost |
+| `cost` | Normalized cost components and provider/catalog provenance |
 | `routing_reason` | Why this model was chosen (see Routing Reasons) |
 | `response` | Raw JSON response from the selected provider |
 

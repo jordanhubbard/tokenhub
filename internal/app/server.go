@@ -25,6 +25,7 @@ import (
 	"github.com/jordanhubbard/tokenhub/internal/idempotency"
 	"github.com/jordanhubbard/tokenhub/internal/logging"
 	"github.com/jordanhubbard/tokenhub/internal/metrics"
+	"github.com/jordanhubbard/tokenhub/internal/pricing/nemorelay"
 	"github.com/jordanhubbard/tokenhub/internal/providers/anthropic"
 	"github.com/jordanhubbard/tokenhub/internal/providers/openai"
 	"github.com/jordanhubbard/tokenhub/internal/providers/vllm"
@@ -105,6 +106,7 @@ func NewServer(cfg Config) (*Server, error) {
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		ExposedHeaders:   []string{"X-Request-ID", "X-Negotiated-Model", "X-Alias-From", "X-TokenHub-Cost-USD", "X-TokenHub-Cost-Source"},
 		AllowCredentials: false,
 		MaxAge:           300,
 	}))
@@ -227,6 +229,22 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Load persisted models from DB.
 	loadPersistedModels(eng, db, logger)
+	if len(cfg.NemoRelayPricingFiles) > 0 {
+		pricingResolver, err := nemorelay.LoadFiles(cfg.NemoRelayPricingFiles)
+		if err != nil {
+			if prober != nil {
+				prober.Stop()
+			}
+			_ = db.Close()
+			return nil, fmt.Errorf("NeMo Relay pricing: %w", err)
+		}
+		eng.SetCostEstimator(pricingResolver)
+		status := pricingResolver.CostEstimatorStatus()
+		logger.Info("loaded NeMo Relay pricing catalogs",
+			slog.Int("sources", len(status.Sources)),
+			slog.Int("entries", status.Entries),
+		)
+	}
 	loadRoutingConfig(eng, db, logger)
 	loadWildcardModelConfig(eng, db, cfg.WildcardModelsFile, logger)
 
@@ -480,7 +498,8 @@ func (s *Server) SetHTTPServer(srv *http.Server) {
 
 // Reload applies hot-reloadable configuration parameters at runtime without
 // restarting the server. It updates rate limiter settings, routing policy
-// defaults, and the log level.
+// defaults, NeMo Relay pricing catalogs, and the log level. If a catalog
+// reload fails, the last known-good estimator remains active.
 func (s *Server) Reload(cfg Config) {
 	s.rateLimiter.UpdateLimits(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	if s.adminRateLimiter != nil {
@@ -488,6 +507,13 @@ func (s *Server) Reload(cfg Config) {
 	}
 	s.engine.UpdateDefaults(cfg.DefaultMode, cfg.DefaultMaxBudget, cfg.DefaultMaxLatencyMs)
 	loadWildcardModelConfig(s.engine, s.store, cfg.WildcardModelsFile, s.logger)
+	if len(cfg.NemoRelayPricingFiles) == 0 {
+		s.engine.SetCostEstimator(nil)
+	} else if resolver, err := nemorelay.LoadFiles(cfg.NemoRelayPricingFiles); err != nil {
+		s.logger.Warn("NeMo Relay pricing reload failed; keeping last known-good catalogs", slog.String("error", err.Error()))
+	} else {
+		s.engine.SetCostEstimator(resolver)
+	}
 	logging.SetLevel(cfg.LogLevel)
 	s.cfg = cfg
 	s.logger.Info("configuration reloaded",
@@ -753,14 +779,16 @@ func seedStatsFromDB(sc *stats.Collector, db store.Store, logger *slog.Logger) {
 	snapshots := make([]stats.Snapshot, 0, len(logs))
 	for _, l := range logs {
 		snapshots = append(snapshots, stats.Snapshot{
-			Timestamp:    l.Timestamp,
-			ModelID:      l.ModelID,
-			ProviderID:   l.ProviderID,
-			LatencyMs:    float64(l.LatencyMs),
-			CostUSD:      l.EstimatedCostUSD,
-			Success:      l.StatusCode < 500,
-			InputTokens:  l.InputTokens,
-			OutputTokens: l.OutputTokens,
+			Timestamp:        l.Timestamp,
+			ModelID:          l.ModelID,
+			ProviderID:       l.ProviderID,
+			LatencyMs:        float64(l.LatencyMs),
+			CostUSD:          l.EstimatedCostUSD,
+			Success:          l.StatusCode < 500,
+			InputTokens:      l.InputTokens,
+			OutputTokens:     l.OutputTokens,
+			CacheReadTokens:  l.CacheReadTokens,
+			CacheWriteTokens: l.CacheWriteTokens,
 		})
 	}
 	sc.Seed(snapshots)

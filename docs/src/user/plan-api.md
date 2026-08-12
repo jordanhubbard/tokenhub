@@ -53,6 +53,7 @@ The critique-refine cycle repeats for the configured number of iterations.
 {
   "negotiated_model": "claude-opus",
   "estimated_cost_usd": 0.15,
+  "cost": {"total": 0.15, "currency": "USD", "source": "preflight_estimate"},
   "routing_reason": "adversarial-orchestration",
   "response": {
     "initial_plan": "Here is the initial API design...",

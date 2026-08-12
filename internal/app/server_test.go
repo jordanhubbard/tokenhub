@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jordanhubbard/tokenhub/internal/router"
@@ -29,6 +32,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		"TOKENHUB_DEFAULT_MAX_BUDGET_USD",
 		"TOKENHUB_DEFAULT_MAX_LATENCY_MS",
 		"TOKENHUB_PROVIDER_TIMEOUT_SECS",
+		"TOKENHUB_NEMO_RELAY_PRICING_FILES",
 	}
 	for _, key := range envVars {
 		t.Setenv(key, "")
@@ -64,6 +68,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.ProviderTimeoutSecs != 30 {
 		t.Errorf("ProviderTimeoutSecs = %d, want 30", cfg.ProviderTimeoutSecs)
 	}
+	if len(cfg.NemoRelayPricingFiles) != 0 {
+		t.Errorf("NemoRelayPricingFiles = %v, want empty", cfg.NemoRelayPricingFiles)
+	}
 }
 
 func TestLoadConfigFromEnv(t *testing.T) {
@@ -75,6 +82,7 @@ func TestLoadConfigFromEnv(t *testing.T) {
 	t.Setenv("TOKENHUB_DEFAULT_MAX_BUDGET_USD", "1.5")
 	t.Setenv("TOKENHUB_DEFAULT_MAX_LATENCY_MS", "5000")
 	t.Setenv("TOKENHUB_PROVIDER_TIMEOUT_SECS", "60")
+	t.Setenv("TOKENHUB_NEMO_RELAY_PRICING_FILES", "/etc/nemo/primary.json,/etc/nemo/fallback.json")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -104,6 +112,9 @@ func TestLoadConfigFromEnv(t *testing.T) {
 	}
 	if cfg.ProviderTimeoutSecs != 60 {
 		t.Errorf("ProviderTimeoutSecs = %d, want 60", cfg.ProviderTimeoutSecs)
+	}
+	if got, want := cfg.NemoRelayPricingFiles, []string{"/etc/nemo/primary.json", "/etc/nemo/fallback.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("NemoRelayPricingFiles = %v, want %v", got, want)
 	}
 }
 
@@ -170,6 +181,111 @@ func TestNewServerHasRouter(t *testing.T) {
 
 	if srv.Router() == nil {
 		t.Fatal("expected non-nil Router()")
+	}
+}
+
+func TestCORSExposesCostAccountingHeaders(t *testing.T) {
+	cfg := newTestConfig()
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer() error: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Origin", "https://client.example")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	exposed := w.Header().Get("Access-Control-Expose-Headers")
+	if !strings.Contains(exposed, "X-Tokenhub-Cost-Usd") || !strings.Contains(exposed, "X-Tokenhub-Cost-Source") {
+		t.Fatalf("cost accounting headers are not CORS-exposed: %q", exposed)
+	}
+}
+
+func TestNewServerLoadsNeMoRelayPricing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pricing.json")
+	err := os.WriteFile(path, []byte(`{
+  "version": 1,
+  "entries": [{
+    "provider": "openai", "model_id": "priced-model",
+    "rates": {"input_per_million": 1, "output_per_million": 2},
+    "prompt_cache": {"read_accounting": "included_in_prompt_tokens"},
+    "pricing_as_of": "2026-08-01", "pricing_source": "test"
+  }]
+}`), 0o600)
+	if err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	cfg := newTestConfig()
+	cfg.NemoRelayPricingFiles = []string{path}
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer() error: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	status := srv.engine.CostEstimatorStatus()
+	if !status.Enabled || status.Type != "nemo_relay" || status.Entries != 1 {
+		t.Fatalf("unexpected pricing status: %+v", status)
+	}
+}
+
+func TestNewServerRejectsInvalidNeMoRelayPricing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pricing.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"entries":[]}`), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	cfg := newTestConfig()
+	cfg.NemoRelayPricingFiles = []string{path}
+	srv, err := NewServer(cfg)
+	if srv != nil {
+		_ = srv.Close()
+	}
+	if err == nil {
+		t.Fatal("NewServer() accepted an invalid NeMo Relay pricing catalog")
+	}
+}
+
+func TestServerReloadRetainsLastKnownGoodNeMoRelayPricing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pricing.json")
+	valid := []byte(`{
+  "version": 1,
+  "entries": [{
+    "provider": "openai", "model_id": "priced-model",
+    "rates": {"input_per_million": 1, "output_per_million": 2},
+    "prompt_cache": {"read_accounting": "included_in_prompt_tokens"},
+    "pricing_as_of": "2026-08-01", "pricing_source": "test"
+  }]
+}`)
+	if err := os.WriteFile(path, valid, 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	cfg := newTestConfig()
+	cfg.NemoRelayPricingFiles = []string{path}
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer() error: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	if err := os.WriteFile(path, []byte(`{"version":2,"entries":[]}`), 0o600); err != nil {
+		t.Fatalf("replace catalog: %v", err)
+	}
+	srv.Reload(cfg)
+	status := srv.engine.CostEstimatorStatus()
+	if !status.Enabled || status.Entries != 1 {
+		t.Fatalf("reload did not retain last known-good pricing: %+v", status)
+	}
+
+	disabled := cfg
+	disabled.NemoRelayPricingFiles = nil
+	srv.Reload(disabled)
+	if status := srv.engine.CostEstimatorStatus(); status.Enabled {
+		t.Fatalf("empty reload did not disable pricing: %+v", status)
 	}
 }
 

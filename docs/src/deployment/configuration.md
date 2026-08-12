@@ -23,6 +23,18 @@ TokenHub is configured entirely via environment variables. All variables are opt
 | `TOKENHUB_DEFAULT_MAX_BUDGET_USD` | `0.05` | Default max cost per request (USD) |
 | `TOKENHUB_DEFAULT_MAX_LATENCY_MS` | `20000` | Default max latency (milliseconds) |
 
+### Cost Accounting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_NEMO_RELAY_PRICING_FILES` | — | Comma-separated NeMo Relay pricing catalog v1 JSON paths, in precedence order |
+| `TOKENHUB_PRICING_REFRESH_ENABLED` | `true` | Refresh unmatched flat model rates from LiteLLM |
+| `TOKENHUB_PRICING_REFRESH_INTERVAL_SECS` | `3600` | LiteLLM pricing refresh interval |
+
+When a NeMo Relay catalog entry matches, its cache-aware or tier-aware rates
+take precedence over the model's flat per-1K prices. See [NeMo Relay Cost
+Accounting](../admin/pricing.md).
+
 ### Security & Hardening
 
 | Variable | Default | Description |

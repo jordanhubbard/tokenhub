@@ -62,6 +62,10 @@ type Config struct {
 	// Pricing refresh from LiteLLM pricing JSON.
 	PricingRefreshEnabled      bool // TOKENHUB_PRICING_REFRESH_ENABLED, default true
 	PricingRefreshIntervalSecs int  // TOKENHUB_PRICING_REFRESH_INTERVAL_SECS, default 3600
+	// NeMo Relay pricing catalog v1 JSON files, in precedence order. When a
+	// model matches, these cache-aware/tier-aware rates take precedence over
+	// TokenHub's flat per-1K model prices.
+	NemoRelayPricingFiles []string // TOKENHUB_NEMO_RELAY_PRICING_FILES
 
 	// Graceful shutdown drain timeout.
 	ShutdownDrainSecs int // TOKENHUB_SHUTDOWN_DRAIN_SECS, default 30
@@ -105,6 +109,7 @@ func LoadConfig() (Config, error) {
 
 		PricingRefreshEnabled:      getEnvBool("TOKENHUB_PRICING_REFRESH_ENABLED", true),
 		PricingRefreshIntervalSecs: getEnvInt("TOKENHUB_PRICING_REFRESH_INTERVAL_SECS", 3600),
+		NemoRelayPricingFiles:      getEnvStringSlice("TOKENHUB_NEMO_RELAY_PRICING_FILES", nil),
 
 		ShutdownDrainSecs: getEnvInt("TOKENHUB_SHUTDOWN_DRAIN_SECS", 30),
 	}

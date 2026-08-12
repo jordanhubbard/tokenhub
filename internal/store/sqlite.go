@@ -273,6 +273,13 @@ var schemaMigrations = []migration{
 				updated_at TEXT NOT NULL
 			)`,
 	),
+	sqlMigration(15, "add_nemo_relay_cost_accounting",
+		`ALTER TABLE request_logs ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN cost_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE request_logs ADD COLUMN pricing_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE request_logs ADD COLUMN pricing_as_of TEXT NOT NULL DEFAULT ''`,
+	),
 }
 
 // Migrate applies all pending schema migrations in version order.
@@ -451,11 +458,12 @@ func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LogRequest(ctx context.Context, entry RequestLog) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens, alias_from)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request_logs (timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens, cache_read_tokens, cache_write_tokens, cost_source, pricing_source, pricing_as_of, alias_from)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Timestamp, entry.ModelID, entry.ProviderID, entry.Mode,
 		entry.EstimatedCostUSD, entry.LatencyMs, entry.StatusCode, entry.ErrorClass, entry.RequestID, entry.APIKeyID,
-		entry.InputTokens, entry.OutputTokens, entry.TotalTokens, entry.AliasFrom)
+		entry.InputTokens, entry.OutputTokens, entry.TotalTokens, entry.CacheReadTokens, entry.CacheWriteTokens,
+		entry.CostSource, entry.PricingSource, entry.PricingAsOf, entry.AliasFrom)
 	return err
 }
 
@@ -557,7 +565,7 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens, alias_from
+		`SELECT id, timestamp, model_id, provider_id, mode, estimated_cost_usd, latency_ms, status_code, error_class, request_id, api_key_id, input_tokens, output_tokens, total_tokens, cache_read_tokens, cache_write_tokens, cost_source, pricing_source, pricing_as_of, alias_from
 		 FROM request_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -570,7 +578,8 @@ func (s *SQLiteStore) ListRequestLogs(ctx context.Context, limit int, offset int
 		var ts string
 		if err := rows.Scan(&l.ID, &ts, &l.ModelID, &l.ProviderID, &l.Mode,
 			&l.EstimatedCostUSD, &l.LatencyMs, &l.StatusCode, &l.ErrorClass, &l.RequestID, &l.APIKeyID,
-			&l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.AliasFrom); err != nil {
+			&l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.CacheReadTokens, &l.CacheWriteTokens,
+			&l.CostSource, &l.PricingSource, &l.PricingAsOf, &l.AliasFrom); err != nil {
 			return nil, err
 		}
 		l.Timestamp = parseTime(ts)

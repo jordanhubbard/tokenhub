@@ -158,6 +158,11 @@ type RequestLog struct {
 	InputTokens      int       `json:"input_tokens"`
 	OutputTokens     int       `json:"output_tokens"`
 	TotalTokens      int       `json:"total_tokens"`
+	CacheReadTokens  int       `json:"cache_read_tokens"`
+	CacheWriteTokens int       `json:"cache_write_tokens"`
+	CostSource       string    `json:"cost_source,omitempty"`
+	PricingSource    string    `json:"pricing_source,omitempty"`
+	PricingAsOf      string    `json:"pricing_as_of,omitempty"`
 	// AliasFrom is the client-supplied alias name when a blind A/B alias
 	// rewrote the ModelHint, or empty when no alias was applied. Enables
 	// grouping rows for experiment analysis: all requests sent to alias

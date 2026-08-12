@@ -95,7 +95,7 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 					return Decision{
 						ModelID:          m.ID,
 						ProviderID:       m.ProviderID,
-						EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K),
+						EstimatedCostUSD: e.estimateModelCostUSD(m, tokensNeeded, outTok),
 						Reason:           "last-resort-fallback",
 						AliasFrom:        aliasFrom,
 					}, body, nil
@@ -294,7 +294,7 @@ func (e *Engine) RouteAndStream(ctx context.Context, req Request, p Policy) (Dec
 			return Decision{
 				ModelID:          m.ID,
 				ProviderID:       m.ProviderID,
-				EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K),
+				EstimatedCostUSD: e.estimateModelCostUSD(m, tokensNeeded, outTok),
 				Reason:           "last-resort-fallback",
 				AliasFrom:        aliasFrom,
 			}, body, nil

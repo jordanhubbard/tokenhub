@@ -62,7 +62,7 @@ func (e *Engine) eligibleModels(tokensNeeded int, p Policy) []Model {
 			continue // skip providers in cooldown
 		}
 		if p.MaxBudgetUSD > 0 {
-			est := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
+			est := e.estimateModelCostUSD(m, tokensNeeded, outTok)
 			if est > p.MaxBudgetUSD {
 				skip(m.ProviderID, "budget_exceeded")
 				continue
@@ -130,7 +130,7 @@ func (e *Engine) scoreModels(models []Model, tokensNeeded, outTokens int, mode s
 	sp, hasStats := e.health.(StatsProvider)
 
 	for _, m := range models {
-		cost := estimateCostUSD(tokensNeeded, outTokens, m.InputPer1K, m.OutputPer1K)
+		cost := e.estimateModelCostUSD(m, tokensNeeded, outTokens)
 		if cost > maxCost {
 			maxCost = cost
 		}
@@ -151,7 +151,7 @@ func (e *Engine) scoreModels(models []Model, tokensNeeded, outTokens int, mode s
 
 	scores := make(map[string]float64, len(models))
 	for _, m := range models {
-		cost := estimateCostUSD(tokensNeeded, outTokens, m.InputPer1K, m.OutputPer1K)
+		cost := e.estimateModelCostUSD(m, tokensNeeded, outTokens)
 		normCost := safeNorm(cost, maxCost)
 		normWeight := safeNorm(float64(m.Weight), maxWeight)
 
@@ -215,7 +215,7 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	if req.ModelHint != "" {
 		for _, m := range eligible {
 			if m.ID == req.ModelHint {
-				estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
+				estCost := e.estimateModelCostUSD(m, tokensNeeded, outTok)
 				reason := "routed-hint-exact"
 				if wildcardRequest {
 					reason = "routed-wildcard-gradient"
@@ -234,7 +234,7 @@ func (e *Engine) SelectModel(ctx context.Context, req Request, p Policy) (Decisi
 	// No exact hint match — fall back to weighted softmax selection.
 	e.applyHintBoost(eligible, req.ModelHint, tokensNeeded, outTok, p.Mode)
 	selected := softmaxSelect(eligible, e.cfg.ExplorationTemp)
-	estCost := estimateCostUSD(tokensNeeded, outTok, selected.InputPer1K, selected.OutputPer1K)
+	estCost := e.estimateModelCostUSD(selected, tokensNeeded, outTok)
 	reason := fmt.Sprintf("routed-weight-%d", selected.Weight)
 	return Decision{
 		ModelID:          selected.ID,

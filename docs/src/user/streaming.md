@@ -117,5 +117,5 @@ However, once streaming has begun (first bytes sent to the client), failover is 
 
 - Streaming is only available on `/v1/chat`, not `/v1/plan`
 - Output format validation (`output_format.schema`) is not applied to streaming responses
-- Cost estimation in streaming responses may be less accurate since token counts are not known until the stream completes
+- `/v1/messages` accounts final Anthropic SSE usage and publishes cost headers as HTTP trailers; other streaming paths retain their preflight estimate when final usage is unavailable
 - When Temporal workflows are enabled, streaming bypasses Temporal and uses direct engine dispatch

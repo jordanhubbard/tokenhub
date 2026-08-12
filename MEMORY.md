@@ -1,6 +1,6 @@
 # MEMORY.md — TokenHub Codebase Reference
 
-Last updated: 2026-02-21 (v0.2.6)
+Last updated: 2026-08-12 (Unreleased)
 
 This document is a comprehensive reference for AI assistants working on the TokenHub codebase. It covers architecture, build system, data flow, debugging, and known gotchas.
 
@@ -16,6 +16,7 @@ TokenHub is an **LLM routing gateway** written in Go. It sits between clients an
 - Thompson Sampling (contextual bandit) for adaptive routing
 - Multi-model orchestration (adversarial, vote, refine modes)
 - Full observability: Prometheus, embedded TSDB, SSE event stream, request logs
+- NeMo Relay catalog v1 cost accounting with cache/tier pricing provenance
 - Admin dashboard (single-file HTML with Cytoscape.js + D3.js)
 - Optional Temporal workflow engine for durable orchestration
 
@@ -61,6 +62,8 @@ tokenhub/
 │   │   └── logging.go            # slog setup with dynamic level
 │   ├── metrics/
 │   │   └── metrics.go            # Prometheus counters/histograms registry
+│   ├── pricing/nemorelay/
+│   │   └── catalog.go            # NeMo Relay catalog v1 loader and estimator
 │   ├── providers/
 │   │   ├── http.go               # DoRequest/DoStreamRequest shared HTTP helpers
 │   │   ├── contract.go           # StatusError type
@@ -184,6 +187,7 @@ Client
   │
   ├─ POST /v1/chat/completions   (OpenAI-compatible)
   ├─ POST /v1/chat               (native TokenHub format)
+  ├─ POST /v1/messages           (Anthropic-compatible passthrough)
   └─ POST /v1/plan               (multi-model orchestration)
        │
        ├─ API key auth middleware (apikey.AuthMiddleware)
@@ -203,7 +207,7 @@ Client
            │   └─ Return Decision + ProviderResponse
            │
            ├─ extractUsage(resp) → parse actual tokens from provider response
-           ├─ computeActualCost() → replace estimate with real token-based cost
+           ├─ computeActualCost() → provider cost, NeMo catalog, flat rate, or preflight fallback
            │
            └─ recordObservability() → fans out to 6 sinks:
                ├─ Prometheus (tokenhub_requests_total, _latency_ms, _cost_usd_total, _tokens_total)
@@ -223,7 +227,9 @@ The central function is `recordObservability()` in `internal/httpapi/observe.go`
 | Field | Source | Sinks |
 |-------|--------|-------|
 | `InputTokens` / `OutputTokens` | Parsed from provider response via `extractUsage()` | All 6 sinks |
-| `CostUSD` | `computeActualCost()` using actual tokens + per-1K rates | All 6 sinks |
+| `CacheReadTokens` / `CacheWriteTokens` | Normalized provider cache usage | All 6 sinks |
+| `CostUSD` | Provider-reported cost or actual usage priced by NeMo catalog/flat rates | All 6 sinks |
+| `CostSource` / pricing provenance | Provider response or matching catalog entry | Store and events |
 | `LatencyMs` | Wall-clock `time.Since(start)` | All 6 sinks |
 | `ModelID` / `ProviderID` | From `router.Decision` | All 6 sinks |
 | `Success` / `ErrorClass` | Determined by handler | All 6 sinks |
@@ -231,11 +237,15 @@ The central function is `recordObservability()` in `internal/httpapi/observe.go`
 
 ### Token extraction
 
-`extractUsage()` in `observe.go` handles two response formats:
+`extractUsage()` in `observe.go` handles OpenAI, Responses, Anthropic, and NeMo
+Relay-normalized response formats:
 - **OpenAI**: `usage.prompt_tokens` / `usage.completion_tokens`
 - **Anthropic**: `usage.input_tokens` / `usage.output_tokens`
+- **Cache**: cached-token details, `cache_read_input_tokens`, and `cache_creation_input_tokens`
+- **Cost**: `usage.cost_usd` or normalized `usage.cost` with provenance
 
-Streaming responses don't include usage blocks, so tokens remain 0 for streamed requests. Cost falls back to the pre-flight estimate in that case.
+Anthropic SSE usage is accumulated from `message_start` and `message_delta`.
+Other streams retain the pre-flight estimate when final usage is unavailable.
 
 ### TSDB flush timing
 

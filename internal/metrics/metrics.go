@@ -10,13 +10,13 @@ import (
 type Registry struct {
 	reg *prometheus.Registry
 
-	RequestsTotal    *prometheus.CounterVec
-	RequestLatency   *prometheus.HistogramVec
-	CostUSD          *prometheus.CounterVec
-	TokensTotal      *prometheus.CounterVec
+	RequestsTotal         *prometheus.CounterVec
+	RequestLatency        *prometheus.HistogramVec
+	CostUSD               *prometheus.CounterVec
+	TokensTotal           *prometheus.CounterVec
 	RateLimitedTotal      prometheus.Counter
 	AdminRateLimitedTotal prometheus.Counter
-	TemporalUp       prometheus.Gauge
+	TemporalUp            prometheus.Gauge
 
 	// Circuit breaker metrics.
 	TemporalCircuitState  prometheus.Gauge   // 0=closed, 1=open, 2=half-open
@@ -47,8 +47,8 @@ func New() *Registry {
 			Help: "Total requests routed through tokenhub",
 		}, []string{"mode", "model", "provider", "status"}),
 		RequestLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tokenhub_request_latency_ms",
-			Help: "Request latency in milliseconds",
+			Name:    "tokenhub_request_latency_ms",
+			Help:    "Request latency in milliseconds",
 			Buckets: prometheus.ExponentialBuckets(10, 2, 10),
 		}, []string{"mode", "model", "provider"}),
 		CostUSD: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -57,7 +57,7 @@ func New() *Registry {
 		}, []string{"model", "provider"}),
 		TokensTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tokenhub_tokens_total",
-			Help: "Total tokens consumed (input + output)",
+			Help: "Token usage by category; cache reads may also be included in provider-reported input tokens",
 		}, []string{"model", "provider", "direction"}),
 		RateLimitedTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tokenhub_rate_limited_total",

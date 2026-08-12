@@ -57,10 +57,11 @@ type PolicyHint struct {
 
 // ChatResponse is the JSON body returned by the /v1/chat endpoint.
 type ChatResponse struct {
-	NegotiatedModel  string          `json:"negotiated_model"`
-	EstimatedCostUSD float64         `json:"estimated_cost_usd"`
-	RoutingReason    string          `json:"routing_reason"`
-	Response         json.RawMessage `json:"response"`
+	NegotiatedModel  string              `json:"negotiated_model"`
+	EstimatedCostUSD float64             `json:"estimated_cost_usd"`
+	Cost             router.CostEstimate `json:"cost"`
+	RoutingReason    string              `json:"routing_reason"`
+	Response         json.RawMessage     `json:"response"`
 }
 
 func ChatHandler(d Dependencies) http.HandlerFunc {
@@ -235,6 +236,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 						Mode:       policy.Mode,
 						LatencyMs:  streamLatencyMs,
 						CostUSD:    decision.EstimatedCostUSD,
+						CostSource: "preflight_estimate",
 						Success:    streamSuccess,
 					},
 					BytesStreamed: totalBytes,
@@ -270,6 +272,7 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 					ProviderID:      decision.ProviderID,
 					Mode:            policy.Mode,
 					CostUSD:         decision.EstimatedCostUSD,
+					CostSource:      "preflight_estimate",
 					LatencyMs:       streamLatencyMs,
 					Success:         streamSuccess,
 					ErrorClass:      errClass,
@@ -421,22 +424,27 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 		// Record metrics for successful requests (skip if Temporal already logged).
 		if !temporalHandledLogging {
 			recordObservability(d, observeParams{
-				Ctx:             r.Context(),
-				ModelID:         decision.ModelID,
-				ProviderID:      decision.ProviderID,
-				Mode:            policy.Mode,
-				CostUSD:         actualCost,
-				LatencyMs:       latencyMs,
-				Success:         true,
-				Reason:          decision.Reason,
-				RequestID:       middleware.GetReqID(r.Context()),
-				APIKeyID:        apiKeyID,
-				EstimatedTokens: estimatedTokens,
-				LatencyBudgetMs: latencyBudgetMs,
-				InputTokens:     usage.InputTokens,
-				OutputTokens:    usage.OutputTokens,
-				HTTPStatus:      http.StatusOK,
-				AliasFrom:       decision.AliasFrom,
+				Ctx:              r.Context(),
+				ModelID:          decision.ModelID,
+				ProviderID:       decision.ProviderID,
+				Mode:             policy.Mode,
+				CostUSD:          actualCost.Total,
+				CostSource:       actualCost.Source,
+				PricingSource:    actualCost.PricingSource,
+				PricingAsOf:      actualCost.PricingAsOf,
+				LatencyMs:        latencyMs,
+				Success:          true,
+				Reason:           decision.Reason,
+				RequestID:        middleware.GetReqID(r.Context()),
+				APIKeyID:         apiKeyID,
+				EstimatedTokens:  estimatedTokens,
+				LatencyBudgetMs:  latencyBudgetMs,
+				InputTokens:      usage.InputTokens,
+				OutputTokens:     usage.OutputTokens,
+				CacheReadTokens:  usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheWriteTokens,
+				HTTPStatus:       http.StatusOK,
+				AliasFrom:        decision.AliasFrom,
 			})
 		}
 
@@ -452,7 +460,8 @@ func ChatHandler(d Dependencies) http.HandlerFunc {
 
 		_ = json.NewEncoder(w).Encode(ChatResponse{
 			NegotiatedModel:  decision.ModelID,
-			EstimatedCostUSD: actualCost,
+			EstimatedCostUSD: actualCost.Total,
+			Cost:             actualCost,
 			RoutingReason:    decision.Reason,
 			Response:         resp,
 		})

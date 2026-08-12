@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -311,6 +312,7 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 				ProviderID:      decision.ProviderID,
 				Mode:            policy.Mode,
 				CostUSD:         decision.EstimatedCostUSD,
+				CostSource:      "preflight_estimate",
 				LatencyMs:       streamLatencyMs,
 				Success:         streamSuccess,
 				ErrorClass:      errClass,
@@ -351,27 +353,34 @@ func ChatCompletionsHandler(d Dependencies) http.HandlerFunc {
 		actualCost := computeActualCost(usage, decision.EstimatedCostUSD, d.Engine, decision.ModelID)
 
 		recordObservability(d, observeParams{
-			Ctx:             r.Context(),
-			ModelID:         decision.ModelID,
-			ProviderID:      decision.ProviderID,
-			Mode:            policy.Mode,
-			CostUSD:         actualCost,
-			LatencyMs:       latencyMs,
-			Success:         true,
-			Reason:          decision.Reason,
-			RequestID:       reqID,
-			APIKeyID:        apiKeyID,
-			APIKeyName:      apiKeyName,
-			EstimatedTokens: estimatedTokens,
-			InputTokens:     usage.InputTokens,
-			OutputTokens:    usage.OutputTokens,
-			HTTPStatus:      http.StatusOK,
-			AliasFrom:       decision.AliasFrom,
+			Ctx:              r.Context(),
+			ModelID:          decision.ModelID,
+			ProviderID:       decision.ProviderID,
+			Mode:             policy.Mode,
+			CostUSD:          actualCost.Total,
+			CostSource:       actualCost.Source,
+			PricingSource:    actualCost.PricingSource,
+			PricingAsOf:      actualCost.PricingAsOf,
+			LatencyMs:        latencyMs,
+			Success:          true,
+			Reason:           decision.Reason,
+			RequestID:        reqID,
+			APIKeyID:         apiKeyID,
+			APIKeyName:       apiKeyName,
+			EstimatedTokens:  estimatedTokens,
+			InputTokens:      usage.InputTokens,
+			OutputTokens:     usage.OutputTokens,
+			CacheReadTokens:  usage.CacheReadTokens,
+			CacheWriteTokens: usage.CacheWriteTokens,
+			HTTPStatus:       http.StatusOK,
+			AliasFrom:        decision.AliasFrom,
 		})
 		if decision.AliasFrom != "" {
 			w.Header().Set("X-Alias-From", decision.AliasFrom)
 		}
 		w.Header().Set("X-Negotiated-Model", decision.ModelID)
+		w.Header().Set("X-TokenHub-Cost-USD", strconv.FormatFloat(actualCost.Total, 'f', -1, 64))
+		w.Header().Set("X-TokenHub-Cost-Source", actualCost.Source)
 
 		// Build OpenAI-compatible response.
 		oaiResp := buildCompletionsResponse(reqID, decision.ModelID, resp)

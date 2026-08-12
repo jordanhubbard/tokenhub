@@ -1699,9 +1699,14 @@ function fetchRequestLogs() {
       : logs.map(e => {
         const latCls = e.latency_ms < 1000 ? 'color:#4caf50' : e.latency_ms <= 5000 ? 'color:#ffc107' : 'color:#f44336';
         const stCls = e.status_code === 200 ? 'color:#4caf50' : 'color:#f44336';
-        const tok = e.total_tokens > 0 ? e.total_tokens.toLocaleString() : '-';
+        let tok = e.total_tokens > 0 ? e.total_tokens.toLocaleString() : '-';
+        const cacheParts = [];
+        if (e.cache_read_tokens > 0) cacheParts.push(`read ${e.cache_read_tokens.toLocaleString()}`);
+        if (e.cache_write_tokens > 0) cacheParts.push(`write ${e.cache_write_tokens.toLocaleString()}`);
+        if (cacheParts.length) tok += ` <span style="color:#8a8d9a;font-size:10px" title="Prompt cache tokens">cache ${cacheParts.join(' / ')}</span>`;
+        const costProvenance = [e.cost_source, e.pricing_source, e.pricing_as_of].filter(Boolean).join(' · ');
         const modeBadge = e.mode ? `<span class="mode-badge ${modeClass(e.mode)}">${e.mode}</span>` : '-';
-        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td class="alias">${escapeHTML(e.alias_from||'-')}</td><td>${escapeHTML(e.model_id||'-')}</td><td>${escapeHTML(e.provider_id||'-')}</td><td>${modeBadge}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td>$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${escapeHTML(e.request_id||'-')}</td></tr>`;
+        return `<tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td class="alias">${escapeHTML(e.alias_from||'-')}</td><td>${escapeHTML(e.model_id||'-')}</td><td>${escapeHTML(e.provider_id||'-')}</td><td>${modeBadge}</td><td style="${latCls}">${e.latency_ms}</td><td>${tok}</td><td title="${escapeHTML(costProvenance)}">$${(e.estimated_cost_usd||0).toFixed(6)}</td><td style="${stCls}">${e.status_code}</td><td>${escapeHTML(e.request_id||'-')}</td></tr>`;
       }).join('');
     document.getElementById('req-log-page-info').textContent = `Page ${Math.floor(requestLogOffset/50)+1}`;
     document.getElementById('req-log-prev').disabled = requestLogOffset === 0;

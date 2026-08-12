@@ -70,7 +70,9 @@ rate(tokenhub_request_latency_ms_sum[5m]) / rate(tokenhub_request_latency_ms_cou
 
 **Type**: Counter
 
-Cumulative estimated cost in USD.
+Cumulative accounted cost in USD. Provider-reported cost is preferred, then
+NeMo Relay catalog pricing, flat model pricing, and finally the routing
+preflight estimate.
 
 **Labels**:
 | Label | Values | Description |
@@ -92,6 +94,26 @@ rate(tokenhub_cost_usd_total[1h]) * 3600
 # Most expensive model
 topk(3, sum(rate(tokenhub_cost_usd_total[1h])) by (model))
 ```
+
+---
+
+### tokenhub_tokens_total
+
+**Type**: Counter
+
+Token usage by category.
+
+**Labels**:
+
+| Label | Values | Description |
+|-------|--------|-------------|
+| `model` | gpt-4, etc. | Model ID |
+| `provider` | openai, etc. | Provider ID |
+| `direction` | input, output, cache_read, cache_write | Usage category |
+
+`cache_read` can be a subset of `input` for providers that report cached
+tokens as part of prompt usage. Sum input and output for total tokens; do not
+add cache directions unless the provider documents them as separate.
 
 ## Grafana Dashboard
 

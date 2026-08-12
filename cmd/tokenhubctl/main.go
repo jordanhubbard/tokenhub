@@ -80,6 +80,8 @@ func main() {
 		doRewards(args)
 	case "stats":
 		doStats()
+	case "pricing":
+		doPricing()
 	case "engine":
 		doEngine(args)
 	case "events":
@@ -159,6 +161,7 @@ Commands:
   audit [--limit N]           Show audit logs
   rewards [--limit N]         Show reward entries
   stats                       Show aggregated stats
+  pricing                     Show active NeMo Relay pricing catalogs
   engine models               Show runtime engine models and adapters
   events                      Stream real-time SSE events
 
@@ -817,6 +820,11 @@ func doRewards(args []string) {
 
 func doStats() {
 	data := doGet("/admin/v1/stats")
+	fmt.Println(prettyJSON(data))
+}
+
+func doPricing() {
+	data := doGet("/admin/v1/pricing")
 	fmt.Println(prettyJSON(data))
 }
 

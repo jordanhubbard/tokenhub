@@ -22,7 +22,7 @@ func (e *Engine) sendToModel(ctx context.Context, modelID string, req Request) (
 		return Decision{}, nil, fmt.Errorf("no adapter for provider %q", m.ProviderID)
 	}
 	tokens := EstimateTokens(req)
-	estCost := estimateCostUSD(tokens, 512, m.InputPer1K, m.OutputPer1K)
+	estCost := e.estimateModelCostUSD(m, tokens, 512)
 	resp, err := adapter.Send(ctx, m.ID, req)
 	if err != nil {
 		return Decision{}, nil, err
@@ -258,7 +258,7 @@ func (e *Engine) vote(ctx context.Context, req Request, d OrchestrationDirective
 		wg.Add(1)
 		go func(m Model, adapter Sender) {
 			defer wg.Done()
-			estCost := estimateCostUSD(tokensNeeded, 512, m.InputPer1K, m.OutputPer1K)
+			estCost := e.estimateModelCostUSD(m, tokensNeeded, 512)
 			resp, err := adapter.Send(ctx, m.ID, req)
 			if err != nil {
 				return

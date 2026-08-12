@@ -156,6 +156,14 @@ func TestRequestLogs(t *testing.T) {
 		LatencyMs:        350,
 		StatusCode:       200,
 		RequestID:        "req-123",
+		InputTokens:      1000,
+		OutputTokens:     200,
+		TotalTokens:      1200,
+		CacheReadTokens:  400,
+		CacheWriteTokens: 50,
+		CostSource:       "model_pricing",
+		PricingSource:    "nemo-relay-test",
+		PricingAsOf:      "2026-08-01",
 	}
 	if err := s.LogRequest(ctx, entry); err != nil {
 		t.Fatalf("log request failed: %v", err)
@@ -179,6 +187,9 @@ func TestRequestLogs(t *testing.T) {
 	// Most recent first
 	if logs[0].ModelID != "claude-opus" {
 		t.Errorf("expected claude-opus first (most recent), got %s", logs[0].ModelID)
+	}
+	if logs[0].CacheReadTokens != 400 || logs[0].CacheWriteTokens != 50 || logs[0].CostSource != "model_pricing" || logs[0].PricingSource != "nemo-relay-test" || logs[0].PricingAsOf != "2026-08-01" {
+		t.Errorf("NeMo Relay accounting fields were not preserved: %+v", logs[0])
 	}
 }
 

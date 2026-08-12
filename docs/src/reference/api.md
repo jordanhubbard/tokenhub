@@ -43,6 +43,7 @@ Send a chat completion request with automatic model routing.
 {
   "negotiated_model": "string",
   "estimated_cost_usd": 0.0,
+  "cost": {"total": 0.0, "currency": "USD", "source": "model_pricing", "pricing_source": "string", "pricing_as_of": "YYYY-MM-DD"},
   "routing_reason": "string",
   "response": {}
 }
@@ -82,12 +83,31 @@ Send an orchestrated multi-model request.
 {
   "negotiated_model": "string",
   "estimated_cost_usd": 0.0,
+  "cost": {"total": 0.0, "currency": "USD", "source": "model_pricing", "pricing_source": "string", "pricing_as_of": "YYYY-MM-DD"},
   "routing_reason": "string",
   "response": {}
 }
 ```
 
 **Errors**: 400, 401, 403, 502
+
+---
+
+### POST /v1/messages
+
+Send an Anthropic-compatible messages request to an Anthropic-capable provider.
+The request and response bodies retain the Anthropic wire format.
+
+**Authentication**: Required (Bearer token with the `chat` scope)
+
+**Accounting**: Non-streaming responses include `X-TokenHub-Cost-USD` and
+`X-TokenHub-Cost-Source` headers. Streaming responses publish those fields as
+HTTP trailers after TokenHub observes the final SSE usage event. Anthropic
+`input_tokens`, `output_tokens`, `cache_read_input_tokens`, and
+`cache_creation_input_tokens` are recorded separately and priced through the
+active NeMo Relay catalog.
+
+**Errors**: 400, 401, 403, 502, 503
 
 ---
 
@@ -229,6 +249,17 @@ Delete a model. Model IDs with slashes are supported.
 ---
 
 ## Admin - Routing
+
+### GET /admin/v1/pricing
+
+Inspect the active first-class cost estimator. When NeMo Relay catalog pricing
+is disabled, `enabled` is false.
+
+**Response**: `200 OK` → `{"enabled": true, "type": "nemo_relay", "sources": ["/etc/tokenhub/pricing.json"], "entries": 42}`
+
+Request log objects returned by `GET /admin/v1/logs` include
+`cache_read_tokens`, `cache_write_tokens`, `cost_source`, `pricing_source`, and
+`pricing_as_of` when available.
 
 ### GET /admin/v1/routing-config
 

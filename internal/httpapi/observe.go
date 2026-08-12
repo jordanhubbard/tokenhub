@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jordanhubbard/tokenhub/internal/events"
@@ -17,13 +19,17 @@ import (
 
 // tokenUsage holds actual token counts extracted from a provider response.
 type tokenUsage struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	HasUsage         bool
+	Cost             *router.CostEstimate
 }
 
 // extractUsage parses token usage from a raw provider response. It supports
-// both OpenAI format (usage.prompt_tokens/completion_tokens) and Anthropic
-// format (usage.input_tokens/output_tokens).
+// OpenAI, Anthropic, and NeMo Relay normalized formats. Provider-reported
+// costs are retained as authoritative when denominated in USD.
 func extractUsage(raw json.RawMessage) tokenUsage {
 	if len(raw) == 0 {
 		return tokenUsage{}
@@ -34,43 +40,163 @@ func extractUsage(raw json.RawMessage) tokenUsage {
 	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Usage) == 0 {
 		return tokenUsage{}
 	}
-	// Try OpenAI format first.
-	var oai struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+	var normalized struct {
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		InputTokens      *int `json:"input_tokens"`
+		OutputTokens     *int `json:"output_tokens"`
+
+		PromptTokensDetails *struct {
+			CachedTokens *int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+		InputTokensDetails *struct {
+			CachedTokens *int `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+		CacheReadInputTokens *int `json:"cache_read_input_tokens"`
+		CacheReadTokens      *int `json:"cache_read_tokens"`
+		CacheCreationTokens  *int `json:"cache_creation_input_tokens"`
+		CacheWriteTokens     *int `json:"cache_write_tokens"`
+
+		CostUSD *float64 `json:"cost_usd"`
+		Cost    *struct {
+			Total           *float64 `json:"total"`
+			Currency        string   `json:"currency"`
+			Input           *float64 `json:"input"`
+			Output          *float64 `json:"output"`
+			CacheRead       *float64 `json:"cache_read"`
+			CacheWrite      *float64 `json:"cache_write"`
+			Source          string   `json:"source"`
+			PricingProvider string   `json:"pricing_provider"`
+			PricingModel    string   `json:"pricing_model"`
+			PricingAsOf     string   `json:"pricing_as_of"`
+			PricingSource   string   `json:"pricing_source"`
+		} `json:"cost"`
 	}
-	if json.Unmarshal(envelope.Usage, &oai) == nil && (oai.PromptTokens > 0 || oai.CompletionTokens > 0) {
-		return tokenUsage{
-			InputTokens:  oai.PromptTokens,
-			OutputTokens: oai.CompletionTokens,
+	if err := json.Unmarshal(envelope.Usage, &normalized); err != nil {
+		return tokenUsage{}
+	}
+
+	usage := tokenUsage{}
+	if normalized.PromptTokens != nil || normalized.CompletionTokens != nil {
+		usage.InputTokens = nonNegativeInt(normalized.PromptTokens)
+		usage.OutputTokens = nonNegativeInt(normalized.CompletionTokens)
+		usage.HasUsage = true
+	} else if normalized.InputTokens != nil || normalized.OutputTokens != nil {
+		usage.InputTokens = nonNegativeInt(normalized.InputTokens)
+		usage.OutputTokens = nonNegativeInt(normalized.OutputTokens)
+		usage.HasUsage = true
+	}
+
+	cacheRead := normalized.CacheReadTokens
+	if normalized.CacheReadInputTokens != nil {
+		cacheRead = normalized.CacheReadInputTokens
+	}
+	if normalized.InputTokensDetails != nil && normalized.InputTokensDetails.CachedTokens != nil {
+		cacheRead = normalized.InputTokensDetails.CachedTokens
+	}
+	if normalized.PromptTokensDetails != nil && normalized.PromptTokensDetails.CachedTokens != nil {
+		cacheRead = normalized.PromptTokensDetails.CachedTokens
+	}
+	if cacheRead != nil {
+		usage.CacheReadTokens = nonNegativeInt(cacheRead)
+		usage.HasUsage = true
+	}
+	cacheWrite := normalized.CacheWriteTokens
+	if normalized.CacheCreationTokens != nil {
+		cacheWrite = normalized.CacheCreationTokens
+	}
+	if cacheWrite != nil {
+		usage.CacheWriteTokens = nonNegativeInt(cacheWrite)
+		usage.HasUsage = true
+	}
+
+	if validCostAmount(normalized.CostUSD) {
+		usage.Cost = &router.CostEstimate{
+			Total:    *normalized.CostUSD,
+			Currency: "USD",
+			Source:   "provider_reported",
+		}
+		usage.HasUsage = true
+	} else if cost := normalized.Cost; cost != nil && (cost.Currency == "" || strings.EqualFold(cost.Currency, "USD")) {
+		total, ok := normalizedCostTotal(cost.Total, cost.Input, cost.Output, cost.CacheRead, cost.CacheWrite)
+		if ok {
+			source := cost.Source
+			if source == "" {
+				source = "provider_reported"
+			}
+			usage.Cost = &router.CostEstimate{
+				Total:           total,
+				Currency:        "USD",
+				Input:           cost.Input,
+				Output:          cost.Output,
+				CacheRead:       cost.CacheRead,
+				CacheWrite:      cost.CacheWrite,
+				Source:          source,
+				PricingProvider: cost.PricingProvider,
+				PricingModel:    cost.PricingModel,
+				PricingAsOf:     cost.PricingAsOf,
+				PricingSource:   cost.PricingSource,
+			}
+			usage.HasUsage = true
 		}
 	}
-	// Try Anthropic format.
-	var ant struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	}
-	if json.Unmarshal(envelope.Usage, &ant) == nil && (ant.InputTokens > 0 || ant.OutputTokens > 0) {
-		return tokenUsage{
-			InputTokens:  ant.InputTokens,
-			OutputTokens: ant.OutputTokens,
-		}
-	}
-	return tokenUsage{}
+	return usage
 }
 
-// computeActualCost calculates cost from actual token counts and per-1k rates.
-// Falls back to the pre-flight estimated cost when actual tokens are zero
-// (e.g. streaming responses that don't include a usage block).
-func computeActualCost(usage tokenUsage, estimatedCost float64, eng *router.Engine, modelID string) float64 {
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
-		return estimatedCost
+func nonNegativeInt(value *int) int {
+	if value == nil || *value < 0 {
+		return 0
 	}
-	if m, ok := eng.GetModel(modelID); ok {
-		return (float64(usage.InputTokens)/1000)*m.InputPer1K +
-			(float64(usage.OutputTokens)/1000)*m.OutputPer1K
+	return *value
+}
+
+func normalizedCostTotal(total *float64, components ...*float64) (float64, bool) {
+	if total != nil {
+		if !validCostAmount(total) {
+			return 0, false
+		}
+		return *total, true
 	}
-	return estimatedCost
+	value := 0.0
+	found := false
+	for _, component := range components {
+		if component != nil {
+			if !validCostAmount(component) {
+				return 0, false
+			}
+			value += *component
+			found = true
+		}
+	}
+	return value, found
+}
+
+func validCostAmount(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= 0
+}
+
+// computeActualCost gives provider-reported USD cost highest precedence, then
+// applies the active NeMo Relay catalog (including cache/tier semantics), and
+// finally falls back to the routing pre-flight estimate.
+func computeActualCost(usage tokenUsage, estimatedCost float64, eng *router.Engine, modelID string) router.CostEstimate {
+	if usage.Cost != nil {
+		return *usage.Cost
+	}
+	if usage.HasUsage {
+		if estimate, ok := eng.EstimateModelCost(modelID, router.TokenUsage{
+			PromptTokens:     usage.InputTokens,
+			CompletionTokens: usage.OutputTokens,
+			CacheReadTokens:  usage.CacheReadTokens,
+			CacheWriteTokens: usage.CacheWriteTokens,
+		}); ok {
+			return estimate
+		}
+	}
+	return router.CostEstimate{
+		Total:    estimatedCost,
+		Currency: "USD",
+		Source:   "preflight_estimate",
+	}
 }
 
 // jsonError writes a JSON-encoded error response with the given status code.
@@ -108,8 +234,13 @@ type observeParams struct {
 	LatencyBudgetMs int
 
 	// Actual token usage extracted from the provider response.
-	InputTokens  int
-	OutputTokens int
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	CostSource       string
+	PricingSource    string
+	PricingAsOf      string
 
 	// HTTPStatus is the HTTP response status code sent to the client.
 	// Used to populate tokenhub_request_errors_total. 0 means not set.
@@ -151,6 +282,12 @@ func recordObservability(d Dependencies, p observeParams) {
 			if p.OutputTokens > 0 {
 				d.Metrics.TokensTotal.WithLabelValues(p.ModelID, p.ProviderID, "output").Add(float64(p.OutputTokens))
 			}
+			if p.CacheReadTokens > 0 {
+				d.Metrics.TokensTotal.WithLabelValues(p.ModelID, p.ProviderID, "cache_read").Add(float64(p.CacheReadTokens))
+			}
+			if p.CacheWriteTokens > 0 {
+				d.Metrics.TokensTotal.WithLabelValues(p.ModelID, p.ProviderID, "cache_write").Add(float64(p.CacheWriteTokens))
+			}
 		}
 	}
 
@@ -177,6 +314,11 @@ func recordObservability(d Dependencies, p observeParams) {
 			InputTokens:      p.InputTokens,
 			OutputTokens:     p.OutputTokens,
 			TotalTokens:      p.InputTokens + p.OutputTokens,
+			CacheReadTokens:  p.CacheReadTokens,
+			CacheWriteTokens: p.CacheWriteTokens,
+			CostSource:       p.CostSource,
+			PricingSource:    p.PricingSource,
+			PricingAsOf:      p.PricingAsOf,
 			AliasFrom:        p.AliasFrom,
 		}
 		re := store.RewardEntry{
@@ -214,19 +356,24 @@ func recordObservability(d Dependencies, p observeParams) {
 	if d.EventBus != nil {
 		if p.Success {
 			d.EventBus.Publish(events.Event{
-				Type:         events.EventRouteSuccess,
-				ModelID:      p.ModelID,
-				ProviderID:   p.ProviderID,
-				AliasFrom:    p.AliasFrom,
-				LatencyMs:    float64(p.LatencyMs),
-				CostUSD:      p.CostUSD,
-				InputTokens:  p.InputTokens,
-				OutputTokens: p.OutputTokens,
-				TotalTokens:  p.InputTokens + p.OutputTokens,
-				Reason:       p.Reason,
-				Mode:         p.Mode,
-				APIKeyName:   p.APIKeyName,
-				RequestID:    p.RequestID,
+				Type:             events.EventRouteSuccess,
+				ModelID:          p.ModelID,
+				ProviderID:       p.ProviderID,
+				AliasFrom:        p.AliasFrom,
+				LatencyMs:        float64(p.LatencyMs),
+				CostUSD:          p.CostUSD,
+				InputTokens:      p.InputTokens,
+				OutputTokens:     p.OutputTokens,
+				TotalTokens:      p.InputTokens + p.OutputTokens,
+				CacheReadTokens:  p.CacheReadTokens,
+				CacheWriteTokens: p.CacheWriteTokens,
+				CostSource:       p.CostSource,
+				PricingSource:    p.PricingSource,
+				PricingAsOf:      p.PricingAsOf,
+				Reason:           p.Reason,
+				Mode:             p.Mode,
+				APIKeyName:       p.APIKeyName,
+				RequestID:        p.RequestID,
 			})
 		} else {
 			d.EventBus.Publish(events.Event{
@@ -247,16 +394,18 @@ func recordObservability(d Dependencies, p observeParams) {
 	// --- Stats ---
 	if d.Stats != nil {
 		d.Stats.Record(stats.Snapshot{
-			ModelID:      p.ModelID,
-			ProviderID:   p.ProviderID,
-			APIKeyID:     p.APIKeyID,
-			APIKeyName:   p.APIKeyName,
-			Mode:         p.Mode,
-			LatencyMs:    float64(p.LatencyMs),
-			CostUSD:      p.CostUSD,
-			Success:      p.Success,
-			InputTokens:  p.InputTokens,
-			OutputTokens: p.OutputTokens,
+			ModelID:          p.ModelID,
+			ProviderID:       p.ProviderID,
+			APIKeyID:         p.APIKeyID,
+			APIKeyName:       p.APIKeyName,
+			Mode:             p.Mode,
+			LatencyMs:        float64(p.LatencyMs),
+			CostUSD:          p.CostUSD,
+			Success:          p.Success,
+			InputTokens:      p.InputTokens,
+			OutputTokens:     p.OutputTokens,
+			CacheReadTokens:  p.CacheReadTokens,
+			CacheWriteTokens: p.CacheWriteTokens,
 		})
 	}
 
@@ -268,6 +417,12 @@ func recordObservability(d Dependencies, p observeParams) {
 			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cost", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: p.CostUSD})
 			if total := p.InputTokens + p.OutputTokens; total > 0 {
 				d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "tokens", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(total)})
+			}
+			if p.CacheReadTokens > 0 {
+				d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cache_read_tokens", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(p.CacheReadTokens)})
+			}
+			if p.CacheWriteTokens > 0 {
+				d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cache_write_tokens", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: float64(p.CacheWriteTokens)})
 			}
 		} else {
 			d.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "errors", ModelID: p.ModelID, ProviderID: p.ProviderID, Value: 1})

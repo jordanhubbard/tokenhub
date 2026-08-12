@@ -80,6 +80,7 @@ curl http://localhost:8080/metrics
 | `tokenhub_requests_total` | counter | mode, model, provider, status | Total requests processed |
 | `tokenhub_request_latency_ms` | histogram | mode, model, provider | Request latency distribution |
 | `tokenhub_cost_usd_total` | counter | model, provider | Cumulative estimated cost |
+| `tokenhub_tokens_total` | counter | model, provider, direction | Input, output, cache-read, and cache-write tokens |
 
 ### Prometheus Configuration
 
@@ -121,7 +122,7 @@ curl "http://localhost:8080/admin/v1/tsdb/query?metric=latency&model_id=gpt-4&st
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `metric` | Yes | Metric name (`latency` or `cost`) |
+| `metric` | Yes | Metric name (`latency`, `cost`, `tokens`, `cache_read_tokens`, or `cache_write_tokens`) |
 | `model_id` | No | Filter by model |
 | `provider_id` | No | Filter by provider |
 | `start` | No | Start time (RFC3339) |

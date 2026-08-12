@@ -101,7 +101,15 @@ CREATE TABLE IF NOT EXISTS request_logs (
     estimated_cost_usd REAL NOT NULL DEFAULT 0,
     latency_ms INTEGER NOT NULL DEFAULT 0,
     status_code INTEGER NOT NULL DEFAULT 0,
-    error_class TEXT NOT NULL DEFAULT ''
+    error_class TEXT NOT NULL DEFAULT '',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_source TEXT NOT NULL DEFAULT '',
+    pricing_source TEXT NOT NULL DEFAULT '',
+    pricing_as_of TEXT NOT NULL DEFAULT ''
 );
 ```
 

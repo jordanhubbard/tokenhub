@@ -29,10 +29,11 @@ type PlanRequest struct {
 }
 
 type PlanResponse struct {
-	NegotiatedModel  string          `json:"negotiated_model"`
-	EstimatedCostUSD float64         `json:"estimated_cost_usd"`
-	RoutingReason    string          `json:"routing_reason"`
-	Response         json.RawMessage `json:"response"`
+	NegotiatedModel  string              `json:"negotiated_model"`
+	EstimatedCostUSD float64             `json:"estimated_cost_usd"`
+	Cost             router.CostEstimate `json:"cost"`
+	RoutingReason    string              `json:"routing_reason"`
+	Response         json.RawMessage     `json:"response"`
 }
 
 func PlanHandler(d Dependencies) http.HandlerFunc {
@@ -222,20 +223,25 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		// Record metrics for successful requests (skip if Temporal already logged).
 		if !temporalHandledLogging {
 			recordObservability(d, observeParams{
-				Ctx:             r.Context(),
-				ModelID:         decision.ModelID,
-				ProviderID:      decision.ProviderID,
-				Mode:            mode,
-				CostUSD:         actualCost,
-				LatencyMs:       latencyMs,
-				Success:         true,
-				Reason:          decision.Reason,
-				RequestID:       middleware.GetReqID(r.Context()),
-				APIKeyID:        apiKeyID,
-				EstimatedTokens: estimatedTokens,
-				InputTokens:     usage.InputTokens,
-				OutputTokens:    usage.OutputTokens,
-				HTTPStatus:      http.StatusOK,
+				Ctx:              r.Context(),
+				ModelID:          decision.ModelID,
+				ProviderID:       decision.ProviderID,
+				Mode:             mode,
+				CostUSD:          actualCost.Total,
+				CostSource:       actualCost.Source,
+				PricingSource:    actualCost.PricingSource,
+				PricingAsOf:      actualCost.PricingAsOf,
+				LatencyMs:        latencyMs,
+				Success:          true,
+				Reason:           decision.Reason,
+				RequestID:        middleware.GetReqID(r.Context()),
+				APIKeyID:         apiKeyID,
+				EstimatedTokens:  estimatedTokens,
+				InputTokens:      usage.InputTokens,
+				OutputTokens:     usage.OutputTokens,
+				CacheReadTokens:  usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheWriteTokens,
+				HTTPStatus:       http.StatusOK,
 			})
 		}
 
@@ -247,7 +253,8 @@ func PlanHandler(d Dependencies) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(PlanResponse{
 			NegotiatedModel:  decision.ModelID,
-			EstimatedCostUSD: actualCost,
+			EstimatedCostUSD: actualCost.Total,
+			Cost:             actualCost,
 			RoutingReason:    decision.Reason,
 			Response:         resp,
 		})

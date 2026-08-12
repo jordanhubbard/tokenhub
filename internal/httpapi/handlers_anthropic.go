@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -36,6 +38,11 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		reqID := middleware.GetReqID(r.Context())
+		apiKeyID, apiKeyName := "", ""
+		if rec := apikey.FromContext(r.Context()); rec != nil {
+			apiKeyID = rec.ID
+			apiKeyName = rec.Name
+		}
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
 		if err != nil {
@@ -45,8 +52,9 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 
 		// Peek at the model and stream flag.
 		var peek struct {
-			Model  string `json:"model"`
-			Stream bool   `json:"stream"`
+			Model     string `json:"model"`
+			Stream    bool   `json:"stream"`
+			MaxTokens int    `json:"max_tokens"`
 		}
 		if jerr := json.Unmarshal(body, &peek); jerr != nil {
 			writeAnthropicError(w, "invalid JSON: "+jerr.Error(), "invalid_request_error", http.StatusBadRequest)
@@ -58,8 +66,8 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 			ID:        reqID,
 			ModelHint: modelHint,
 		}
-		if rec := apikey.FromContext(r.Context()); rec != nil && rec.ID != "" {
-			aliasReq.Meta = map[string]any{router.MetaAPIKeyID: rec.ID}
+		if apiKeyID != "" {
+			aliasReq.Meta = map[string]any{router.MetaAPIKeyID: apiKeyID}
 		}
 		aliasFrom := d.Engine.ResolveModelHint(&aliasReq)
 		modelHint = aliasReq.ModelHint
@@ -71,9 +79,29 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 
 		sender, resolvedModel := d.Engine.GetAnthropicSenderAndModel(modelHint)
 		if sender == nil {
+			recordObservability(d, observeParams{
+				Ctx:             r.Context(),
+				Mode:            "anthropic",
+				LatencyMs:       time.Since(start).Milliseconds(),
+				Success:         false,
+				ErrorClass:      "no_provider",
+				ErrorMsg:        "no Anthropic-compatible provider configured",
+				RequestID:       reqID,
+				APIKeyID:        apiKeyID,
+				APIKeyName:      apiKeyName,
+				EstimatedTokens: len(body) / 4,
+				HTTPStatus:      http.StatusServiceUnavailable,
+				AliasFrom:       aliasFrom,
+			})
 			writeAnthropicError(w, "no Anthropic-compatible provider configured", "server_error", http.StatusServiceUnavailable)
 			return
 		}
+		providerID := sender.ID()
+		estimatedInputTokens := len(body) / 4
+		preflightCost, hasPreflightCost := d.Engine.EstimateModelCost(resolvedModel, router.TokenUsage{
+			PromptTokens:     estimatedInputTokens,
+			CompletionTokens: peek.MaxTokens,
+		})
 		// Rewrite model in body when the registry resolved a different upstream ID
 		// (e.g. "claude-sonnet-4-6" → "azure/anthropic/claude-sonnet-4-6").
 		if resolvedModel != "" && resolvedModel != peek.Model {
@@ -85,11 +113,28 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 		if peek.Stream {
 			stream, serr := sender.ForwardRawStream(reqCtx, body)
 			if serr != nil {
+				latencyMs := time.Since(start).Milliseconds()
 				slog.Warn("anthropic passthrough: stream error",
 					slog.String("request_id", reqID),
 					slog.String("model", peek.Model),
 					slog.String("error", serr.Error()),
 				)
+				recordObservability(d, observeParams{
+					Ctx:             r.Context(),
+					ModelID:         resolvedModel,
+					ProviderID:      providerID,
+					Mode:            "anthropic",
+					LatencyMs:       latencyMs,
+					Success:         false,
+					ErrorClass:      "stream_error",
+					ErrorMsg:        serr.Error(),
+					RequestID:       reqID,
+					APIKeyID:        apiKeyID,
+					APIKeyName:      apiKeyName,
+					EstimatedTokens: estimatedInputTokens,
+					HTTPStatus:      http.StatusBadGateway,
+					AliasFrom:       aliasFrom,
+				})
 				writeAnthropicError(w, serr.Error(), "server_error", http.StatusBadGateway)
 				return
 			}
@@ -99,6 +144,8 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("X-Negotiated-Model", resolvedModel)
+			w.Header().Add("Trailer", "X-TokenHub-Cost-USD")
+			w.Header().Add("Trailer", "X-TokenHub-Cost-Source")
 			if aliasFrom != "" {
 				w.Header().Set("X-Alias-From", aliasFrom)
 			}
@@ -106,10 +153,23 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 
 			flusher, _ := w.(http.Flusher)
 			buf := make([]byte, 32*1024)
+			var usageAccumulator anthropicStreamUsageAccumulator
+			var totalBytes int64
+			streamSuccess := true
+			streamError := ""
 			for {
 				n, readErr := stream.Read(buf)
 				if n > 0 {
+					totalBytes += int64(n)
+					usageAccumulator.Add(buf[:n])
+					if totalBytes > maxStreamBytes {
+						streamSuccess = false
+						streamError = "stream exceeded maximum response size"
+						break
+					}
 					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+						streamSuccess = false
+						streamError = writeErr.Error()
 						break
 					}
 					if flusher != nil {
@@ -117,13 +177,52 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 					}
 				}
 				if readErr != nil {
+					if readErr != io.EOF {
+						streamSuccess = false
+						streamError = readErr.Error()
+					}
 					break
 				}
 			}
+			usage := usageAccumulator.Finish()
+			actualCost := anthropicActualCost(usage, preflightCost, hasPreflightCost, d.Engine, resolvedModel)
+			latencyMs := time.Since(start).Milliseconds()
+			errorClass := ""
+			httpStatus := http.StatusOK
+			if !streamSuccess {
+				errorClass = "stream_error"
+				httpStatus = http.StatusBadGateway
+			}
+			recordObservability(d, observeParams{
+				Ctx:              r.Context(),
+				ModelID:          resolvedModel,
+				ProviderID:       providerID,
+				Mode:             "anthropic",
+				CostUSD:          actualCost.Total,
+				CostSource:       actualCost.Source,
+				PricingSource:    actualCost.PricingSource,
+				PricingAsOf:      actualCost.PricingAsOf,
+				LatencyMs:        latencyMs,
+				Success:          streamSuccess,
+				ErrorClass:       errorClass,
+				ErrorMsg:         streamError,
+				RequestID:        reqID,
+				APIKeyID:         apiKeyID,
+				APIKeyName:       apiKeyName,
+				EstimatedTokens:  estimatedInputTokens,
+				InputTokens:      usage.InputTokens,
+				OutputTokens:     usage.OutputTokens,
+				CacheReadTokens:  usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheWriteTokens,
+				HTTPStatus:       httpStatus,
+				AliasFrom:        aliasFrom,
+			})
+			w.Header().Set("X-TokenHub-Cost-USD", strconv.FormatFloat(actualCost.Total, 'f', -1, 64))
+			w.Header().Set("X-TokenHub-Cost-Source", actualCost.Source)
 			slog.Debug("anthropic passthrough: stream done",
 				slog.String("request_id", reqID),
 				slog.String("model", peek.Model),
-				slog.Int64("latency_ms", time.Since(start).Milliseconds()),
+				slog.Int64("latency_ms", latencyMs),
 			)
 			return
 		}
@@ -139,9 +238,58 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 				slog.String("error", ferr.Error()),
 				slog.Int64("latency_ms", latencyMs),
 			)
+			recordObservability(d, observeParams{
+				Ctx:             r.Context(),
+				ModelID:         resolvedModel,
+				ProviderID:      providerID,
+				Mode:            "anthropic",
+				LatencyMs:       latencyMs,
+				Success:         false,
+				ErrorClass:      "upstream_error",
+				ErrorMsg:        ferr.Error(),
+				RequestID:       reqID,
+				APIKeyID:        apiKeyID,
+				APIKeyName:      apiKeyName,
+				EstimatedTokens: estimatedInputTokens,
+				HTTPStatus:      http.StatusBadGateway,
+				AliasFrom:       aliasFrom,
+			})
 			writeAnthropicError(w, ferr.Error(), "server_error", http.StatusBadGateway)
 			return
 		}
+		usage := extractUsage(respBody)
+		actualCost := anthropicActualCost(usage, preflightCost, hasPreflightCost, d.Engine, resolvedModel)
+		success := statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+		errorClass := ""
+		errorMsg := ""
+		if !success {
+			errorClass = "upstream_http_error"
+			errorMsg = http.StatusText(statusCode)
+		}
+		recordObservability(d, observeParams{
+			Ctx:              r.Context(),
+			ModelID:          resolvedModel,
+			ProviderID:       providerID,
+			Mode:             "anthropic",
+			CostUSD:          actualCost.Total,
+			CostSource:       actualCost.Source,
+			PricingSource:    actualCost.PricingSource,
+			PricingAsOf:      actualCost.PricingAsOf,
+			LatencyMs:        latencyMs,
+			Success:          success,
+			ErrorClass:       errorClass,
+			ErrorMsg:         errorMsg,
+			RequestID:        reqID,
+			APIKeyID:         apiKeyID,
+			APIKeyName:       apiKeyName,
+			EstimatedTokens:  estimatedInputTokens,
+			InputTokens:      usage.InputTokens,
+			OutputTokens:     usage.OutputTokens,
+			CacheReadTokens:  usage.CacheReadTokens,
+			CacheWriteTokens: usage.CacheWriteTokens,
+			HTTPStatus:       statusCode,
+			AliasFrom:        aliasFrom,
+		})
 
 		slog.Debug("anthropic passthrough: ok",
 			slog.String("request_id", reqID),
@@ -152,11 +300,100 @@ func AnthropicMessagesHandler(d Dependencies) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Negotiated-Model", resolvedModel)
+		w.Header().Set("X-TokenHub-Cost-USD", strconv.FormatFloat(actualCost.Total, 'f', -1, 64))
+		w.Header().Set("X-TokenHub-Cost-Source", actualCost.Source)
 		if aliasFrom != "" {
 			w.Header().Set("X-Alias-From", aliasFrom)
 		}
 		w.WriteHeader(statusCode)
 		_, _ = w.Write(respBody)
+	}
+}
+
+// anthropicActualCost preserves catalog provenance when a passthrough response
+// has no final usage object and TokenHub must retain its pre-flight estimate.
+func anthropicActualCost(usage tokenUsage, preflight router.CostEstimate, hasPreflight bool, eng *router.Engine, modelID string) router.CostEstimate {
+	if usage.HasUsage {
+		return computeActualCost(usage, preflight.Total, eng, modelID)
+	}
+	if hasPreflight {
+		preflight.Source = "preflight_estimate"
+		return preflight
+	}
+	return router.CostEstimate{Currency: "USD", Source: "preflight_estimate"}
+}
+
+// anthropicStreamUsageAccumulator observes native Anthropic SSE events without
+// changing the bytes sent to the client. Anthropic reports prompt/cache usage
+// in message_start.message.usage and final output usage in message_delta.usage.
+type anthropicStreamUsageAccumulator struct {
+	pending []byte
+	usage   tokenUsage
+}
+
+func (a *anthropicStreamUsageAccumulator) Add(chunk []byte) {
+	a.pending = append(a.pending, chunk...)
+	for {
+		newline := bytes.IndexByte(a.pending, '\n')
+		if newline < 0 {
+			return
+		}
+		a.consumeLine(a.pending[:newline])
+		a.pending = a.pending[newline+1:]
+	}
+}
+
+func (a *anthropicStreamUsageAccumulator) Finish() tokenUsage {
+	if len(a.pending) > 0 {
+		a.consumeLine(a.pending)
+		a.pending = nil
+	}
+	return a.usage
+}
+
+func (a *anthropicStreamUsageAccumulator) consumeLine(line []byte) {
+	line = bytes.TrimSpace(line)
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+		return
+	}
+
+	usage := extractUsage(payload)
+	if !usage.HasUsage {
+		var event struct {
+			Message json.RawMessage `json:"message"`
+		}
+		if err := json.Unmarshal(payload, &event); err == nil && len(event.Message) > 0 {
+			usage = extractUsage(event.Message)
+		}
+	}
+	mergeStreamUsage(&a.usage, usage)
+}
+
+// Stream usage values are cumulative provider totals, so retain the largest
+// value seen for each component rather than summing events.
+func mergeStreamUsage(dst *tokenUsage, src tokenUsage) {
+	if !src.HasUsage {
+		return
+	}
+	dst.HasUsage = true
+	if src.InputTokens > dst.InputTokens {
+		dst.InputTokens = src.InputTokens
+	}
+	if src.OutputTokens > dst.OutputTokens {
+		dst.OutputTokens = src.OutputTokens
+	}
+	if src.CacheReadTokens > dst.CacheReadTokens {
+		dst.CacheReadTokens = src.CacheReadTokens
+	}
+	if src.CacheWriteTokens > dst.CacheWriteTokens {
+		dst.CacheWriteTokens = src.CacheWriteTokens
+	}
+	if src.Cost != nil {
+		dst.Cost = src.Cost
 	}
 }
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- First-class NeMo Relay pricing catalog v1 cost accounting with cache rates, prompt-token tiers, provider-reported cost precedence, and persisted pricing provenance
+
 ## [0.2.35] - 2026-05-27
 
 ### Fixed

@@ -401,7 +401,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			return Decision{
 				ModelID:          selectedModel.ID,
 				ProviderID:       selectedModel.ProviderID,
-				EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, selectedModel.InputPer1K, selectedModel.OutputPer1K),
+				EstimatedCostUSD: e.estimateModelCostUSD(selectedModel, tokensNeeded, outTok),
 				Reason:           reason,
 				AliasFrom:        aliasFrom,
 			}, resp, nil
@@ -427,7 +427,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			}
 			tried[m.ID] = true
 			adapter := adapters[m.ProviderID]
-			estCost := estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K)
+			estCost := e.estimateModelCostUSD(m, tokensNeeded, outTok)
 
 			slog.Info("routing request",
 				slog.String("provider", m.ProviderID),
@@ -534,7 +534,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 						return Decision{
 							ModelID:          larger.ID,
 							ProviderID:       larger.ProviderID,
-							EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, larger.InputPer1K, larger.OutputPer1K),
+							EstimatedCostUSD: e.estimateModelCostUSD(*larger, tokensNeeded, outTok),
 							Reason:           "escalated-context-overflow",
 							AliasFrom:        aliasFrom,
 						}, resp2, nil
@@ -672,7 +672,7 @@ func (e *Engine) RouteAndSend(ctx context.Context, req Request, p Policy) (Decis
 			return Decision{
 				ModelID:          m.ID,
 				ProviderID:       m.ProviderID,
-				EstimatedCostUSD: estimateCostUSD(tokensNeeded, outTok, m.InputPer1K, m.OutputPer1K),
+				EstimatedCostUSD: e.estimateModelCostUSD(m, tokensNeeded, outTok),
 				Reason:           "last-resort-fallback",
 				AliasFrom:        aliasFrom,
 			}, resp, nil

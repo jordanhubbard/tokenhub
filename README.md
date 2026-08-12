@@ -18,6 +18,7 @@ An LLM routing proxy that routes, arbitrates, and orchestrates requests across m
 - **In-band directives** -- `@@tokenhub` annotations in messages to override routing policy per-request
 - **Output shaping** -- response format control (json/markdown/text), `<think>` block stripping, token truncation, and JSON schema validation
 - **Observability** -- Prometheus metrics, embedded TSDB, structured logging, health tracking, SSE event bus, audit logs, and request logs
+- **NeMo Relay cost accounting** -- native pricing catalog v1 support with cache-read/write rates, prompt-token tiers, provider-reported costs, and auditable pricing provenance
 - **Idempotency** -- automatic request deduplication via `Idempotency-Key` header
 - **Hot reload** -- send SIGHUP to reload configuration without restarting
 - **External token injection** -- `~/.tokenhub/credentials` file for declarative, git-safe secret management
@@ -155,6 +156,17 @@ Providers are registered at runtime via `~/.tokenhub/credentials`, the admin API
 | `TOKENHUB_DEFAULT_MAX_BUDGET_USD` | `0.05` | Max estimated cost per request (USD) |
 | `TOKENHUB_DEFAULT_MAX_LATENCY_MS` | `20000` | Max latency budget per request (ms) |
 
+### Cost Accounting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOKENHUB_NEMO_RELAY_PRICING_FILES` | | Comma-separated NeMo Relay pricing catalog v1 paths, first match wins |
+| `TOKENHUB_PRICING_REFRESH_ENABLED` | `true` | Refresh unmatched flat rates from LiteLLM |
+| `TOKENHUB_PRICING_REFRESH_INTERVAL_SECS` | `3600` | LiteLLM refresh interval |
+
+NeMo Relay catalogs support per-million input/output/cache rates and
+prompt-token tiers. See [NeMo Relay Cost Accounting](https://jordanhubbard.github.io/tokenhub/admin/pricing.html).
+
 ### Security and Hardening
 
 | Variable | Default | Description |
@@ -190,6 +202,7 @@ Providers are registered at runtime via `~/.tokenhub/credentials`, the admin API
 |--------|------|-------------|
 | `POST` | `/v1/chat` | Route a chat completion request to the best-fit model. Supports `stream: true` for SSE. |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions endpoint. Drop-in replacement for the OpenAI API. |
+| `POST` | `/v1/messages` | Anthropic-compatible messages endpoint with non-streaming and SSE usage/cost accounting. |
 | `POST` | `/v1/plan` | Orchestrated multi-model request (adversarial, vote, or refine mode). |
 | `GET` | `/healthz` | Health check. Returns adapter and model counts. |
 | `GET` | `/metrics` | Prometheus metrics endpoint. |
@@ -254,6 +267,7 @@ All `/admin/v1/*` endpoints require `Authorization: Bearer <TOKENHUB_ADMIN_TOKEN
 | `DELETE` | `/admin/v1/models/{id}` | Delete a model |
 | `GET` | `/admin/v1/routing-config` | Get current routing policy defaults |
 | `PUT` | `/admin/v1/routing-config` | Update routing policy defaults |
+| `GET` | `/admin/v1/pricing` | Inspect the active NeMo Relay pricing catalogs |
 | `POST` | `/admin/v1/apikeys` | Create a new API key |
 | `GET` | `/admin/v1/apikeys` | List all API keys |
 | `POST` | `/admin/v1/apikeys/{id}/rotate` | Rotate an API key |
@@ -372,6 +386,7 @@ tokenhubctl apikey delete <id>
 # Observability
 tokenhubctl health
 tokenhubctl stats
+tokenhubctl pricing         # active NeMo Relay catalog snapshot
 tokenhubctl logs --limit 20
 tokenhubctl audit --limit 20
 tokenhubctl engine models
@@ -463,6 +478,7 @@ internal/
   app/             Server wiring and configuration
   httpapi/         HTTP handlers and route mounting
   router/          Routing engine, scoring, Thompson Sampling, directives, output shaping
+  pricing/         NeMo Relay pricing catalog loading and cost estimation
   providers/       Provider adapter interface and shared HTTP utilities
     openai/        OpenAI adapter
     anthropic/     Anthropic adapter

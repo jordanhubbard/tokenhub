@@ -39,26 +39,36 @@ type SendInput struct {
 
 // SendOutput is the output of the SendToProvider activity.
 type SendOutput struct {
-	Response      json.RawMessage `json:"response"`
-	LatencyMs     int64           `json:"latency_ms"`
-	EstimatedCost float64         `json:"estimated_cost"`
-	ErrorClass    string          `json:"error_class,omitempty"`
-	InputTokens   int             `json:"input_tokens,omitempty"`
-	OutputTokens  int             `json:"output_tokens,omitempty"`
+	Response         json.RawMessage `json:"response"`
+	LatencyMs        int64           `json:"latency_ms"`
+	EstimatedCost    float64         `json:"estimated_cost"`
+	ErrorClass       string          `json:"error_class,omitempty"`
+	InputTokens      int             `json:"input_tokens,omitempty"`
+	OutputTokens     int             `json:"output_tokens,omitempty"`
+	CacheReadTokens  int             `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int             `json:"cache_write_tokens,omitempty"`
+	CostSource       string          `json:"cost_source,omitempty"`
+	PricingSource    string          `json:"pricing_source,omitempty"`
+	PricingAsOf      string          `json:"pricing_as_of,omitempty"`
 }
 
 // LogInput is the input for the LogResult activity.
 type LogInput struct {
-	RequestID    string  `json:"request_id"`
-	ModelID      string  `json:"model_id"`
-	ProviderID   string  `json:"provider_id"`
-	Mode         string  `json:"mode"`
-	LatencyMs    int64   `json:"latency_ms"`
-	CostUSD      float64 `json:"cost_usd"`
-	Success      bool    `json:"success"`
-	ErrorClass   string  `json:"error_class,omitempty"`
-	InputTokens  int     `json:"input_tokens,omitempty"`
-	OutputTokens int     `json:"output_tokens,omitempty"`
+	RequestID        string  `json:"request_id"`
+	ModelID          string  `json:"model_id"`
+	ProviderID       string  `json:"provider_id"`
+	Mode             string  `json:"mode"`
+	LatencyMs        int64   `json:"latency_ms"`
+	CostUSD          float64 `json:"cost_usd"`
+	Success          bool    `json:"success"`
+	ErrorClass       string  `json:"error_class,omitempty"`
+	InputTokens      int     `json:"input_tokens,omitempty"`
+	OutputTokens     int     `json:"output_tokens,omitempty"`
+	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
+	CostSource       string  `json:"cost_source,omitempty"`
+	PricingSource    string  `json:"pricing_source,omitempty"`
+	PricingAsOf      string  `json:"pricing_as_of,omitempty"`
 }
 
 // StreamLogInput is the input for the StreamLogResult activity.

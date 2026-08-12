@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
+	"strings"
 	"time"
 
 	"go.temporal.io/sdk/activity"
@@ -54,7 +56,7 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 		return SendOutput{}, fmt.Errorf("no adapter for provider %q", input.ProviderID)
 	}
 
-	m, ok := a.Engine.GetModel(input.ModelID)
+	_, ok := a.Engine.GetModel(input.ModelID)
 	if !ok {
 		return SendOutput{}, fmt.Errorf("model %q not found", input.ModelID)
 	}
@@ -101,14 +103,29 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 	}
 
 	tokens := router.EstimateTokens(input.Request)
-	estCost := (float64(tokens)/1000.0)*m.InputPer1K + (512.0/1000.0)*m.OutputPer1K
+	estimate, ok := a.Engine.EstimateModelCost(input.ModelID, router.TokenUsage{
+		PromptTokens:     tokens,
+		CompletionTokens: 512,
+	})
+	if !ok {
+		estimate = router.CostEstimate{Total: 0, Currency: "USD", Source: "preflight_estimate"}
+	} else {
+		estimate.Source = "preflight_estimate"
+	}
 
 	// Extract actual token usage from the provider response.
-	var inTok, outTok int
-	if usage := extractProviderUsage(resp); usage.input > 0 || usage.output > 0 {
-		inTok = usage.input
-		outTok = usage.output
-		estCost = (float64(inTok)/1000.0)*m.InputPer1K + (float64(outTok)/1000.0)*m.OutputPer1K
+	usage := extractProviderUsage(resp)
+	if usage.cost != nil {
+		estimate = *usage.cost
+	} else if usage.hasUsage {
+		if actual, found := a.Engine.EstimateModelCost(input.ModelID, router.TokenUsage{
+			PromptTokens:     usage.input,
+			CompletionTokens: usage.output,
+			CacheReadTokens:  usage.cacheRead,
+			CacheWriteTokens: usage.cacheWrite,
+		}); found {
+			estimate = actual
+		}
 	}
 
 	if a.EventBus != nil {
@@ -118,16 +135,21 @@ func (a *Activities) SendToProvider(ctx context.Context, input SendInput) (SendO
 			ModelID:      input.ModelID,
 			ProviderID:   input.ProviderID,
 			LatencyMs:    float64(latencyMs),
-			CostUSD:      estCost,
+			CostUSD:      estimate.Total,
 		})
 	}
 
 	return SendOutput{
-		Response:      json.RawMessage(resp),
-		LatencyMs:     latencyMs,
-		EstimatedCost: estCost,
-		InputTokens:   inTok,
-		OutputTokens:  outTok,
+		Response:         json.RawMessage(resp),
+		LatencyMs:        latencyMs,
+		EstimatedCost:    estimate.Total,
+		InputTokens:      usage.input,
+		OutputTokens:     usage.output,
+		CacheReadTokens:  usage.cacheRead,
+		CacheWriteTokens: usage.cacheWrite,
+		CostSource:       estimate.Source,
+		PricingSource:    estimate.PricingSource,
+		PricingAsOf:      estimate.PricingAsOf,
 	}, nil
 }
 
@@ -206,6 +228,9 @@ func (a *Activities) StreamLogResult(ctx context.Context, input StreamLogInput) 
 			StatusCode:       statusCode,
 			ErrorClass:       input.ErrorClass,
 			RequestID:        input.RequestID,
+			CostSource:       input.CostSource,
+			PricingSource:    input.PricingSource,
+			PricingAsOf:      input.PricingAsOf,
 		}); err != nil {
 			slog.Warn("log_request failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
 		}
@@ -303,6 +328,11 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 			InputTokens:      input.InputTokens,
 			OutputTokens:     input.OutputTokens,
 			TotalTokens:      input.InputTokens + input.OutputTokens,
+			CacheReadTokens:  input.CacheReadTokens,
+			CacheWriteTokens: input.CacheWriteTokens,
+			CostSource:       input.CostSource,
+			PricingSource:    input.PricingSource,
+			PricingAsOf:      input.PricingAsOf,
 		}); err != nil {
 			slog.Warn("log_request failed", slog.String("error", err.Error()), slog.String("request_id", input.RequestID))
 		}
@@ -341,20 +371,31 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 			if input.OutputTokens > 0 {
 				a.Metrics.TokensTotal.WithLabelValues(input.ModelID, input.ProviderID, "output").Add(float64(input.OutputTokens))
 			}
+			if input.CacheReadTokens > 0 {
+				a.Metrics.TokensTotal.WithLabelValues(input.ModelID, input.ProviderID, "cache_read").Add(float64(input.CacheReadTokens))
+			}
+			if input.CacheWriteTokens > 0 {
+				a.Metrics.TokensTotal.WithLabelValues(input.ModelID, input.ProviderID, "cache_write").Add(float64(input.CacheWriteTokens))
+			}
 		}
 	}
 
 	if a.EventBus != nil {
 		if input.Success {
 			a.EventBus.Publish(events.Event{
-				Type:         events.EventRouteSuccess,
-				ModelID:      input.ModelID,
-				ProviderID:   input.ProviderID,
-				LatencyMs:    float64(input.LatencyMs),
-				CostUSD:      input.CostUSD,
-				InputTokens:  input.InputTokens,
-				OutputTokens: input.OutputTokens,
-				TotalTokens:  input.InputTokens + input.OutputTokens,
+				Type:             events.EventRouteSuccess,
+				ModelID:          input.ModelID,
+				ProviderID:       input.ProviderID,
+				LatencyMs:        float64(input.LatencyMs),
+				CostUSD:          input.CostUSD,
+				InputTokens:      input.InputTokens,
+				OutputTokens:     input.OutputTokens,
+				TotalTokens:      input.InputTokens + input.OutputTokens,
+				CacheReadTokens:  input.CacheReadTokens,
+				CacheWriteTokens: input.CacheWriteTokens,
+				CostSource:       input.CostSource,
+				PricingSource:    input.PricingSource,
+				PricingAsOf:      input.PricingAsOf,
 			})
 		} else {
 			a.EventBus.Publish(events.Event{
@@ -369,13 +410,15 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 
 	if a.Stats != nil {
 		a.Stats.Record(stats.Snapshot{
-			ModelID:      input.ModelID,
-			ProviderID:   input.ProviderID,
-			LatencyMs:    float64(input.LatencyMs),
-			CostUSD:      input.CostUSD,
-			Success:      input.Success,
-			InputTokens:  input.InputTokens,
-			OutputTokens: input.OutputTokens,
+			ModelID:          input.ModelID,
+			ProviderID:       input.ProviderID,
+			LatencyMs:        float64(input.LatencyMs),
+			CostUSD:          input.CostUSD,
+			Success:          input.Success,
+			InputTokens:      input.InputTokens,
+			OutputTokens:     input.OutputTokens,
+			CacheReadTokens:  input.CacheReadTokens,
+			CacheWriteTokens: input.CacheWriteTokens,
 		})
 	}
 
@@ -385,12 +428,23 @@ func (a *Activities) LogResult(ctx context.Context, input LogInput) error {
 		if total := input.InputTokens + input.OutputTokens; total > 0 {
 			a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "tokens", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(total)})
 		}
+		if input.CacheReadTokens > 0 {
+			a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cache_read_tokens", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(input.CacheReadTokens)})
+		}
+		if input.CacheWriteTokens > 0 {
+			a.TSDB.Write(tsdb.Point{Timestamp: now, Metric: "cache_write_tokens", ModelID: input.ModelID, ProviderID: input.ProviderID, Value: float64(input.CacheWriteTokens)})
+		}
 	}
 
 	return nil
 }
 
-type providerUsage struct{ input, output int }
+type providerUsage struct {
+	input, output         int
+	cacheRead, cacheWrite int
+	hasUsage              bool
+	cost                  *router.CostEstimate
+}
 
 // extractProviderUsage parses token counts from a raw provider response,
 // supporting both OpenAI and Anthropic response formats. It requires at
@@ -406,19 +460,118 @@ func extractProviderUsage(raw json.RawMessage) providerUsage {
 	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Usage) == 0 {
 		return providerUsage{}
 	}
-	var oai struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+	var rawUsage struct {
+		PromptTokens        *int `json:"prompt_tokens"`
+		CompletionTokens    *int `json:"completion_tokens"`
+		InputTokens         *int `json:"input_tokens"`
+		OutputTokens        *int `json:"output_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens *int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+		InputTokensDetails *struct {
+			CachedTokens *int `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+		CacheReadInputTokens *int     `json:"cache_read_input_tokens"`
+		CacheReadTokens      *int     `json:"cache_read_tokens"`
+		CacheCreationTokens  *int     `json:"cache_creation_input_tokens"`
+		CacheWriteTokens     *int     `json:"cache_write_tokens"`
+		CostUSD              *float64 `json:"cost_usd"`
+		Cost                 *struct {
+			Total           *float64 `json:"total"`
+			Currency        string   `json:"currency"`
+			Input           *float64 `json:"input"`
+			Output          *float64 `json:"output"`
+			CacheRead       *float64 `json:"cache_read"`
+			CacheWrite      *float64 `json:"cache_write"`
+			Source          string   `json:"source"`
+			PricingProvider string   `json:"pricing_provider"`
+			PricingModel    string   `json:"pricing_model"`
+			PricingAsOf     string   `json:"pricing_as_of"`
+			PricingSource   string   `json:"pricing_source"`
+		} `json:"cost"`
 	}
-	if json.Unmarshal(envelope.Usage, &oai) == nil && (oai.PromptTokens > 0 || oai.CompletionTokens > 0) {
-		return providerUsage{input: oai.PromptTokens, output: oai.CompletionTokens}
+	if json.Unmarshal(envelope.Usage, &rawUsage) != nil {
+		return providerUsage{}
 	}
-	var ant struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+	usage := providerUsage{}
+	if rawUsage.PromptTokens != nil || rawUsage.CompletionTokens != nil {
+		usage.input = temporalNonNegativeInt(rawUsage.PromptTokens)
+		usage.output = temporalNonNegativeInt(rawUsage.CompletionTokens)
+		usage.hasUsage = true
+	} else if rawUsage.InputTokens != nil || rawUsage.OutputTokens != nil {
+		usage.input = temporalNonNegativeInt(rawUsage.InputTokens)
+		usage.output = temporalNonNegativeInt(rawUsage.OutputTokens)
+		usage.hasUsage = true
 	}
-	if json.Unmarshal(envelope.Usage, &ant) == nil && (ant.InputTokens > 0 || ant.OutputTokens > 0) {
-		return providerUsage{input: ant.InputTokens, output: ant.OutputTokens}
+	cacheRead := rawUsage.CacheReadTokens
+	if rawUsage.CacheReadInputTokens != nil {
+		cacheRead = rawUsage.CacheReadInputTokens
 	}
-	return providerUsage{}
+	if rawUsage.InputTokensDetails != nil && rawUsage.InputTokensDetails.CachedTokens != nil {
+		cacheRead = rawUsage.InputTokensDetails.CachedTokens
+	}
+	if rawUsage.PromptTokensDetails != nil && rawUsage.PromptTokensDetails.CachedTokens != nil {
+		cacheRead = rawUsage.PromptTokensDetails.CachedTokens
+	}
+	if cacheRead != nil {
+		usage.cacheRead = temporalNonNegativeInt(cacheRead)
+		usage.hasUsage = true
+	}
+	cacheWrite := rawUsage.CacheWriteTokens
+	if rawUsage.CacheCreationTokens != nil {
+		cacheWrite = rawUsage.CacheCreationTokens
+	}
+	if cacheWrite != nil {
+		usage.cacheWrite = temporalNonNegativeInt(cacheWrite)
+		usage.hasUsage = true
+	}
+	if temporalValidCost(rawUsage.CostUSD) {
+		usage.cost = &router.CostEstimate{Total: *rawUsage.CostUSD, Currency: "USD", Source: "provider_reported"}
+	} else if cost := rawUsage.Cost; cost != nil && (cost.Currency == "" || strings.EqualFold(cost.Currency, "USD")) {
+		if total, ok := temporalCostTotal(cost.Total, cost.Input, cost.Output, cost.CacheRead, cost.CacheWrite); ok {
+			source := cost.Source
+			if source == "" {
+				source = "provider_reported"
+			}
+			usage.cost = &router.CostEstimate{
+				Total: total, Currency: "USD", Source: source,
+				Input: cost.Input, Output: cost.Output, CacheRead: cost.CacheRead, CacheWrite: cost.CacheWrite,
+				PricingProvider: cost.PricingProvider, PricingModel: cost.PricingModel,
+				PricingAsOf: cost.PricingAsOf, PricingSource: cost.PricingSource,
+			}
+		}
+	}
+	return usage
+}
+
+func temporalNonNegativeInt(value *int) int {
+	if value == nil || *value < 0 {
+		return 0
+	}
+	return *value
+}
+
+func temporalValidCost(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= 0
+}
+
+func temporalCostTotal(total *float64, components ...*float64) (float64, bool) {
+	if total != nil {
+		if !temporalValidCost(total) {
+			return 0, false
+		}
+		return *total, true
+	}
+	value := 0.0
+	found := false
+	for _, component := range components {
+		if component != nil {
+			if !temporalValidCost(component) {
+				return 0, false
+			}
+			value += *component
+			found = true
+		}
+	}
+	return value, found
 }

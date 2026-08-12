@@ -19,6 +19,7 @@
 - [Vault & Credentials](admin/vault.md)
 - [Provider Management](admin/providers.md)
 - [Model Management](admin/models.md)
+- [NeMo Relay Cost Accounting](admin/pricing.md)
 - [Routing Configuration](admin/routing.md)
 - [API Key Management](admin/api-keys.md)
 - [Monitoring & Observability](admin/monitoring.md)

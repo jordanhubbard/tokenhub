@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	maxEscalations   = 5
-	activityTimeout  = 60 * time.Second
-	workflowTimeout  = 5 * time.Minute
+	maxEscalations  = 5
+	activityTimeout = 60 * time.Second
+	workflowTimeout = 5 * time.Minute
 )
 
 // ChatWorkflow replaces engine.RouteAndSend() as a Temporal workflow.
@@ -80,16 +80,21 @@ func ChatWorkflow(ctx workflow.Context, input ChatInput) (ChatOutput, error) {
 
 	// Step 4: Log result.
 	logInput := LogInput{
-		RequestID:    input.RequestID,
-		ModelID:      currentModelID,
-		ProviderID:   currentProviderID,
-		Mode:         input.Policy.Mode,
-		LatencyMs:    latencyMs,
-		CostUSD:      sendOutput.EstimatedCost,
-		Success:      err == nil,
-		ErrorClass:   sendOutput.ErrorClass,
-		InputTokens:  sendOutput.InputTokens,
-		OutputTokens: sendOutput.OutputTokens,
+		RequestID:        input.RequestID,
+		ModelID:          currentModelID,
+		ProviderID:       currentProviderID,
+		Mode:             input.Policy.Mode,
+		LatencyMs:        latencyMs,
+		CostUSD:          sendOutput.EstimatedCost,
+		Success:          err == nil,
+		ErrorClass:       sendOutput.ErrorClass,
+		InputTokens:      sendOutput.InputTokens,
+		OutputTokens:     sendOutput.OutputTokens,
+		CacheReadTokens:  sendOutput.CacheReadTokens,
+		CacheWriteTokens: sendOutput.CacheWriteTokens,
+		CostSource:       sendOutput.CostSource,
+		PricingSource:    sendOutput.PricingSource,
+		PricingAsOf:      sendOutput.PricingAsOf,
 	}
 	_ = workflow.ExecuteActivity(ctx, (*Activities).LogResult, logInput).Get(ctx, nil)
 

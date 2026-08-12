@@ -8,17 +8,19 @@ import (
 
 // Snapshot is a single data point recorded for a request.
 type Snapshot struct {
-	Timestamp    time.Time
-	ModelID      string
-	ProviderID   string
-	APIKeyID     string
-	APIKeyName   string
-	Mode         string
-	LatencyMs    float64
-	CostUSD      float64
-	Success      bool
-	InputTokens  int
-	OutputTokens int
+	Timestamp        time.Time
+	ModelID          string
+	ProviderID       string
+	APIKeyID         string
+	APIKeyName       string
+	Mode             string
+	LatencyMs        float64
+	CostUSD          float64
+	Success          bool
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
 }
 
 // Window defines a named time window for aggregation.
@@ -39,20 +41,22 @@ func DefaultWindows() []Window {
 
 // Aggregate holds computed stats for a time window.
 type Aggregate struct {
-	Window        string  `json:"window"`
-	ModelID       string  `json:"model_id,omitempty"`
-	ProviderID    string  `json:"provider_id,omitempty"`
-	APIKeyName    string  `json:"api_key_name,omitempty"`
-	Mode          string  `json:"mode,omitempty"`
-	RequestCount  int     `json:"request_count"`
-	ErrorCount    int     `json:"error_count"`
-	ErrorRate     float64 `json:"error_rate"`
-	AvgLatencyMs  float64 `json:"avg_latency_ms"`
-	P95LatencyMs  float64 `json:"p95_latency_ms"`
-	TotalCostUSD  float64 `json:"total_cost_usd"`
-	InputTokens   int     `json:"input_tokens"`
-	OutputTokens  int     `json:"output_tokens"`
-	TotalTokens   int     `json:"total_tokens"`
+	Window           string  `json:"window"`
+	ModelID          string  `json:"model_id,omitempty"`
+	ProviderID       string  `json:"provider_id,omitempty"`
+	APIKeyName       string  `json:"api_key_name,omitempty"`
+	Mode             string  `json:"mode,omitempty"`
+	RequestCount     int     `json:"request_count"`
+	ErrorCount       int     `json:"error_count"`
+	ErrorRate        float64 `json:"error_rate"`
+	AvgLatencyMs     float64 `json:"avg_latency_ms"`
+	P95LatencyMs     float64 `json:"p95_latency_ms"`
+	TotalCostUSD     float64 `json:"total_cost_usd"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
 }
 
 // Collector maintains rolling snapshots for dashboard aggregation.
@@ -276,6 +280,8 @@ func computeAggregate(window, modelID, providerID string, snaps []Snapshot) Aggr
 		a.TotalCostUSD += s.CostUSD
 		a.InputTokens += s.InputTokens
 		a.OutputTokens += s.OutputTokens
+		a.CacheReadTokens += s.CacheReadTokens
+		a.CacheWriteTokens += s.CacheWriteTokens
 		if !s.Success {
 			a.ErrorCount++
 		}

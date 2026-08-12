@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Sender is the interface that provider adapters must implement for the engine.
@@ -118,6 +119,7 @@ type Engine struct {
 
 	wildcardModelIDs         []string
 	budgetExhaustedProviders map[string]string
+	costEstimator            atomic.Value // stores costEstimatorBox
 }
 
 func NewEngine(cfg EngineConfig) *Engine {
