@@ -505,6 +505,36 @@ Key steps for production:
 6. Set up alerting with `deploy/prometheus-alerts.yml`
 7. Schedule database backups with `scripts/backup.sh`
 
+<!-- ai-template:narrative:start -->
+## The Totally True and Not At All Embellished History of TokenHub
+
+### The continuing adventures of Jordan Hubbard and Sir Reginald von Fluffington III
+
+> *Part 7 of an ongoing chronicle. [← Part 6: dotfiles](https://github.com/jordanhubbard/dotfiles#the-totally-true-and-not-at-all-embellished-history-of-dotfiles) | [Part 8: shemacs →](https://github.com/jordanhubbard/shemacs#the-totally-true-and-not-at-all-embellished-history-of-shemacs)*
+> *[Chronicle index](https://github.com/jordanhubbard/ai-template/blob/main/CHRONICLE.md) · Ordered by first recorded AI-assisted commit.*
+
+The programmer had acquired several ways to ask a machine a question. Each had a different address, a different price, a different latency, and an individual interpretation of the phrase “available now.”
+
+Sir Reginald von Fluffington III offered one way to ask a cat a question. Its latency was unbounded and its price was tuna.
+
+“I need a router,” the programmer said.
+
+TokenHub would stand between clients and model providers, choosing where requests should go. Cost mattered. So did response time, reliability, context limits, and the likelihood that the selected model could perform the task. The programmer drew a weighted scoring function. Sir Reginald sat on the weights, establishing a competing policy.
+
+A single route was insufficient for some questions. There would be an adversarial mode in which a plan encountered a critic, a voting mode in which several models contributed answers, and a refinement mode in which an answer had the opportunity to improve itself before being shown to anyone. The programmer described these as orchestration strategies. Sir Reginald recognized a committee when he saw one.
+
+Then came Thompson Sampling, so routing could learn from outcomes rather than merely admire the configuration. The health tracker would notice failing providers. Budgets would constrain enthusiasm. Streaming responses would still stream. Provider credentials would live in an encrypted vault, which the cat found less accessible than the open drawer containing treats.
+
+The dashboard acquired a live flow graph. At last the programmer could see where the requests went, what they cost, and which choices had worked. Sir Reginald watched the moving lines with interest until it became clear that none represented prey.
+
+“It is a single endpoint,” the programmer announced, “with all the decisions behind it.”
+
+Sir Reginald turned his back. This, too, was a stable interface hiding a complex decision process.
+
+The programmer called TokenHub elegant. Sir Reginald withheld endorsement, citing insufficient tuna and the inexplicable failure to include “nearest sunbeam” in the routing objective.
+
+<!-- ai-template:narrative:end -->
+
 ## License
 
 MIT (see [`LICENSE`](LICENSE))
